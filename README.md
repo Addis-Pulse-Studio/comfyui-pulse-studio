@@ -75,6 +75,12 @@ the sizes are measured from that install. Nothing here is tied to a precision �
 if you run a different quantisation of the same weights, point the loader
 widgets at it and the rest of the graph is unchanged.
 
+**On Linux and macOS the five model widgets will load red.** ComfyUI compares a
+saved model value against a list it builds with the host's path separator, so
+the graphs — authored and verified on Windows — carry `minimax\name.safetensors`
+and no spelling is portable. Click each loader and pick the same file; the graph
+is unchanged otherwise. Windows users see no such prompt.
+
 The two DiT files are the ref2va and fl2va branches from
 [§ Verified model constraints](#verified-model-constraints) — you need
 whichever branches your timeline actually uses, and **only** `ref2va` for a

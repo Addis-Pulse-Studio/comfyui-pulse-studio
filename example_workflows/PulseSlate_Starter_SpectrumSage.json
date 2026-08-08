@@ -33,7 +33,7 @@
         "Node name for S&R": "UNETLoader"
       },
       "widgets_values": [
-        "minimax/minimax_h3_ref2va_pruned_int8_convrot.safetensors",
+        "minimax\\minimax_h3_ref2va_pruned_int8_convrot.safetensors",
         "default"
       ],
       "title": "ref2va checkpoint (references)"
@@ -67,7 +67,7 @@
         "Node name for S&R": "UNETLoader"
       },
       "widgets_values": [
-        "minimax/minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+        "minimax\\minimax_h3_fl2va_pruned_int8_convrot.safetensors",
         "default"
       ],
       "title": "fl2va checkpoint (anchors) — optional"
@@ -101,7 +101,7 @@
         "Node name for S&R": "CLIPLoader"
       },
       "widgets_values": [
-        "minimax/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+        "minimax\\qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
         "minimax",
         "default"
       ]
@@ -136,7 +136,7 @@
         "Node name for S&R": "VAELoader"
       },
       "widgets_values": [
-        "minimax/minimax_h3_video_vae_fp16.safetensors"
+        "minimax\\minimax_h3_video_vae_fp16.safetensors"
       ],
       "title": "video VAE"
     },
@@ -170,7 +170,7 @@
         "Node name for S&R": "VAELoader"
       },
       "widgets_values": [
-        "minimax/minimax_h3_audio_vae_fp32.safetensors"
+        "minimax\\minimax_h3_audio_vae_fp32.safetensors"
       ],
       "title": "audio VAE"
     },

@@ -12,6 +12,7 @@ That keeps this test runnable in the same bare environment as the rest.
 
 import ast
 import json
+import re
 import unittest
 from pathlib import Path
 
@@ -56,6 +57,51 @@ def _required_widgets(class_name):
                         widgets.append(name)
                     return widgets
     raise AssertionError("could not find INPUT_TYPES for %s" % class_name)
+
+
+class TestModelPathsMatchWhatComfyUIEmits(unittest.TestCase):
+    """A model widget's stored value is compared to the model list *literally*.
+
+    `folder_paths.get_filename_list()` builds names with `os.sep`, and
+    `execution.py` rejects anything not in that list with `value_not_in_list`
+    before the graph ever runs. So on Windows the only value that validates is
+    `minimax\\name.safetensors` -- even though `get_full_path` would happily
+    resolve the forward-slash form, because validation runs first.
+
+    These graphs were authored, run and verified on Windows, so they carry the
+    backslash. This was briefly "fixed" to forward slashes for portability,
+    which made the shipped starter unqueueable on the platform it was built on:
+    four red MISSING MODELS on load. There is no portable spelling -- the
+    separator belongs to the host -- so the choice is which platform loads clean
+    and which clicks the combo once. This test is here to stop the next
+    well-meant portability fix from silently costing that again.
+    """
+
+    LOADERS = ("UNETLoader", "CLIPLoader", "VAELoader")
+
+    def test_no_shipped_graph_uses_a_forward_slash_in_a_model_path(self):
+        for path in WORKFLOW_DIR.glob("*.json"):
+            with self.subTest(workflow=path.name):
+                offenders = re.findall(r'"[^"]*/[^"]*\.safetensors"',
+                                       path.read_text(encoding="utf-8"))
+                self.assertEqual(offenders, [],
+                                 "ComfyUI validates model values against a list built with "
+                                 "os.sep; a forward slash fails validation on Windows:\n  "
+                                 + "\n  ".join(sorted(set(offenders))))
+
+    def test_every_loader_names_a_model_in_the_minimax_subfolder(self):
+        for path in SHIPPED_GRAPHS:
+            d = json.loads(path.read_text(encoding="utf-8"))
+            loaders = [n for n in d["nodes"] if n["type"] in self.LOADERS]
+            self.assertEqual(len(loaders), 5, "%s: expected 2 DiT + 1 text encoder + 2 VAE"
+                                              % path.name)
+            for node in loaders:
+                with self.subTest(workflow=path.name, node=node["type"]):
+                    value = node["widgets_values"][0]
+                    self.assertTrue(value.startswith("minimax\\"),
+                                    "%s: %r is not in the minimax\\ subfolder the README "
+                                    "documents" % (node["type"], value))
+                    self.assertTrue(value.endswith(".safetensors"), value)
 
 
 class TestWorkflowShipsAndParses(unittest.TestCase):

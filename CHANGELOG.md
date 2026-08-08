@@ -151,8 +151,20 @@ tree.
 - Ten client-facing asset filenames were referenced by the shipped example
   workflows, four of them buried inside the `timeline_data` string. All are now
   `example_*` placeholders that the user supplies.
-- Windows-only `minimax\` model paths in the example workflows use forward
-  slashes, so the graphs load on any platform.
+- **Model paths in the example workflows are back to `minimax\name`**, reverting
+  a portability change that made every shipped graph unqueueable on Windows —
+  five red MISSING MODELS on load, on the platform the graphs were built on.
+
+  ComfyUI compares a stored model value against `get_filename_list()`, which is
+  built with `os.sep`, and `execution.py` rejects a miss as `value_not_in_list`
+  *before* the graph runs. `get_full_path` would resolve either separator, but
+  validation runs first, so the forward-slash form never got that far.
+
+  There is no portable spelling — the separator belongs to the host. So the
+  question is only which platform loads clean and which clicks a combo once, and
+  the answer is the platform this was authored, run and verified on. A test now
+  pins it, with that reasoning attached, so the next well-meant portability fix
+  fails CI instead of shipping.
 
 ### Name availability check — 2026-08-07
 
