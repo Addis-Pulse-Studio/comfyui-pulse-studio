@@ -21,6 +21,7 @@ import re
 
 from .constants import (
     MAX_REF_AUDIOS,
+    MAX_REF_AUDIOS_CEILING,
     MAX_REF_FILES_TOTAL,
     MAX_REF_IMAGES,
     MAX_REF_VIDEO_AUDIOS,
@@ -37,6 +38,8 @@ __all__ = [
     "AssetBin",
     "BudgetError",
     "BudgetReport",
+    "RefLimits",
+    "DEFAULT_LIMITS",
     "TagMap",
     "KIND_IMAGE",
     "KIND_VIDEO",
@@ -134,18 +137,65 @@ class Asset:
         return "Asset(%r, %s, %r)" % (self.asset_id, self.kind, self.name)
 
 
+class RefLimits:
+    """The reference budget one compile runs under.
+
+    Every field but `audios` is fixed by the stock node's own socket templates
+    and cannot be exceeded however we call it. `audios` can, because the socket
+    cap is enforced by graph validation and this pack calls the node in-process
+    -- see the MAX_REF_AUDIOS_CEILING note in constants.py.
+
+    Passed explicitly rather than read from module scope so that raising the
+    ceiling is a property of one render, not of the process. Two nodes in one
+    graph may legitimately disagree about it.
+    """
+
+    __slots__ = ("images", "videos", "soundtracks", "audios", "files")
+
+    def __init__(self, audios=MAX_REF_AUDIOS):
+        audios = int(audios)
+        if audios < MAX_REF_AUDIOS:
+            raise ValueError("the audio ceiling cannot go below the documented %d"
+                             % MAX_REF_AUDIOS)
+        if audios > MAX_REF_AUDIOS_CEILING:
+            raise ValueError("the audio ceiling stops at %d" % MAX_REF_AUDIOS_CEILING)
+        self.images = MAX_REF_IMAGES
+        self.videos = MAX_REF_VIDEOS
+        self.soundtracks = MAX_REF_VIDEO_AUDIOS
+        self.audios = audios
+        # The extra files a raised ceiling admits are exactly the extra audio.
+        # Deriving it rather than exposing a second dial keeps the two from
+        # drifting into a state where the audio fits but the total refuses it.
+        self.files = MAX_REF_FILES_TOTAL + (audios - MAX_REF_AUDIOS)
+
+    @property
+    def beyond_spec(self):
+        """True when this render exceeds what MiniMax and ComfyUI document."""
+        return self.audios > MAX_REF_AUDIOS
+
+    def __eq__(self, other):
+        return isinstance(other, RefLimits) and self.audios == other.audios
+
+    def __repr__(self):
+        return "RefLimits(audios=%d, files=%d)" % (self.audios, self.files)
+
+
+DEFAULT_LIMITS = RefLimits()
+
+
 class BudgetReport:
     """A live snapshot of bin occupancy, for the meter and for validation."""
 
-    __slots__ = ("images", "videos", "soundtracks", "audios", "files", "errors")
+    __slots__ = ("images", "videos", "soundtracks", "audios", "files", "errors", "limits")
 
-    def __init__(self, images, videos, soundtracks, audios, files, errors):
+    def __init__(self, images, videos, soundtracks, audios, files, errors, limits=None):
         self.images = images
         self.videos = videos
         self.soundtracks = soundtracks
         self.audios = audios
         self.files = files
         self.errors = errors
+        self.limits = limits or DEFAULT_LIMITS
 
     @property
     def ok(self):
@@ -155,19 +205,20 @@ class BudgetReport:
         """The one-line string the Asset Bin shows, e.g.
         '7/9 images | 2/3 videos | 1/3 audio | 9/12 files'."""
         return "%d/%d images | %d/%d videos | %d/%d audio | %d/%d files" % (
-            self.images, MAX_REF_IMAGES,
-            self.videos, MAX_REF_VIDEOS,
-            self.audios, MAX_REF_AUDIOS,
-            self.files, MAX_REF_FILES_TOTAL,
+            self.images, self.limits.images,
+            self.videos, self.limits.videos,
+            self.audios, self.limits.audios,
+            self.files, self.limits.files,
         )
 
     def to_dict(self):
         return {
-            "images": self.images, "max_images": MAX_REF_IMAGES,
-            "videos": self.videos, "max_videos": MAX_REF_VIDEOS,
-            "soundtracks": self.soundtracks, "max_soundtracks": MAX_REF_VIDEO_AUDIOS,
-            "audios": self.audios, "max_audios": MAX_REF_AUDIOS,
-            "files": self.files, "max_files": MAX_REF_FILES_TOTAL,
+            "images": self.images, "max_images": self.limits.images,
+            "videos": self.videos, "max_videos": self.limits.videos,
+            "soundtracks": self.soundtracks, "max_soundtracks": self.limits.soundtracks,
+            "audios": self.audios, "max_audios": self.limits.audios,
+            "files": self.files, "max_files": self.limits.files,
+            "beyond_spec": self.limits.beyond_spec,
             "ok": self.ok, "errors": list(self.errors), "meter": self.meter(),
         }
 
@@ -206,7 +257,12 @@ class AssetBin:
     or raise BudgetError and leave it untouched.
     """
 
-    def __init__(self, assets=None):
+    def __init__(self, assets=None, limits=None):
+        # The bin remembers the budget it was built under so that reads which
+        # take no argument -- len(), a repr, an internal re-check -- do not
+        # quietly answer against the documented ceiling while the project is
+        # running a raised one. Callers may still override per call.
+        self.limits = limits or DEFAULT_LIMITS
         self._assets = []
         self._by_id = {}
         for a in assets or []:
@@ -247,11 +303,13 @@ class AssetBin:
 
     # ── budget ──────────────────────────────────────────────────────────────
 
-    def budget(self, extra=None):
+    def budget(self, extra=None, limits=None):
         """Occupancy report for this bin, optionally as if `extra` were added.
 
         `extra` lets a UI ask "would this drop fit?" without mutating anything.
+        `limits` defaults to the budget this bin was built under; see RefLimits.
         """
+        limits = limits or self.limits
         assets = list(self._assets) + ([extra] if extra is not None else [])
         images = sum(1 for a in assets if a.kind == KIND_IMAGE)
         videos = sum(1 for a in assets if a.kind == KIND_VIDEO)
@@ -263,16 +321,16 @@ class AssetBin:
         files = sum(1 for a in assets if not a.synthetic)
 
         errors = []
-        if images > MAX_REF_IMAGES:
-            errors.append("too many reference images: %d (max %d)" % (images, MAX_REF_IMAGES))
-        if videos > MAX_REF_VIDEOS:
-            errors.append("too many reference videos: %d (max %d)" % (videos, MAX_REF_VIDEOS))
-        if audios > MAX_REF_AUDIOS:
-            errors.append("too many reference audios: %d (max %d)" % (audios, MAX_REF_AUDIOS))
-        if soundtracks > MAX_REF_VIDEO_AUDIOS:
-            errors.append("too many video soundtracks: %d (max %d)" % (soundtracks, MAX_REF_VIDEO_AUDIOS))
-        if files > MAX_REF_FILES_TOTAL:
-            errors.append("too many reference files: %d (max %d)" % (files, MAX_REF_FILES_TOTAL))
+        if images > limits.images:
+            errors.append("too many reference images: %d (max %d)" % (images, limits.images))
+        if videos > limits.videos:
+            errors.append("too many reference videos: %d (max %d)" % (videos, limits.videos))
+        if audios > limits.audios:
+            errors.append("too many reference audios: %d (max %d)" % (audios, limits.audios))
+        if soundtracks > limits.soundtracks:
+            errors.append("too many video soundtracks: %d (max %d)" % (soundtracks, limits.soundtracks))
+        if files > limits.files:
+            errors.append("too many reference files: %d (max %d)" % (files, limits.files))
 
         for a in assets:
             if a.kind != KIND_VIDEO:
@@ -285,22 +343,22 @@ class AssetBin:
                     "reference video %r is %.2fs; H3 accepts %.0f-%.0fs"
                     % (a.name, dur, REF_VIDEO_MIN_SECONDS, REF_VIDEO_MAX_SECONDS))
 
-        return BudgetReport(images, videos, soundtracks, audios, files, errors)
+        return BudgetReport(images, videos, soundtracks, audios, files, errors, limits)
 
-    def can_add(self, asset):
+    def can_add(self, asset, limits=None):
         """(bool, reason) -- whether this asset would fit, without adding it."""
         if asset.asset_id in self._by_id:
             return False, "an asset with id %r is already in the bin" % (asset.asset_id,)
-        report = self.budget(extra=asset)
+        report = self.budget(extra=asset, limits=limits)
         return (True, "") if report.ok else (False, "; ".join(report.errors))
 
     # ── mutating ────────────────────────────────────────────────────────────
 
-    def add(self, asset, index=None):
+    def add(self, asset, index=None, limits=None):
         """Add an asset, optionally at a position. Raises BudgetError if it won't fit."""
         if not isinstance(asset, Asset):
             asset = Asset.from_dict(asset)
-        ok, reason = self.can_add(asset)
+        ok, reason = self.can_add(asset, limits=limits)
         if not ok:
             raise BudgetError(reason)
         self._insert(asset, index)
@@ -403,8 +461,8 @@ class AssetBin:
         return [a.to_dict() for a in self._assets]
 
     @classmethod
-    def from_list(cls, data):
-        return cls([Asset.from_dict(d) for d in (data or [])])
+    def from_list(cls, data, limits=None):
+        return cls([Asset.from_dict(d) for d in (data or [])], limits=limits)
 
 
 # Prompt text refers to assets with {{asset_id}} or @Name / @[Name With Spaces].

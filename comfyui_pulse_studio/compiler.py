@@ -41,9 +41,6 @@ from .constants import (
     BRANCH_FL2VA,
     BRANCH_REF2VA,
     DEFAULT_AUDIO_CARRY_SECONDS,
-    MAX_REF_AUDIOS,
-    MAX_REF_IMAGES,
-    MAX_REF_VIDEOS,
     MAX_WINDOW_FRAMES,
     MIN_TRAINED_FRAMES,
 )
@@ -452,11 +449,14 @@ def _window_bin(timeline, index, branch, carry):
                 continue
             dst.append(a)
 
-    _take(images, user_images, MAX_REF_IMAGES, "image")
-    _take(videos, user_videos, MAX_REF_VIDEOS, "video")
-    _take(audios, user_audios, MAX_REF_AUDIOS, "audio")
+    _take(images, user_images, timeline.limits.images, "image")
+    _take(videos, user_videos, timeline.limits.videos, "video")
+    _take(audios, user_audios, timeline.limits.audios, "audio")
 
-    return AssetBin(images + videos + audios), diagnostics
+    # Built under the project's ceiling: this bin has just been trimmed to it,
+    # so validating it against the documented default would reject the very
+    # window the ceiling was raised to allow.
+    return AssetBin(images + videos + audios, limits=timeline.limits), diagnostics
 
 
 def _build_subjects(bin_, tag_map):

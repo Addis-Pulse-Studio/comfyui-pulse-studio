@@ -194,9 +194,23 @@ test("every node in the pack opens with schema_version", () => {
 });
 
 test("the spec matches the node's declared widget count", () => {
-  // 22 required widgets + control_after_generate.
-  assert.equal(NATIVE_WIDGETS.length, 23);
-  assert.equal(NATIVE_WIDGETS[NATIVE_WIDGETS.length - 1].name, "shift_audio");
+  // 23 required widgets + control_after_generate.
+  assert.equal(NATIVE_WIDGETS.length, 24);
+  assert.equal(NATIVE_WIDGETS[NATIVE_WIDGETS.length - 1].name, "audio_ref_ceiling");
+});
+
+test("a file saved before audio_ref_ceiling existed still loads", () => {
+  // The append case, tested directly rather than reasoned about: GOOD is a
+  // 2.0.0 array written before this widget was added, so it is one short. Every
+  // value it does carry must land on the widget it was written for, and the
+  // widget it lacks must simply be absent from the map so the node's own default
+  // stands. If appending ever shifts a value, this is where it shows.
+  const read = readSavedValues("PulseSlate", GOOD);
+  assert.equal(read.ok, true);
+  assert.equal(read.values.has("audio_ref_ceiling"), false);
+  assert.equal(read.values.get("shift_audio"), GOOD.at(-1));
+  assert.equal(read.values.get("shift_video"), 12.0);
+  assert.equal(read.values.get("ref_image_size"), "match");
 });
 
 // ── reading a saved file ────────────────────────────────────────────────────

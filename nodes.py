@@ -42,6 +42,8 @@ from .comfyui_pulse_studio.constants import (
     CANVAS_MULTIPLE,
     DEFAULT_AUDIO_CARRY_SECONDS,
     MAX_PIXELS,
+    MAX_REF_AUDIOS,
+    MAX_REF_AUDIOS_CEILING,
     REF_IMAGE_SIZE_OPTIONS,
     SCHEMA_VERSION,
 )
@@ -429,6 +431,17 @@ class PulseSlate:
                                           "step": 0.01}),
                 "shift_audio": ("FLOAT", {"default": 3.0, "min": 0.01, "max": 100.0,
                                           "step": 0.01}),
+                "audio_ref_ceiling": ("INT", {
+                    "default": MAX_REF_AUDIOS, "min": MAX_REF_AUDIOS,
+                    "max": MAX_REF_AUDIOS_CEILING, "step": 1, "tooltip":
+                    "How many standalone audio references the bin may hold. 3 is what "
+                    "MiniMax documents and what ComfyUI's ref_audios socket declares. "
+                    "Above 3 goes past both: that cap is enforced by graph validation "
+                    "and this node calls the reference encoder in-process, so the extra "
+                    "audio really is marshalled and rendered -- but no published render "
+                    "uses more than three, and reference audio rides every sampling "
+                    "step. The file total rises with it. Raise it to test, not to set "
+                    "and forget."}),
                 # ── append new widgets HERE, at the end, and nowhere else ────
             },
             "optional": {
@@ -452,7 +465,8 @@ class PulseSlate:
                 duration_seconds, aspect_ratio, width, height, steps, sampler_name,
                 scheduler, cfg, seed, partition_strategy, window_seconds, resize_method,
                 carry_mode, carry_audio, carry_audio_seconds, ref_image_size,
-                shift_video, shift_audio, model_fl2va=None, unique_id=None):
+                shift_video, shift_audio, audio_ref_ceiling=MAX_REF_AUDIOS,
+                model_fl2va=None, unique_id=None):
 
         width, height = resolution_for(aspect_ratio, width, height)
 
@@ -460,7 +474,21 @@ class PulseSlate:
         # see tests/test_widget_state.py::TestQueueDoesNotEraseTypedText.
         timeline, notes = build_timeline(
             timeline_data, global_prompt=global_prompt, shot_prompt=shot_prompt,
-            duration_seconds=duration_seconds, window_seconds=window_seconds)
+            duration_seconds=duration_seconds, window_seconds=window_seconds,
+            audio_ref_ceiling=audio_ref_ceiling)
+
+        # Said once, on the render that does it, rather than buried in a tooltip
+        # nobody reads twice. It is a warning and not a block: going past the
+        # documented budget is a legitimate experiment, and the user chose it.
+        if timeline.limits.beyond_spec:
+            notes.append(
+                "audio_ref_ceiling is %d. MiniMax documents 3 standalone audio "
+                "references and ComfyUI's ref_audios socket declares 3; this render "
+                "goes past both. It will run -- the cap is graph-validation only and "
+                "this node calls the encoder in-process -- but nothing about the "
+                "result is covered by anything published, and every extra reference "
+                "rides all %d sampling steps."
+                % (timeline.limits.audios, steps))
 
         # Drop unloadable references BEFORE tags are assigned, so ordinals stay
         # dense by construction rather than developing a hole at render time.

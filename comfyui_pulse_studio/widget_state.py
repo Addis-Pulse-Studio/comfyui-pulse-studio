@@ -36,7 +36,7 @@ import json
 
 from .assets import AssetBin, BudgetError
 from .binops import apply_operation
-from .constants import TIMELINE_SCHEMA
+from .constants import MAX_REF_AUDIOS, TIMELINE_SCHEMA
 from .parsing import parse_global_prompt, parse_shots
 from .timeline import Timeline
 
@@ -125,7 +125,7 @@ def dump_timeline_document(document):
     return json.dumps(document, ensure_ascii=False)
 
 
-def apply_bin_operation(raw, operation, **kwargs):
+def apply_bin_operation(raw, operation, limits=None, **kwargs):
     """Apply one Asset Bin edit to a timeline document. Returns (new_raw, error).
 
     Every key other than "assets" is copied through untouched -- including keys
@@ -140,7 +140,7 @@ def apply_bin_operation(raw, operation, **kwargs):
 
     try:
         bin_ = AssetBin.from_list(document["assets"])
-        apply_operation(bin_, operation, **kwargs)
+        apply_operation(bin_, operation, limits=limits, **kwargs)
     except (BudgetError, KeyError, ValueError) as exc:
         return raw, (str(exc) or repr(exc))
 
@@ -152,7 +152,7 @@ def apply_bin_operation(raw, operation, **kwargs):
 def build_timeline(raw, global_prompt="", shot_prompt="", duration_seconds=None,
                    fps=24, branch=None, continuation_branch=None,
                    first_frame=None, last_frame=None, window_seconds=None,
-                   dialogue_language="English"):
+                   dialogue_language="English", audio_ref_ceiling=None):
     """Assemble the Timeline that will be compiled, without mutating anything.
 
     Reads the stored document for assets (and for canvas-authored shots, when the
@@ -211,6 +211,12 @@ def build_timeline(raw, global_prompt="", shot_prompt="", duration_seconds=None,
         first_frame=first_frame if first_frame is not None else document.get("first_frame"),
         last_frame=last_frame if last_frame is not None else document.get("last_frame"),
         window_seconds=window_seconds or document.get("window_seconds"),
+        # The widget wins over the document: the ceiling is a property of the
+        # render being queued, and the stored copy is only there so a saved
+        # project reopens under the budget it was built against.
+        audio_ref_ceiling=(audio_ref_ceiling
+                           if audio_ref_ceiling
+                           else document.get("audio_ref_ceiling", MAX_REF_AUDIOS)),
     )
     # Identity locks and retention notes from the global box ride on the timeline
     # so the compiler can put them in subject_definitions / retention_analysis.

@@ -28,8 +28,9 @@ try:
     from aiohttp import web
     from server import PromptServer
 
-    from .comfyui_pulse_studio.assets import AssetBin
+    from .comfyui_pulse_studio.assets import AssetBin, RefLimits
     from .comfyui_pulse_studio.binops import bin_state, preview_change, suggest_alias, suggest_name
+    from .comfyui_pulse_studio.constants import MAX_REF_AUDIOS
     from .comfyui_pulse_studio.widget_state import (
         apply_bin_operation,
         load_timeline_document,
@@ -41,13 +42,30 @@ try:
             return load_timeline_document(data.get("timeline_data"))["assets"]
         return data.get("assets") or []
 
+    def _limits_of(data):
+        """The reference budget this request is judged against.
+
+        The panel sends the node's own `audio_ref_ceiling`, because the ceiling
+        is a per-node widget and the server holds no session state. An absent or
+        unusable value falls back to the documented budget rather than failing
+        the request -- a bin panel that will not draw is worse than one drawing
+        the conservative number.
+        """
+        try:
+            return RefLimits(data.get("audio_ref_ceiling") or MAX_REF_AUDIOS)
+        except (TypeError, ValueError) as exc:
+            log.warning("[PulseStudio] ignoring bad audio_ref_ceiling %r: %s",
+                        data.get("audio_ref_ceiling"), exc)
+            return RefLimits()
+
     @PromptServer.instance.routes.post("/pulse_studio/bin_state")
     async def _bin_state(request):
         """Live tags, budget meter and name problems for a bin."""
         try:
             data = await request.json()
             bin_ = AssetBin.from_list(_assets_of(data))
-            return web.json_response({"status": "ok", "state": bin_state(bin_)})
+            return web.json_response(
+                {"status": "ok", "state": bin_state(bin_, limits=_limits_of(data))})
         except Exception as exc:
             log.warning("[PulseStudio] bin_state failed: %s", exc)
             return web.json_response({"status": "error", "message": str(exc)}, status=400)
@@ -59,7 +77,8 @@ try:
             data = await request.json()
             bin_ = AssetBin.from_list(_assets_of(data))
             kwargs = dict(data.get("kwargs") or {})
-            deltas, error = preview_change(bin_, data.get("operation"), **kwargs)
+            deltas, error = preview_change(bin_, data.get("operation"),
+                                           limits=_limits_of(data), **kwargs)
             return web.json_response({"status": "ok", "error": error,
                                       "deltas": [d.to_dict() for d in deltas]})
         except Exception as exc:
@@ -77,7 +96,8 @@ try:
             data = await request.json()
             raw = data.get("timeline_data")
             kwargs = dict(data.get("kwargs") or {})
-            new_raw, error = apply_bin_operation(raw, data.get("operation"), **kwargs)
+            new_raw, error = apply_bin_operation(raw, data.get("operation"),
+                                                 limits=_limits_of(data), **kwargs)
             return web.json_response({"status": "ok", "error": error,
                                       "timeline_data": new_raw})
         except Exception as exc:

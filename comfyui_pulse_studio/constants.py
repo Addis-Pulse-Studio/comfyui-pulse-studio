@@ -94,6 +94,33 @@ MAX_REF_AUDIOS = 3        # standalone reference audio
 # distinct files may be presented in one render, so this cap genuinely binds.
 MAX_REF_FILES_TOTAL = 12
 
+# ── The audio ceiling is raisable, and every other one is not ───────────────
+# Read out of source before believing it:
+#
+#   comfy_extras/nodes_minimax_h3.py   ref_audios is io.Autogrow with max=3
+#   comfy/ldm/minimax/model.py         PackedLayout walks reference blocks in a
+#                                      loop and appends one ref_audio segment
+#                                      per block. No count check, no assert.
+#   comfy/text_encoders/minimax.py     the tokenizer increments a counter for
+#                                      <Audio j>. No cap there either.
+#
+# So the 3 is a *socket* cap, not model math -- unlike the first/last keyframe
+# rule above, which is RoPE position math no node can route around. And this
+# pack calls MiniMaxH3ReferenceToVideo.execute() in-process rather than through
+# the graph, so Autogrow's max= (enforced by execution.py's validation pass)
+# never runs against what we pass. Nine standalone audio references will
+# therefore be marshalled and rendered.
+#
+# That is a bypass of a declared contract, so it is opt-in and it is not the
+# default. MiniMax documents three, ComfyUI's socket declares three, and no one
+# has published a render using more. Reference audio rides through every
+# sampling step, so the cost is certain and the quality effect is not known.
+#
+# MAX_REF_FILES_TOTAL is a model-card number too -- it appears nowhere in
+# ComfyUI's source. Raising the audio ceiling raises the total by the same
+# amount, because the extra files are exactly the extra audio (see RefLimits).
+MAX_REF_AUDIOS_CEILING = 9
+
 # Reference video duration window. The stock node enforces only the lower bound
 # in code (">= 5 frames"); 2-15s is the documented usable range and what the
 # budget checker reports against.

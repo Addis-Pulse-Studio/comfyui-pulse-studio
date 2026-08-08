@@ -284,6 +284,27 @@ Loading both checkpoints is ~42 GB, so the choice is a memory decision too.
 **Budget.** ≤9 images, ≤3 videos (2–15s each), ≤3 standalone audio, **≤12 files
 total**. The 12-file cap genuinely binds — 9+3+3 = 15 sockets exist.
 
+A reference video's soundtrack takes its own `<Audio j>` ordinal, separate from
+the three standalone slots, so **six audio references are reachable inside the
+documented budget**: three videos with their soundtracks enabled, plus three
+standalone. The soundtrack rides inside the video's own file and costs nothing
+against the 12.
+
+**The audio cap is the one limit here that is not the model's.** Images at 9 and
+videos at 3 are Autogrow socket templates in
+`comfy_extras/nodes_minimax_h3.py`; so is audio at 3 — but nothing below it
+agrees. `PackedLayout` appends one `ref_audio` segment per reference block in a
+plain loop, with no count check, and the tokenizer just increments a counter.
+The socket cap is enforced by graph validation, and this pack calls the
+reference encoder **in-process**, so it never applies to what the node passes.
+
+`audio_ref_ceiling` (3–9, default 3) exposes that. At 3 nothing changes. Above
+3 the bin accepts up to nine standalone audio references, the file total rises
+by the same amount, the meter turns amber, and the node says once per render
+that it is past what MiniMax and ComfyUI document. It will run. Nobody has
+published a result at nine, and every reference rides all your sampling steps —
+so treat it as an experiment you measure, not a setting you leave on.
+
 **Frame grid.** Frames snap to `17k + 5`, floor 5, trained ceiling 362 (~15.08s at
 24fps). `MAX_WINDOW_FRAMES` is configuration, not a constant: when MiniMax raises
 the ceiling, one integer moves.
@@ -412,7 +433,7 @@ picture.
 ## Tests
 
 ```bash
-python3 run_tests.py        # 403 tests, no Python dependencies
+python3 run_tests.py        # 428 tests, no Python dependencies
 python3 run_tests.py -v
 node tests/js/test_widget_guard.mjs   # also run by the suite when node exists
 node tests/js/test_widget_order.mjs

@@ -28,7 +28,7 @@ __all__ = [
 ]
 
 
-def bin_state(bin_):
+def bin_state(bin_, limits=None):
     """Everything the Asset Bin panel needs to draw itself, in one dict.
 
     Tags are live: computed from current order, never stored. The panel shows
@@ -36,7 +36,7 @@ def bin_state(bin_):
     back -- prompt text refers to assets by name or id.
     """
     tm = bin_.tag_map()
-    report = bin_.budget()
+    report = bin_.budget(limits=limits)
     rows = []
     for asset in bin_:
         row = {
@@ -90,7 +90,7 @@ class RenumberDelta:
         return "RenumberDelta(%s: %s -> %s)" % (self.name, self.before, self.after)
 
 
-def preview_change(bin_, operation, **kwargs):
+def preview_change(bin_, operation, limits=None, **kwargs):
     """What would this edit renumber? Returns (deltas, error).
 
     Runs the operation against a copy, so the live bin is never touched. `error`
@@ -102,7 +102,7 @@ def preview_change(bin_, operation, **kwargs):
     before_map = bin_.tag_map().by_id
     trial = AssetBin.from_list(bin_.to_list())
     try:
-        apply_operation(trial, operation, **kwargs)
+        apply_operation(trial, operation, limits=limits, **kwargs)
     except (BudgetError, KeyError, ValueError) as exc:
         return [], str(exc) or repr(exc)
 
@@ -122,13 +122,20 @@ def preview_change(bin_, operation, **kwargs):
     return deltas, None
 
 
-def apply_operation(bin_, operation, **kwargs):
-    """Dispatch a named bin edit. Raises on refusal, leaving the bin unchanged."""
+def apply_operation(bin_, operation, limits=None, **kwargs):
+    """Dispatch a named bin edit. Raises on refusal, leaving the bin unchanged.
+
+    `limits` is the reference budget this edit is judged against; only `add` can
+    be refused by it. Passing it here rather than reading module scope is what
+    lets a project running a raised audio ceiling accept its fourth audio drop
+    in the panel, instead of accepting it at compile time and refusing it at the
+    drop -- which would be the worst of both.
+    """
     if operation == "add":
         asset = kwargs.get("asset")
         if not isinstance(asset, Asset):
             asset = Asset.from_dict(asset)
-        return bin_.add(asset, index=kwargs.get("index"))
+        return bin_.add(asset, index=kwargs.get("index"), limits=limits)
     if operation == "remove":
         return bin_.remove(kwargs["asset_id"])
     if operation == "move":

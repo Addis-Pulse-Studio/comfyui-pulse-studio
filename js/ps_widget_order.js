@@ -89,6 +89,7 @@ const SPECS = {
       { name: "ref_image_size", kind: "string" },
       { name: "shift_video", kind: "number" },
       { name: "shift_audio", kind: "number" },
+      { name: "audio_ref_ceiling", kind: "number" },
     ],
   },
   PulseRetake: {

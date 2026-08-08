@@ -67,6 +67,7 @@ const CSS = `
   background:#141414; border:1px solid #444; border-left:3px solid #6d7f92;
   font-variant-numeric:tabular-nums; font-size:10px; }
 .ps-meter.ps-over { background:#3a1717; border-color:#8d3b3b; color:#ffb4b4; }
+.ps-meter.ps-beyond { background:#33240c; border-color:#8a6a2a; color:#f0cf90; }
 
 .ps-row { display:grid; grid-template-columns:44px 1fr auto auto; gap:7px;
   align-items:center; padding:4px; border-radius:4px; background:#1d1d1d;
@@ -288,11 +289,30 @@ class AssetBinPanel {
     return this.storage.value ?? "{}";
   }
 
+  /** The node's own audio ceiling, sent with every request that judges a budget.
+   *
+   *  The server holds no session state, so it cannot know which node is asking
+   *  or what that node's widget says. Reading the live widget here -- never
+   *  writing to it -- is what makes the meter agree with what the render will
+   *  actually accept. A missing widget (an older saved node, before the append)
+   *  simply sends nothing and the server falls back to the documented 3.
+   */
+  get audioCeiling() {
+    const widget = this.node.widgets?.find((w) => w.name === "audio_ref_ceiling");
+    const value = Number(widget?.value);
+    return Number.isFinite(value) && value > 0 ? value : undefined;
+  }
+
+  /** Request body shared by every route that evaluates the budget. */
+  body(extra) {
+    return { timeline_data: this.raw, audio_ref_ceiling: this.audioCeiling, ...extra };
+  }
+
   async apply(operation, kwargs) {
     if (this.busy) return;
     this.busy = true;
     try {
-      const res = await post("apply", { timeline_data: this.raw, operation, kwargs });
+      const res = await post("apply", this.body({ operation, kwargs }));
       if (res.status !== "ok") { alert(res.message || "Asset Bin backend error."); return; }
       if (res.error) { alert(res.error); return; }
       this.commit(res.timeline_data);
@@ -308,7 +328,7 @@ class AssetBinPanel {
   async render() {
     let result;
     try {
-      result = await post("bin_state", { timeline_data: this.raw });
+      result = await post("bin_state", this.body());
     } catch (err) {
       result = { status: "error", message: String(err) };
     }
@@ -345,13 +365,24 @@ class AssetBinPanel {
 
   buildMeter(budget) {
     const meter = document.createElement("div");
-    meter.className = "ps-meter" + (budget.ok ? "" : " ps-over");
+    // Over budget wins the colour: a bin that will not queue matters more than
+    // one that is merely past the documented ceiling.
+    meter.className = "ps-meter" + (budget.ok ? (budget.beyond_spec ? " ps-beyond" : "")
+                                              : " ps-over");
     for (const part of budget.meter.split("|")) {
       const span = document.createElement("span");
       span.textContent = part.trim();
       meter.appendChild(span);
     }
-    if (!budget.ok) meter.title = budget.errors.join("\n");
+    if (!budget.ok) {
+      meter.title = budget.errors.join("\n");
+    } else if (budget.beyond_spec) {
+      meter.title =
+        `audio_ref_ceiling is ${budget.max_audios}. MiniMax documents 3 standalone ` +
+        `audio references and ComfyUI's socket declares 3; this render goes past ` +
+        `both. It will run, but nothing about the result is covered by anything ` +
+        `published.`;
+    }
     return meter;
   }
 
@@ -532,7 +563,7 @@ class AssetBinPanel {
   }
 
   async indexOf(assetId) {
-    const res = await post("bin_state", { timeline_data: this.raw });
+    const res = await post("bin_state", this.body());
     if (res.status !== "ok") return -1;
     return res.state.assets.findIndex((a) => a.id === assetId);
   }
@@ -540,10 +571,10 @@ class AssetBinPanel {
   async previewMove(assetId, targetId) {
     const index = await this.indexOf(targetId);
     if (index < 0) return "";
-    const res = await post("preview_change", {
-      timeline_data: this.raw, operation: "move",
+    const res = await post("preview_change", this.body({
+      operation: "move",
       kwargs: { asset_id: assetId, new_index: index },
-    });
+    }));
     if (res.status !== "ok" || res.error) return res.error || "";
     if (!res.deltas?.length) return "";
     return "this reorder renumbers:\n" + res.deltas

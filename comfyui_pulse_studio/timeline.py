@@ -10,8 +10,8 @@ line. It cannot carry its own reference image pinned at its own time -- see
 constants.ANCHOR_FIRST for why. Per-shot visual control in H3 is textual.
 """
 
-from .assets import KIND_AUDIO, KIND_IMAGE, KIND_VIDEO, AssetBin
-from .constants import BRANCH_FL2VA, BRANCH_REF2VA, BRANCHES, FPS
+from .assets import KIND_AUDIO, KIND_IMAGE, KIND_VIDEO, AssetBin, RefLimits
+from .constants import BRANCH_FL2VA, BRANCH_REF2VA, BRANCHES, FPS, MAX_REF_AUDIOS
 
 __all__ = ["Shot", "Timeline", "TimelineError"]
 
@@ -81,14 +81,17 @@ class Timeline:
                  style_line="", overall_soundscape="", non_diegetic_music="",
                  dialogue_language="English", branch=BRANCH_REF2VA,
                  continuation_branch=None, first_frame=None, last_frame=None,
-                 window_seconds=None, identity_notes="", retention_notes=""):
+                 window_seconds=None, identity_notes="", retention_notes="",
+                 audio_ref_ceiling=MAX_REF_AUDIOS):
         # Free-form lines from the global prompt box. They ride into
         # subject_definitions and retention_analysis alongside the definitions the
         # bin generates, so a user can lock identity in prose without inventing
         # an asset for it.
         self.identity_notes = identity_notes or ""
         self.retention_notes = retention_notes or ""
-        self.assets = assets if isinstance(assets, AssetBin) else AssetBin.from_list(assets)
+        self.limits = RefLimits(audio_ref_ceiling)
+        self.assets = (assets if isinstance(assets, AssetBin)
+                       else AssetBin.from_list(assets, limits=self.limits))
         self.shots = [s if isinstance(s, Shot) else Shot.from_dict(s, i)
                       for i, s in enumerate(shots or [])]
         self.fps = int(fps)
@@ -206,7 +209,7 @@ class Timeline:
     # ── serialisation ───────────────────────────────────────────────────────
 
     def to_dict(self):
-        return {
+        d = {
             "version": 1,
             "fps": self.fps,
             "duration_seconds": self._duration_seconds,
@@ -224,6 +227,11 @@ class Timeline:
             "assets": self.assets.to_list(),
             "shots": [s.to_dict() for s in self.shots],
         }
+        # Emitted only when raised, so a project running the documented budget
+        # serialises byte-identically to one written before this option existed.
+        if self.limits.beyond_spec:
+            d["audio_ref_ceiling"] = self.limits.audios
+        return d
 
     @classmethod
     def from_dict(cls, data):
@@ -244,6 +252,7 @@ class Timeline:
             window_seconds=data.get("window_seconds"),
             identity_notes=data.get("identity_notes", ""),
             retention_notes=data.get("retention_notes", ""),
+            audio_ref_ceiling=data.get("audio_ref_ceiling", MAX_REF_AUDIOS),
         )
 
     @classmethod

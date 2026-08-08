@@ -73,6 +73,50 @@ Schema 1 documents — a bare `{"assets": [...]}` — load with an empty cast an
 are upgraded in place. The upgrade is additive, so a document from a *future*
 schema passes through untouched rather than being downgraded.
 
+### Added — `audio_ref_ceiling`, a raisable audio budget
+
+New widget on `PulseSlate`, 3 to 9, **default 3**. Appended last, which the slot
+contract makes safe: a workflow saved before it existed loads with the declared
+default, and there is a JS test round-tripping exactly that array.
+
+The 3 is not the model's number. Read out of source:
+
+| where | what it says |
+|---|---|
+| `comfy_extras/nodes_minimax_h3.py` | `ref_audios` is Autogrow with `max=3` |
+| `comfy/ldm/minimax/model.py` | `PackedLayout` appends one `ref_audio` segment per block, in a loop. No count check. |
+| `comfy/text_encoders/minimax.py` | the tokenizer increments a counter for `<Audio j>`. No cap. |
+
+So the cap is a socket declaration, unlike the first/last keyframe rule, which
+is RoPE position math no node can route around. And Autogrow's `max=` is
+enforced by graph validation in `execution.py`, which never runs for this pack:
+it calls `MiniMaxH3ReferenceToVideo.execute()` in-process. Nine standalone audio
+references are marshalled and rendered.
+
+That is a bypass of a declared contract, so it is opt-in and announced. Above 3
+the meter turns amber and the node logs, once per render, that MiniMax documents
+three and ComfyUI's socket declares three. It never blocks — the user chose it.
+
+The 12-file total is a model-card number too; it appears nowhere in ComfyUI's
+source. It rises with the ceiling, by the same amount, so that nine images and
+nine audio fit together rather than the audio passing and the total refusing it.
+
+The budget is now a `RefLimits` value passed explicitly through the bin, the
+compiler, the panel routes and the document, rather than read from module scope
+— so the ceiling belongs to one render, and two nodes in a graph may disagree.
+The panel sends its node's widget with every budget request, because the server
+holds no session state and a meter that disagrees with what the render accepts
+is worse than no meter.
+
+Not covered by anything published: no MiniMax or ComfyUI documentation describes
+a render with more than three, and reference audio rides every sampling step.
+Measure it before trusting it.
+
+**Reachable without raising anything:** a reference video's soundtrack takes its
+own `<Audio j>`, separate from the three standalone slots, so three videos with
+soundtracks plus three standalone audio is six audio references inside the
+documented budget.
+
 ### Added — environment invariants (spec §18.1)
 
 - **No network, enforced by test.** A source scan over both languages bans
