@@ -190,6 +190,32 @@ It also records that no `seesee75-commits/ComfyUI-MiniMaxH3-Director` (GPL-3.0)
 code is present, verified against the full git history and not only the working
 tree.
 
+### Fixed — a 15-second timeline rendered 7 seconds
+
+Four faults in a row, each of which looked correct alone. Every step succeeded;
+the result was a 7.29-second file with no error anywhere.
+
+1. **The window cap snapped down to the frame grid.** 15.0 s is 360 frames, the
+   grid steps by 17, so the cap became 345 frames — 14.375 s. The trained
+   ceiling is 362 (15.083 s), so the most natural number a user can type could
+   not express a single window, and a 15.0 s render silently split in two over a
+   0.7 s shortfall. The cap now rounds to the **nearest** grid point, in both
+   `partition_windows` and `compile_timeline`. It still clamps to
+   `MAX_WINDOW_FRAMES`, so rounding up can never leave the trained range.
+2. **Two windows means the internal sampling path**, which handed back the last
+   window's latent on `latent` and `positive`.
+3. **The starter graph's single-window group sampled that latent.** 175 frames
+   is a perfectly valid latent, so it rendered and saved as if it were the whole
+   piece. Those two outputs are now an `ExecutionBlocker` on the multi-window
+   path, naming the window count and telling the user to switch groups. A
+   message beats a plausible-looking short video.
+4. **`[00:00.000 - 00:05.000]` range markers did not parse.** `_TIME_MARKER`
+   accepted only a bare `[MM:SS.mmm]`, so a three-shot storyboard collapsed into
+   one shot whose prompt was the entire text — a render with no per-shot
+   direction in it at all. Ranges now parse, with `-`, `--`, `–`, `—` or `to`.
+   The stated end is read and checked rather than obeyed: shot spans still run
+   to the next shot's start, and a range that disagrees is reported.
+
 ### Fixed
 
 - Ten client-facing asset filenames were referenced by the shipped example

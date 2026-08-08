@@ -35,8 +35,22 @@ __all__ = [
 # because a user who reorders paragraphs without renumbering means the new order.
 _SHOT_MARKER = re.compile(r"^\[\s*shot\s*(\d+)\s*\]\s*", re.IGNORECASE)
 
-# [00:04.500]  /  [0:04]  /  [00:04.5]  as a leading marker
-_TIME_MARKER = re.compile(r"^\[\s*(\d{1,3}):(\d{1,2}(?:\.\d{1,3})?)\s*\]\s*")
+# [00:04.500]  /  [0:04]  /  [00:04.5]  as a leading marker, and the same with a
+# closing time: [00:00.000 - 00:05.000] / [0:00–0:05] / [00:00 to 00:05].
+#
+# The range form is not decoration. It is what a person writing a shot list
+# actually types, and what every LLM emits when asked for one -- and until it
+# parsed, a whole storyboard collapsed into a single shot whose prompt was the
+# entire text. The render succeeded and had no per-shot direction in it at all,
+# which is this project's own definition of the worst failure mode.
+#
+# The end time is read and checked, not used: shot durations come from where the
+# next shot starts, so contiguous ranges already produce exactly the spans that
+# were written. A range that disagrees is reported rather than quietly obeyed.
+_TIME_MARKER = re.compile(
+    r"^\[\s*(\d{1,3}):(\d{1,2}(?:\.\d{1,3})?)"
+    r"(?:\s*(?:-|--|–|—|to)\s*(\d{1,3}):(\d{1,2}(?:\.\d{1,3})?))?\s*\]\s*",
+    re.IGNORECASE)
 
 # "At 00:04.500," following a shot marker, which is the form the compiler emits,
 # so a user who pasted a previous compile back in still parses.
@@ -102,9 +116,10 @@ def parse_timecode(minutes, seconds):
 def _strip_markers(line):
     """Pull any leading shot/time markers off a line.
 
-    Returns (explicit_seconds_or_None, remaining_text).
+    Returns (explicit_seconds_or_None, declared_end_or_None, remaining_text).
     """
     explicit = None
+    declared_end = None
     text = line.strip()
 
     matched = True
@@ -118,6 +133,8 @@ def _strip_markers(line):
         m = _TIME_MARKER.match(text)
         if m:
             explicit = parse_timecode(m.group(1), m.group(2))
+            if m.group(3) is not None:
+                declared_end = parse_timecode(m.group(3), m.group(4))
             text = text[m.end():]
             matched = True
             continue
@@ -132,7 +149,7 @@ def _strip_markers(line):
             explicit = parse_timecode(m.group(1), m.group(2))
             text = text[m.end():]
             matched = True
-    return explicit, text.strip()
+    return explicit, declared_end, text.strip()
 
 
 def _is_shot_line(line):
@@ -161,22 +178,22 @@ def parse_shots(text, total_duration=None, fps=24):
         return [], diagnostics
 
     # ── split into blocks on marker lines ───────────────────────────────────
-    blocks = []  # (explicit_seconds_or_None, [lines])
+    blocks = []  # (explicit_seconds_or_None, declared_end_or_None, [lines])
     for line in text.split("\n"):
         if _is_shot_line(line):
-            explicit, rest = _strip_markers(line)
-            blocks.append([explicit, [rest] if rest else []])
+            explicit, declared_end, rest = _strip_markers(line)
+            blocks.append([explicit, declared_end, [rest] if rest else []])
         elif blocks:
-            blocks[-1][1].append(line)
+            blocks[-1][2].append(line)
         elif line.strip():
-            blocks.append([None, [line]])
+            blocks.append([None, None, [line]])
 
     shots = []
-    for explicit, lines in blocks:
+    for explicit, declared_end, lines in blocks:
         body = "\n".join(lines).strip()
         if not body:
             continue
-        shots.append({"start": explicit, "prompt": body})
+        shots.append({"start": explicit, "declared_end": declared_end, "prompt": body})
 
     if not shots:
         return [], diagnostics
@@ -236,6 +253,17 @@ def parse_shots(text, total_duration=None, fps=24):
             diagnostics.append(
                 "shots %d and %d landed on the same instant; shot %d nudged forward one frame"
                 % (idx + 1, idx + 2, idx + 2))
+        # A written range that does not match where the shot actually ends is
+        # reported. It means the author's intent and the compiled timeline have
+        # diverged, and a silent divergence is the thing this package exists to
+        # refuse -- the render would succeed and be timed wrongly.
+        declared_end = shot.get("declared_end")
+        if declared_end is not None and abs(declared_end - end) > 1.0 / fps:
+            diagnostics.append(
+                "shot %d is written as ending at %s but compiles to %s. Shot spans "
+                "run to the next shot's start, so check for a gap, an overlap, or a "
+                "total duration that does not match the last shot's end."
+                % (idx + 1, _fmt(declared_end), _fmt(end)))
         out.append({
             "id": "shot_%d" % (idx + 1),
             "start": start,

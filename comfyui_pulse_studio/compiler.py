@@ -374,7 +374,12 @@ def compile_timeline(timeline, window_frames=None, policy="balanced",
         raise ValueError("; ".join(problems))
 
     if window_frames is None:
-        window_frames = (seconds_to_frames(timeline.window_seconds, timeline.fps, "down")
+        # "nearest", not "down". A window length is a ceiling the user is asking
+        # for, and the grid steps by 0.708s: rounding 15.0s down produced a
+        # 14.375s cap, which split a 15.0s timeline into two windows over a
+        # shortfall the user could not even see. partition_windows clamps to
+        # MAX_WINDOW_FRAMES, so rounding up can never leave the trained range.
+        window_frames = (seconds_to_frames(timeline.window_seconds, timeline.fps, "nearest")
                          if timeline.window_seconds else MAX_WINDOW_FRAMES)
 
     diagnostics = []

@@ -226,7 +226,18 @@ def partition_windows(total_frames, window_frames=MAX_WINDOW_FRAMES,
     # the total first would inflate it by up to a grid step before the split even
     # begins, and that overshoot compounds across windows.
     total_frames = max(MIN_FRAMES, int(total_frames))
-    cap = max(MIN_FRAMES, min(snap_frames_down(window_frames), MAX_WINDOW_FRAMES))
+    # The window cap snaps to the NEAREST grid point, not down.
+    #
+    # Down was wrong here, and wrong in a way that hid itself. The grid steps by
+    # 17 frames -- 0.708s -- so a request of 15.0s (360 frames) snapped down to
+    # 345, which is 14.375s. A 15.0s timeline then did not fit in one window and
+    # was silently split in two, over a shortfall of 0.7s. The ceiling itself is
+    # 15.083s, so the natural thing to type could not express it.
+    #
+    # Rounding to nearest costs at most half a grid step of overshoot and can
+    # never exceed MAX_WINDOW_FRAMES, because the min() below still clamps. The
+    # total is still not snapped -- see above; that asymmetry is deliberate.
+    cap = max(MIN_FRAMES, min(snap_frames_nearest(window_frames), MAX_WINDOW_FRAMES))
     floor = max(MIN_FRAMES, int(min_window_frames))
 
     if policy not in ("balanced", "fill"):

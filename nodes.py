@@ -574,7 +574,28 @@ class PulseSlate:
                 carry_clip = images[-min(images.shape[0], 48):]
                 carry_audio_clip = audio
 
-            return (shifted, positive, latent, media.concat_audio(all_audio),
+            # positive/latent are NOT handed back on this path.
+            #
+            # They would be the last window's -- already sampled, above -- and a
+            # graph still wired to the single-window group would re-sample them
+            # and save that one window as if it were the whole render. Which is
+            # exactly what happened: a 15s timeline that split into 192 + 175
+            # frames produced a 7-second file, with no error anywhere, because
+            # 175 frames is a perfectly valid latent.
+            #
+            # An ExecutionBlocker stops that branch and says why, so the failure
+            # is a message instead of a plausible-looking short video. The real
+            # outputs of this path are `images` and `combined_audio`.
+            blocked = ExecutionBlocker(
+                "This timeline rendered as %d windows, so it was sampled inside the "
+                "node and there is no single latent to hand back -- `latent` and "
+                "`positive` would be the last window alone (%d of %d frames). Take "
+                "the stitched result from the `images` and `combined_audio` "
+                "outputs: mute the single-window group and unmute the long-timeline "
+                "one (select it, Ctrl+M)."
+                % (len(plan.windows), plan.windows[-1].frame_count,
+                   sum(w.frame_count for w in plan.windows)))
+            return (shifted, blocked, blocked, media.concat_audio(all_audio),
                     torch.cat(all_images, dim=0), preview)
 
         except SocketGapError as exc:

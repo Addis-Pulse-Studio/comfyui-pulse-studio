@@ -433,7 +433,7 @@ picture.
 ## Tests
 
 ```bash
-python3 run_tests.py        # 428 tests, no Python dependencies
+python3 run_tests.py        # 441 tests, no Python dependencies
 python3 run_tests.py -v
 node tests/js/test_widget_guard.mjs   # also run by the suite when node exists
 node tests/js/test_widget_order.mjs
