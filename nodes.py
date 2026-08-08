@@ -45,10 +45,14 @@ from .comfyui_pulse_studio.constants import (
     REF_IMAGE_SIZE_OPTIONS,
     SCHEMA_VERSION,
 )
+from .comfyui_pulse_studio.patches import check_model_patches, check_single_checkpoint
 from .comfyui_pulse_studio.retake import RetakeError, plan_retake
 from .comfyui_pulse_studio.sockets import SocketGapError, check_socket_groups, drop_missing
 from .comfyui_pulse_studio.still import StillError, plan_still
 from .comfyui_pulse_studio.widget_state import EMPTY_TIMELINE_DATA, build_timeline
+
+log = logging.getLogger(__name__)
+
 
 # ── The slot contract, in one place ─────────────────────────────────────────
 # Every node in this pack opens its widget list with `schema_version`, so that
@@ -65,7 +69,52 @@ def schema_widget():
         "tooltip": "Which widget layout this node was saved with. Written by the "
                    "node, read at load time to restore values by name. Do not edit."})
 
-log = logging.getLogger(__name__)
+
+# `hidden` inputs are not widgets and consume no widgets_values slot, so adding
+# one is outside the §3 append-only rule. UNIQUE_ID is what lets a warning be
+# addressed to the node that raised it.
+HIDDEN_INPUTS = {"unique_id": "UNIQUE_ID"}
+
+
+def _sage_attention_global():
+    """ComfyUI's own --use-sage-attention flag, which leaves no model_options
+    trace because it patches attention process-wide. Absent on older cores."""
+    try:
+        import comfy.model_management as mm
+        return bool(mm.sage_attention_enabled())
+    except Exception:
+        return False
+
+
+def _warn_on_node(unique_id, warnings):
+    """Put warnings on the node's face as well as in the console.
+
+    A console message is easy to miss, and the whole point of the patch warning
+    is that the failure it predicts (an out-of-memory error on a full-length
+    window) arrives much later and looks unrelated. Best-effort: if the frontend
+    channel is unavailable -- headless API runs, an older core -- the console
+    warning above still happened, and nothing here may break the render.
+    """
+    if not warnings or unique_id is None:
+        return
+    try:
+        from server import PromptServer
+        PromptServer.instance.send_sync(
+            "pulse_studio.warnings",
+            {"node_id": str(unique_id), "warnings": list(warnings)})
+    except Exception as exc:  # pragma: no cover - no server in the test env
+        log.debug("[PulseStudio] could not push warnings to the node face: %s", exc)
+
+
+def _report_patches(model, unique_id, branches_used=(), fl2va_connected=False):
+    """§10 + §18.1. Warn, never block -- the user may be deliberately unpatched."""
+    report = check_model_patches(model, sage_attention_global=_sage_attention_global())
+    warnings = list(report.warnings)
+    warnings.extend(check_single_checkpoint(branches_used, fl2va_connected))
+    for note in warnings:
+        log.warning("[PulseStudio] %s", note)
+    _warn_on_node(unique_id, warnings)
+    return warnings
 
 SAMPLERS = ["res_multistep", "euler", "euler_ancestral", "dpmpp_2m", "dpmpp_2m_sde", "ddim"]
 SCHEDULERS = ["simple", "normal", "beta", "sgm_uniform", "karras", "exponential"]
@@ -387,6 +436,7 @@ class PulseSlate:
                     "The First/Last-Frame checkpoint, needed only if a window uses the "
                     "fl2va branch. Loading both checkpoints is ~42GB."}),
             },
+            "hidden": HIDDEN_INPUTS,
         }
 
     RETURN_TYPES = ("MODEL", "CONDITIONING", "LATENT", "AUDIO", "IMAGE", "STRING")
@@ -402,7 +452,7 @@ class PulseSlate:
                 duration_seconds, aspect_ratio, width, height, steps, sampler_name,
                 scheduler, cfg, seed, partition_strategy, window_seconds, resize_method,
                 carry_mode, carry_audio, carry_audio_seconds, ref_image_size,
-                shift_video, shift_audio, model_fl2va=None):
+                shift_video, shift_audio, model_fl2va=None, unique_id=None):
 
         width, height = resolution_for(aspect_ratio, width, height)
 
@@ -445,6 +495,13 @@ class PulseSlate:
             log.warning("[PulseStudio] a window uses the fl2va branch but model_fl2va is not "
                         "connected; falling back to the main model, which normally holds the "
                         "ref2va checkpoint. Expect degraded output.")
+
+        # §10: check the model we were HANDED, not the one we return. A patch
+        # applied downstream of this node would do nothing for the internal
+        # sampling loop below, which is the case where it matters most.
+        _report_patches(model, unique_id,
+                        branches_used={w.branch for w in plan.windows},
+                        fl2va_connected=model_fl2va is not None)
 
         log.info("[PulseStudio] %d window(s): %s (%.2fs total, %dx%d)",
                  len(plan.windows), ", ".join(str(w.frame_count) for w in plan.windows),
@@ -549,6 +606,7 @@ class PulseRetake:
                 "base_audio": ("AUDIO", {"tooltip": "The clip's original audio, returned "
                                                     "as-is when keep_base_audio is on."}),
             },
+            "hidden": HIDDEN_INPUTS,
         }
 
     RETURN_TYPES = ("IMAGE", "AUDIO", "STRING")
@@ -562,7 +620,8 @@ class PulseRetake:
 
     def execute(self, model_fl2va, clip, vae, audio_vae, images, schema_version, prompt,
                 cut_start_seconds, cut_end_seconds, keep_base_audio, fps, seed, steps,
-                sampler_name, scheduler, cfg, shift_video, shift_audio, base_audio=None):
+                sampler_name, scheduler, cfg, shift_video, shift_audio, base_audio=None,
+                unique_id=None):
         try:
             plan = plan_retake(images.shape[0], cut_start_seconds=cut_start_seconds,
                                cut_end_seconds=cut_end_seconds,
@@ -576,6 +635,10 @@ class PulseRetake:
         for note in plan.diagnostics:
             log.warning("[PulseStudio] retake: %s", note)
         log.info("[PulseStudio] %s", plan.describe())
+
+        # This node always samples internally, so an unpatched model is felt here
+        # too. Only one checkpoint is ever wired in, so no single-checkpoint check.
+        _report_patches(model_fl2va, unique_id)
 
         height, width = images.shape[1], images.shape[2]
         anchors = plan.anchors()
@@ -668,6 +731,7 @@ class PulseStill:
                     "Reference images for generation (ref2va). Ignored when source_image is "
                     "connected, since anchors and references cannot coexist in one render."}),
             },
+            "hidden": HIDDEN_INPUTS,
         }
 
     RETURN_TYPES = ("IMAGE", "STRING")
@@ -681,7 +745,8 @@ class PulseStill:
     def execute(self, model, clip, vae, audio_vae, schema_version,
                 prompt, aspect_ratio, width, height,
                 frame_pick, canvas_from_reference, seed, steps, sampler_name, scheduler,
-                cfg, shift_video, shift_audio, source_image=None, ref_images=None):
+                cfg, shift_video, shift_audio, source_image=None, ref_images=None,
+                unique_id=None):
         width, height = resolution_for(aspect_ratio, width, height)
         source_size = None
         if source_image is not None:
@@ -697,6 +762,11 @@ class PulseStill:
             message = "Still refused: %s" % (exc,)
             log.error("[PulseStudio] %s", message)
             return (ExecutionBlocker(message), message)
+
+        # A still is a 5-frame render, so the memory case is mild -- but the
+        # attention patch still applies, and a silently unpatched graph here is
+        # the same graph the user will scale up to a timeline.
+        _report_patches(model, unique_id)
 
         for note in plan.diagnostics:
             log.warning("[PulseStudio] still: %s", note)
