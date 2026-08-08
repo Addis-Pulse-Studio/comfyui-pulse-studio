@@ -6,6 +6,14 @@ The grid is not a limit we could relax; it is the shape of the model's latent
 temporal packing (`video_latent_t` below is core's own formula). Every frame
 count that reaches a stock H3 node must sit on it, so quantisation happens once,
 here, and every caller uses the result rather than rounding on its own.
+
+ATTRIBUTION
+-----------
+The idea of cutting a long timeline into chained fixed-ceiling windows comes
+from muse-collective-26/MiniMaxH3-Director-Seed-Hunt (MIT), which this project
+forks. The partitioning policies, the 124-frame trained floor, the backwards
+tail merge and the rebalancing below are this project's own work; the design
+they implement is upstream's. See NOTICE.
 """
 
 import math

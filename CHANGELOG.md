@@ -107,12 +107,31 @@ tree.
 - Windows-only `minimax\` model paths in the example workflows use forward
   slashes, so the graphs load on any platform.
 
+### Name availability check — 2026-08-07
+
+Checked on 2026-08-07. Every machine-verifiable namespace is clear:
+
+| namespace | query | result |
+|---|---|---|
+| PyPI | `comfyui-pulse-studio` | 404 — available |
+| PyPI | `pulse-studio` | 404 — available |
+| ComfyUI registry | `comfyui-pulse-studio` | 404 — available |
+| GitHub | `ComfyUI-PulseStudio`, `PulseSlate` | no collision found |
+
+Nearest neighbours, neither a conflict: `krishnancr/ComfyUI-Pulse-MeshAudit` on
+GitHub, and `minimaxh3-direct` (publisher: miaodl) in the ComfyUI registry — the
+latter worth tracking as a same-niche project. "Pulse" alone is widely used as a
+product name; `PulseStudio` and `PulseSlate` are not.
+
+**A trademark search has not been done.** Registry and PyPI 404s establish
+availability, not clearance, and the two are not the same question. §1 calls for
+a plain trademark search; that remains outstanding and blocks the tag.
+
 ### Pending before the tag
 
 - [ ] **Path B verification on hardware.** A >15 s render, chained and stitched,
       with the audio seam listened to at each window boundary. Findings go here.
       Path B has never been run; only the ≤15 s single-window path is verified.
-- [ ] **Name availability check.** GitHub, PyPI and ComfyUI registry namespaces
-      plus a plain trademark search for "Pulse Studio" / "PulseSlate". Record the
-      date here. This blocks the tag.
+- [ ] **Trademark search** for "Pulse Studio" / "Pulse Slate" in the relevant
+      jurisdiction. Availability was checked (above); clearance was not.
 - [ ] `PublisherId` confirmed against the publisher created at registry.comfy.org.

@@ -160,7 +160,7 @@ Windows are partitioned `balanced` by default: 16s at a 15s ceiling becomes two
 reliably looks broken. `fill` is available when you mean windows of a literal
 length.
 
-### MiniMax H3 Retake Scissor
+### Pulse Retake · MiniMax H3
 
 Mark a bad span; the node pins the exact frame **before** the cut as
 `first_frame` and the exact frame **after** it as `last_frame`, renders only the
@@ -175,7 +175,7 @@ construction and asserted at runtime: a mismatch would shift every frame after
 the patch and desync the audio. `keep_base_audio` defaults on, because a
 re-rendered patch invents its own score and will not match the surrounding track.
 
-### MiniMax H3 Still Mode
+### Pulse Still · MiniMax H3
 
 A still is a 5-frame render where you keep one frame — same conditioning nodes,
 same compiler, same reference marshalling.
@@ -282,13 +282,37 @@ data"*.
 
 ---
 
+## Credits
+
+Pulse Studio is a fork of
+[muse-collective-26/MiniMaxH3-Director-Seed-Hunt](https://github.com/muse-collective-26/MiniMaxH3-Director-Seed-Hunt)
+(MIT). Two things came from there and are worth naming rather than burying in a
+licence file:
+
+- **Chunking a long timeline into chained fixed-ceiling windows.** The design is
+  upstream's; the partitioning policies, the 124-frame floor and the tail merge
+  in `comfyui_pulse_studio/frames.py` are this project's implementation of it.
+- **Audio carry-over across a window seam.** Feeding the previous window's
+  decoded audio tail back through the reference audio sockets, so each window
+  does not invent its own score. That is an empirical finding — observed on real
+  renders, not derived — and it is the difference between a seam you can hear and
+  one you cannot.
+
+Both derived modules carry an attribution header pointing here, so the credit
+survives a refactor by someone who no longer remembers the reason for it.
+
 ## License
 
-MIT — see [LICENSE](LICENSE).
+**Apache-2.0** — see [LICENSE](LICENSE) and [NOTICE](NOTICE).
 
-Forked from [muse-collective-26/MiniMaxH3-Director-Seed-Hunt](https://github.com/muse-collective-26/MiniMaxH3-Director-Seed-Hunt)
-(MIT), whose chunking work and empirically-derived audio carry-over informed this
-fork's window continuity. Their copyright is retained as that license requires.
+Upstream is MIT, which is compatible with an Apache-2.0 project provided
+attribution survives; upstream's copyright notice is reproduced in full in
+[NOTICE](NOTICE) as that licence requires. muse-collective MIT code **is**
+present in this tree — stated plainly there so the question is settled on the
+record.
+
+Model weights are **not** redistributed here and carry the MiniMax H3 Community
+License, which is a separate agreement governing the weights and their use.
 
 **No code from `seesee75-commits/ComfyUI-MiniMaxH3-Director` (GPL-3.0) is present
 here.** That project was reviewed for feature ideas only. Copying from it would

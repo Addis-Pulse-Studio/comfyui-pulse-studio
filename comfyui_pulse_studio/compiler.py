@@ -17,6 +17,15 @@ Three properties this module exists to guarantee:
      desynchronise prompt text from sockets.
   2. Every frame count handed downstream is on the 17k+5 grid.
   3. [Shot N] timestamps within a window are strictly increasing.
+
+ATTRIBUTION
+-----------
+`CarryPolicy`'s audio carry-over -- feeding the previous window's decoded audio
+tail back through the reference audio sockets so each window does not invent its
+own score -- is an empirical finding of
+muse-collective-26/MiniMaxH3-Director-Seed-Hunt (MIT), which this project forks.
+It is behaviour that was observed on real renders rather than derived, and it is
+reproduced here on that basis. See NOTICE.
 """
 
 from .assets import (
@@ -184,9 +193,10 @@ class CarryPolicy:
 
     `audio` feeds the previous window's decoded audio tail through the reference
     audio sockets. Without it each window invents its own score from scratch and
-    the seam is audible -- upstream observed this directly on a real render. The
-    tail length is a tunable, not a discovery: 4s is what upstream shipped, and
-    whether it is optimal is untested.
+    the seam is audible -- muse-collective-26/MiniMaxH3-Director-Seed-Hunt (MIT)
+    observed this directly on a real render, and this behaviour is derived from
+    theirs. The tail length is a tunable, not a discovery: 4s is what upstream
+    shipped, and whether it is optimal is untested. See NOTICE.
     """
 
     __slots__ = ("mode", "audio", "audio_seconds")
