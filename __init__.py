@@ -1,4 +1,4 @@
-"""MiniMax H3 Omni-Director — ComfyUI custom node package.
+"""Pulse Studio — ComfyUI custom node package.
 
 Fork of muse-collective-26/MiniMaxH3-Director-Seed-Hunt (MIT). See NOTICE.
 """
@@ -17,7 +17,7 @@ __all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS", "WEB_DIRECTORY"]
 # ── Asset Bin backend routes ────────────────────────────────────────────────
 # The bin panel asks the server to evaluate and apply edits rather than
 # reimplementing the numbering rule in JavaScript. There is exactly one
-# implementation of that rule (omni_director/assets.py), it is the tested one,
+# implementation of that rule (comfyui_pulse_studio/assets.py), it is the tested one,
 # and the UI reads its answers.
 #
 # Crucially, /apply returns a whole new timeline_data string produced by a MERGE
@@ -28,9 +28,9 @@ try:
     from aiohttp import web
     from server import PromptServer
 
-    from .omni_director.assets import AssetBin
-    from .omni_director.binops import bin_state, preview_change, suggest_alias, suggest_name
-    from .omni_director.widget_state import (
+    from .comfyui_pulse_studio.assets import AssetBin
+    from .comfyui_pulse_studio.binops import bin_state, preview_change, suggest_alias, suggest_name
+    from .comfyui_pulse_studio.widget_state import (
         apply_bin_operation,
         load_timeline_document,
     )
@@ -41,7 +41,7 @@ try:
             return load_timeline_document(data.get("timeline_data"))["assets"]
         return data.get("assets") or []
 
-    @PromptServer.instance.routes.post("/omni_director/bin_state")
+    @PromptServer.instance.routes.post("/pulse_studio/bin_state")
     async def _bin_state(request):
         """Live tags, budget meter and name problems for a bin."""
         try:
@@ -49,10 +49,10 @@ try:
             bin_ = AssetBin.from_list(_assets_of(data))
             return web.json_response({"status": "ok", "state": bin_state(bin_)})
         except Exception as exc:
-            log.warning("[OmniDirector] bin_state failed: %s", exc)
+            log.warning("[PulseStudio] bin_state failed: %s", exc)
             return web.json_response({"status": "error", "message": str(exc)}, status=400)
 
-    @PromptServer.instance.routes.post("/omni_director/preview_change")
+    @PromptServer.instance.routes.post("/pulse_studio/preview_change")
     async def _preview_change(request):
         """What a pending edit would renumber, without applying it."""
         try:
@@ -63,10 +63,10 @@ try:
             return web.json_response({"status": "ok", "error": error,
                                       "deltas": [d.to_dict() for d in deltas]})
         except Exception as exc:
-            log.warning("[OmniDirector] preview_change failed: %s", exc)
+            log.warning("[PulseStudio] preview_change failed: %s", exc)
             return web.json_response({"status": "error", "message": str(exc)}, status=400)
 
-    @PromptServer.instance.routes.post("/omni_director/apply")
+    @PromptServer.instance.routes.post("/pulse_studio/apply")
     async def _apply(request):
         """Apply an edit and return the merged timeline_data.
 
@@ -81,10 +81,10 @@ try:
             return web.json_response({"status": "ok", "error": error,
                                       "timeline_data": new_raw})
         except Exception as exc:
-            log.warning("[OmniDirector] apply failed: %s", exc)
+            log.warning("[PulseStudio] apply failed: %s", exc)
             return web.json_response({"status": "error", "message": str(exc)}, status=400)
 
-    @PromptServer.instance.routes.post("/omni_director/suggest_name")
+    @PromptServer.instance.routes.post("/pulse_studio/suggest_name")
     async def _suggest_name(request):
         try:
             data = await request.json()
@@ -98,5 +98,5 @@ try:
             return web.json_response({"status": "error", "message": str(exc)}, status=400)
 
 except Exception as exc:  # pragma: no cover - ComfyUI server not present
-    log.info("[OmniDirector] Asset Bin routes not registered (%s); the node still works "
+    log.info("[PulseStudio] Asset Bin routes not registered (%s); the node still works "
              "with a raw JSON timeline_data widget.", exc)

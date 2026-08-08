@@ -8,9 +8,9 @@ boxes still hold their text afterwards.
 import json
 import unittest
 
-from omni_director.assets import KIND_IMAGE
-from omni_director.compiler import compile_timeline
-from omni_director.widget_state import (
+from comfyui_pulse_studio.assets import KIND_IMAGE
+from comfyui_pulse_studio.compiler import compile_timeline
+from comfyui_pulse_studio.widget_state import (
     PROMPT_WIDGETS,
     DocumentError,
     apply_bin_operation,

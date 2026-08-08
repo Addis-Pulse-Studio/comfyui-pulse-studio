@@ -2,7 +2,7 @@
 
 import unittest
 
-from omni_director.parsing import (
+from comfyui_pulse_studio.parsing import (
     normalize_prompt_text,
     parse_global_prompt,
     parse_shots,

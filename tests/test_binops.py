@@ -2,15 +2,15 @@
 
 import unittest
 
-from omni_director.assets import KIND_AUDIO, KIND_IMAGE, KIND_VIDEO, Asset, AssetBin, BudgetError
-from omni_director.binops import (
+from comfyui_pulse_studio.assets import KIND_AUDIO, KIND_IMAGE, KIND_VIDEO, Asset, AssetBin, BudgetError
+from comfyui_pulse_studio.binops import (
     apply_operation,
     bin_state,
     name_problems,
     preview_change,
     suggest_name,
 )
-from omni_director.constants import MAX_REF_IMAGES
+from comfyui_pulse_studio.constants import MAX_REF_IMAGES
 
 
 def img(i, name=None):
@@ -157,8 +157,8 @@ class TestDropAliases(unittest.TestCase):
     """A short alias is assigned on drop so the user never types a filename."""
 
     def test_aliases_count_per_kind_from_one(self):
-        from omni_director.assets import KIND_AUDIO, KIND_VIDEO
-        from omni_director.binops import suggest_alias
+        from comfyui_pulse_studio.assets import KIND_AUDIO, KIND_VIDEO
+        from comfyui_pulse_studio.binops import suggest_alias
         bin_ = AssetBin()
         self.assertEqual(suggest_alias(bin_, KIND_IMAGE), "Image1")
         bin_.add(Asset("x", KIND_IMAGE, name="Image1"))
@@ -168,16 +168,16 @@ class TestDropAliases(unittest.TestCase):
         self.assertEqual(suggest_alias(bin_, KIND_AUDIO), "Audio1")
 
     def test_alias_skips_a_name_the_user_already_took(self):
-        from omni_director.binops import suggest_alias
+        from comfyui_pulse_studio.binops import suggest_alias
         bin_ = AssetBin([Asset("x", KIND_IMAGE, name="Image1"),
                          Asset("y", KIND_IMAGE, name="Image2")])
         self.assertEqual(suggest_alias(bin_, KIND_IMAGE), "Image3")
 
     def test_alias_is_immediately_usable_as_a_reference(self):
         """The point of the alias: @Image1 must resolve with no renaming first."""
-        from omni_director.assets import AssetBin as Bin
-        from omni_director.binops import suggest_alias
-        from omni_director.compiler import resolve_references
+        from comfyui_pulse_studio.assets import AssetBin as Bin
+        from comfyui_pulse_studio.binops import suggest_alias
+        from comfyui_pulse_studio.compiler import resolve_references
         bin_ = Bin()
         name = suggest_alias(bin_, KIND_IMAGE)
         bin_.add(Asset("a1", KIND_IMAGE, name=name, file="a.png"))

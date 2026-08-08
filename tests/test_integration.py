@@ -8,15 +8,15 @@ actually notice being wrong.
 import json
 import unittest
 
-from omni_director import compile_timeline
-from omni_director.assets import KIND_AUDIO, KIND_IMAGE, KIND_VIDEO
-from omni_director.binops import preview_change
-from omni_director.compiler import CarryPolicy
-from omni_director.constants import MAX_REF_FILES_TOTAL, MAX_WINDOW_FRAMES
-from omni_director.frames import is_on_grid
-from omni_director.retake import plan_retake
-from omni_director.still import plan_still
-from omni_director.timeline import Timeline
+from comfyui_pulse_studio import compile_timeline
+from comfyui_pulse_studio.assets import KIND_AUDIO, KIND_IMAGE, KIND_VIDEO
+from comfyui_pulse_studio.binops import preview_change
+from comfyui_pulse_studio.compiler import CarryPolicy
+from comfyui_pulse_studio.constants import MAX_REF_FILES_TOTAL, MAX_WINDOW_FRAMES
+from comfyui_pulse_studio.frames import is_on_grid
+from comfyui_pulse_studio.retake import plan_retake
+from comfyui_pulse_studio.still import plan_still
+from comfyui_pulse_studio.timeline import Timeline
 
 PROJECT = {
     "assets": [

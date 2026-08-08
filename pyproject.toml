@@ -6,11 +6,11 @@ license = { file = "LICENSE" }
 requires-python = ">=3.9"
 
 [project.urls]
-Repository = "https://github.com/behailu-ai/MiniMaxH3-Omni-Director"
+Repository = "https://github.com/behailu-ai/ComfyUI-PulseStudio"
 
 [tool.comfy]
 PublisherId = "behailu-ai"
-DisplayName = "MiniMax H3 Omni-Director"
+DisplayName = "Pulse Studio"
 Icon = ""
 
 [tool.pytest.ini_options]

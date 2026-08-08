@@ -14,21 +14,21 @@ import os
 import unittest
 from pathlib import Path
 
-from omni_director.assets import KIND_AUDIO, KIND_IMAGE, KIND_VIDEO, Asset, AssetBin
-from omni_director.compiler import CarryPolicy, compile_timeline
-from omni_director.constants import MAX_WINDOW_FRAMES, MIN_TRAINED_FRAMES
-from omni_director.frames import is_on_grid, partition_windows, seconds_to_frames
-from omni_director.sockets import (
+from comfyui_pulse_studio.assets import KIND_AUDIO, KIND_IMAGE, KIND_VIDEO, Asset, AssetBin
+from comfyui_pulse_studio.compiler import CarryPolicy, compile_timeline
+from comfyui_pulse_studio.constants import MAX_WINDOW_FRAMES, MIN_TRAINED_FRAMES
+from comfyui_pulse_studio.frames import is_on_grid, partition_windows, seconds_to_frames
+from comfyui_pulse_studio.sockets import (
     SocketGapError,
     assert_contiguous,
     check_socket_groups,
     drop_missing,
     socket_index,
 )
-from omni_director.timeline import Timeline
+from comfyui_pulse_studio.timeline import Timeline
 
 PROJECT_ROOT = Path(__file__).parent.parent
-CORE = PROJECT_ROOT / "omni_director"
+CORE = PROJECT_ROOT / "comfyui_pulse_studio"
 
 # The headless core must never reach for the runtime. This is what lets the whole
 # compiler be tested with no GPU, no ComfyUI, and nothing pip-installed.
@@ -98,7 +98,7 @@ class TestImportPurity(unittest.TestCase):
         for path in self._core_files():
             if path.name == "__init__.py":
                 continue
-            importlib.import_module("omni_director.%s" % path.stem)
+            importlib.import_module("comfyui_pulse_studio.%s" % path.stem)
 
 
 # ══════════════════════════════════════════════════════════════════════════

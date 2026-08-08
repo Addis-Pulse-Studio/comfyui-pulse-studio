@@ -2,15 +2,15 @@
 
 import unittest
 
-from omni_director.assets import KIND_IMAGE, Asset, AssetBin
-from omni_director.constants import (
+from comfyui_pulse_studio.assets import KIND_IMAGE, Asset, AssetBin
+from comfyui_pulse_studio.constants import (
     BRANCH_FL2VA,
     BRANCH_REF2VA,
     CANVAS_MULTIPLE,
     MAX_PIXELS,
     STILL_FRAMES,
 )
-from omni_director.still import (
+from comfyui_pulse_studio.still import (
     StillError,
     adapt_canvas_core,
     canvas_from_reference,

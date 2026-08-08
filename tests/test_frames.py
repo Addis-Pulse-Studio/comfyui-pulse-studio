@@ -2,8 +2,8 @@
 
 import unittest
 
-from omni_director.constants import MAX_WINDOW_FRAMES, MIN_FRAMES, MIN_TRAINED_FRAMES
-from omni_director.frames import (
+from comfyui_pulse_studio.constants import MAX_WINDOW_FRAMES, MIN_FRAMES, MIN_TRAINED_FRAMES
+from comfyui_pulse_studio.frames import (
     align_frame_count,
     frames_from_step,
     frames_to_seconds,

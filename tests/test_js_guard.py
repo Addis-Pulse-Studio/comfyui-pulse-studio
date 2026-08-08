@@ -11,7 +11,7 @@ Both now have Node tests, run from here so a regression surfaces in the same
 command as everything else. Node is optional: `run_tests.py` must keep working in
 a bare ComfyUI environment, so those cases skip rather than fail.
 
-The cross-language test is the important one. `js/od_widget_order.js` hardcodes
+The cross-language test is the important one. `js/ps_widget_order.js` hardcodes
 the node's widget order, and a widget added to `INPUT_TYPES` without updating it
 would silently stop the detector from working. That is asserted here, in Python,
 where INPUT_TYPES actually lives.
@@ -27,14 +27,14 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).parent.parent
 JS_DIR = PROJECT_ROOT / "js"
 JS_TESTS = PROJECT_ROOT / "tests" / "js"
-PANEL = JS_DIR / "omni_asset_bin.js"
+PANEL = JS_DIR / "pulse_slate.js"
 NODES_PY = PROJECT_ROOT / "nodes.py"
 
 NODE = shutil.which("node")
 CONNECTION_TYPES = {"MODEL", "CLIP", "VAE", "CONDITIONING", "LATENT", "IMAGE", "AUDIO"}
 
 
-def required_widgets(class_name="MiniMaxH3OmniDirector"):
+def required_widgets(class_name="PulseSlate"):
     """Widget names, in order, from INPUT_TYPES in nodes.py (which imports torch,
     so it is read with ast rather than imported)."""
     tree = ast.parse(NODES_PY.read_text(encoding="utf-8"))
@@ -61,8 +61,8 @@ def required_widgets(class_name="MiniMaxH3OmniDirector"):
 
 
 def js_native_widgets():
-    """The widget names listed in js/od_widget_order.js."""
-    source = (JS_DIR / "od_widget_order.js").read_text(encoding="utf-8")
+    """The widget names listed in js/ps_widget_order.js."""
+    source = (JS_DIR / "ps_widget_order.js").read_text(encoding="utf-8")
     block = source.split("NATIVE_WIDGETS = [", 1)[1].split("\n];", 1)[0]
     return re.findall(r'name:\s*"([^"]+)"', block)
 
@@ -130,7 +130,7 @@ class TestJsSpecMatchesTheNode(unittest.TestCase):
         expected = expected[:seed_at + 1] + ["control_after_generate"] + expected[seed_at + 1:]
         self.assertEqual(
             js_native_widgets(), expected,
-            "js/od_widget_order.js has drifted from INPUT_TYPES. Update NATIVE_WIDGETS, "
+            "js/ps_widget_order.js has drifted from INPUT_TYPES. Update NATIVE_WIDGETS, "
             "or the misalignment detector will validate against the wrong shape.")
 
     def test_js_list_has_the_prompt_boxes_first(self):
@@ -151,7 +151,7 @@ class TestHooksCannotAbortAWorkflowLoad(unittest.TestCase):
 
     def test_the_panel_uses_the_tested_guard(self):
         source = PANEL.read_text(encoding="utf-8")
-        self.assertIn("od_widget_guard.js", source)
+        self.assertIn("ps_widget_guard.js", source)
         self.assertNotIn('Object.defineProperty(widget, "value"', source,
                          "the panel re-implements the value trap; use the tested guard")
 

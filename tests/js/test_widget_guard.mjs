@@ -9,7 +9,7 @@
  */
 
 import assert from "node:assert/strict";
-import { protectWidget } from "../../js/od_widget_guard.js";
+import { protectWidget } from "../../js/ps_widget_guard.js";
 
 let passed = 0;
 const failures = [];

@@ -46,7 +46,7 @@ export function protectWidget(widget, name, options = {}) {
     const desc = Object.getOwnPropertyDescriptor(widget, "value");
     if (desc && desc.configurable === false) {
       log.debug?.(
-        `[OmniDirector] ${name}.value is non-configurable; skipping the write trap. ` +
+        `[PulseStudio] ${name}.value is non-configurable; skipping the write trap. ` +
         `The structural protections are unaffected.`);
       return "skipped";
     }
@@ -70,7 +70,7 @@ export function protectWidget(widget, name, options = {}) {
       set(v) {
         if (isBinWriting(scope)) {
           log.error(
-            `[OmniDirector] blocked a write to ${name} from the Asset Bin panel. ` +
+            `[PulseStudio] blocked a write to ${name} from the Asset Bin panel. ` +
             `Prompt widgets are user-owned; this is the erasure bug and it must not ` +
             `come back.`);
           return;
@@ -85,7 +85,7 @@ export function protectWidget(widget, name, options = {}) {
   } catch (err) {
     // A trap is a nicety. Losing it costs a console warning; throwing here would
     // abort the user's workflow load.
-    log.warn(`[OmniDirector] could not install the ${name} write trap:`, err);
+    log.warn(`[PulseStudio] could not install the ${name} write trap:`, err);
     return "failed";
   }
 }

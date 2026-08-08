@@ -1,15 +1,15 @@
 /**
- * Asset Bin panel + node-face layout for the MiniMax H3 Omni-Director.
+ * Asset Bin panel + node-face layout for Pulse Slate.
  *
  * TWO RULES THIS FILE OBEYS
  *
  * 1. It never computes a reference ordinal. The numbering rule lives on the
- *    server, in omni_director/assets.py, and is the tested one. A second
+ *    server, in comfyui_pulse_studio/assets.py, and is the tested one. A second
  *    implementation here is how the two would drift apart, and a drifted tag
  *    renders successfully while describing the wrong picture.
  *
  * 2. It never builds timeline JSON, and never writes to a prompt widget.
- *    Every edit is POSTed to /omni_director/apply, which merges server-side and
+ *    Every edit is POSTed to /pulse_studio/apply, which merges server-side and
  *    returns the complete new string. This file only assigns the string it was
  *    handed back.
  *
@@ -20,11 +20,11 @@
 
 import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
-import { protectWidget } from "./od_widget_guard.js";
+import { protectWidget } from "./ps_widget_guard.js";
 import { checkWidgetOrder, describeMisalignment, validateWidgetValues }
-  from "./od_widget_order.js";
+  from "./ps_widget_order.js";
 
-const NODE_ID = "MiniMaxH3OmniDirector";
+const NODE_ID = "PulseSlate";
 const STORAGE_WIDGET = "timeline_data";
 const PROMPT_WIDGETS = ["global_prompt", "shot_prompt"];
 const CONTROLS_START = "duration_seconds"; // first widget of the generation panel
@@ -122,14 +122,14 @@ function injectStyle() {
 
 async function post(route, payload) {
   try {
-    const res = await api.fetchApi(`/omni_director/${route}`, {
+    const res = await api.fetchApi(`/pulse_studio/${route}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
     return await res.json();
   } catch (err) {
-    console.error(`[OmniDirector] ${route} failed`, err);
+    console.error(`[PulseStudio] ${route} failed`, err);
     return { status: "error", message: String(err) };
   }
 }
@@ -238,7 +238,7 @@ function decoratePrompt(node, name) {
  *
  * Deliberately not DOM header widgets. A widget inserted before a native one
  * takes a slot in the positional `widgets_values` array and shifts every value
- * after it -- see js/od_widget_order.js. `widget.label` is free.
+ * after it -- see js/ps_widget_order.js. `widget.label` is free.
  */
 const WIDGET_LABELS = {
   global_prompt: "◆ GLOBAL PROMPT — style · identity · score",
@@ -630,7 +630,7 @@ function buildFace(node) {
     const order = checkWidgetOrder(node.widgets);
     if (!order.ok) {
       console.error(
-        `[OmniDirector] widget order is unsafe: ${order.offenders.join(", ")} follow the ` +
+        `[PulseStudio] widget order is unsafe: ${order.offenders.join(", ")} follow the ` +
         `custom widget "${order.firstCustom}". Their saved values would be shifted. ` +
         `Custom widgets must be appended after every native one.`);
     }
@@ -658,7 +658,7 @@ function auditLoadedValues(node, info) {
 }
 
 app.registerExtension({
-  name: "omni_director.asset_bin",
+  name: "comfyui_pulse_studio.asset_bin",
   async beforeRegisterNodeDef(nodeType, nodeData) {
     if (nodeData.name !== NODE_ID) return;
     injectStyle();
@@ -668,11 +668,11 @@ app.registerExtension({
       onCreated?.apply(this, arguments);
       // Widgets are not all present until the frame settles on some frontends.
       try { buildFace(this); } catch (err) {
-        console.warn("[OmniDirector] node face setup failed:", err);
+        console.warn("[PulseStudio] node face setup failed:", err);
       }
       setTimeout(() => {
         try { buildFace(this); } catch (err) {
-          console.warn("[OmniDirector] deferred node face setup failed:", err);
+          console.warn("[PulseStudio] deferred node face setup failed:", err);
         }
       }, 0);
     };
@@ -693,7 +693,7 @@ app.registerExtension({
           return true;
         }
       } catch (err) {
-        console.warn("[OmniDirector] drop failed:", err);
+        console.warn("[PulseStudio] drop failed:", err);
       }
       return onDragDrop?.apply(this, arguments) ?? false;
     };
@@ -707,7 +707,7 @@ app.registerExtension({
         auditLoadedValues(this, info);
         buildFace(this);
       } catch (err) {
-        console.warn("[OmniDirector] re-init after workflow load failed:", err);
+        console.warn("[PulseStudio] re-init after workflow load failed:", err);
       }
       return result;
     };

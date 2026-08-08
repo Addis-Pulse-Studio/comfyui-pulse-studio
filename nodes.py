@@ -1,7 +1,7 @@
-"""ComfyUI node layer for the MiniMax H3 Omni-Director.
+"""ComfyUI node layer for Pulse Studio.
 
 The nodes here are thin. Every decision that can be made without a tensor was
-already made in omni_director/ and is covered by the headless test suite; this
+already made in comfyui_pulse_studio/ and is covered by the headless test suite; this
 file marshals files into tensors, calls the stock H3 nodes, and runs the sampling
 loop. Nothing here re-derives a frame count, an ordinal, or a cut point.
 
@@ -28,15 +28,15 @@ from comfy_extras.nodes_minimax_h3 import (
 )
 
 from . import media
-from .omni_director.assets import KIND_AUDIO, KIND_IMAGE, KIND_VIDEO
-from .omni_director.compiler import (
+from .comfyui_pulse_studio.assets import KIND_AUDIO, KIND_IMAGE, KIND_VIDEO
+from .comfyui_pulse_studio.compiler import (
     CARRY_AUDIO_ID,
     CARRY_IMAGE_ID,
     CARRY_VIDEO_ID,
     CarryPolicy,
     compile_timeline,
 )
-from .omni_director.constants import (
+from .comfyui_pulse_studio.constants import (
     BRANCH_FL2VA,
     BRANCH_REF2VA,
     CANVAS_MULTIPLE,
@@ -44,10 +44,10 @@ from .omni_director.constants import (
     MAX_PIXELS,
     REF_IMAGE_SIZE_OPTIONS,
 )
-from .omni_director.retake import RetakeError, plan_retake
-from .omni_director.sockets import SocketGapError, check_socket_groups, drop_missing
-from .omni_director.still import StillError, plan_still
-from .omni_director.widget_state import build_timeline
+from .comfyui_pulse_studio.retake import RetakeError, plan_retake
+from .comfyui_pulse_studio.sockets import SocketGapError, check_socket_groups, drop_missing
+from .comfyui_pulse_studio.still import StillError, plan_still
+from .comfyui_pulse_studio.widget_state import build_timeline
 
 log = logging.getLogger(__name__)
 
@@ -256,7 +256,7 @@ def _condition_window(window, timeline, clip, vae, audio_vae, width, height,
 
 # ── the Director ────────────────────────────────────────────────────────────
 
-class MiniMaxH3OmniDirector:
+class PulseSlate:
     """Timeline -> compiled storyboard -> one or more real H3 calls."""
 
     @classmethod
@@ -363,7 +363,7 @@ class MiniMaxH3OmniDirector:
     RETURN_TYPES = ("MODEL", "CONDITIONING", "LATENT", "AUDIO", "IMAGE", "STRING")
     RETURN_NAMES = ("model", "positive", "latent", "combined_audio", "images", "compiled_prompt")
     FUNCTION = "execute"
-    CATEGORY = "MiniMax H3/Omni-Director"
+    CATEGORY = "AddisPulse/H3"
     DESCRIPTION = ("Compiles two prompt boxes and an Asset Bin into a MiniMax H3 storyboard. "
                    "A single window hands back positive/latent for your own sampler; a longer "
                    "timeline renders internally, one H3 call per window, and is stitched.")
@@ -392,14 +392,14 @@ class MiniMaxH3OmniDirector:
 
         preview = plan.preview()
         for note in notes + plan.diagnostics:
-            log.info("[OmniDirector] %s", note)
+            log.info("[PulseStudio] %s", note)
         for window in plan.windows:
             for note in window.diagnostics:
-                log.warning("[OmniDirector] window %d: %s", window.index + 1, note)
+                log.warning("[PulseStudio] window %d: %s", window.index + 1, note)
 
         if not plan.ok:
             message = "Timeline cannot be compiled:\n  - " + "\n  - ".join(plan.problems)
-            log.error("[OmniDirector] %s", message)
+            log.error("[PulseStudio] %s", message)
             blocked = ExecutionBlocker(message)
             return (model, blocked, blocked, blocked, blocked, message)
 
@@ -412,11 +412,11 @@ class MiniMaxH3OmniDirector:
                                              shift_audio=shift_audio))[0]
 
         if any(w.branch == BRANCH_FL2VA for w in plan.windows) and shifted_fl2va is None:
-            log.warning("[OmniDirector] a window uses the fl2va branch but model_fl2va is not "
+            log.warning("[PulseStudio] a window uses the fl2va branch but model_fl2va is not "
                         "connected; falling back to the main model, which normally holds the "
                         "ref2va checkpoint. Expect degraded output.")
 
-        log.info("[OmniDirector] %d window(s): %s (%.2fs total, %dx%d)",
+        log.info("[PulseStudio] %d window(s): %s (%.2fs total, %dx%d)",
                  len(plan.windows), ", ".join(str(w.frame_count) for w in plan.windows),
                  plan.total_seconds, width, height)
 
@@ -445,7 +445,7 @@ class MiniMaxH3OmniDirector:
                 window_model = (shifted_fl2va
                                 if (window.branch == BRANCH_FL2VA and shifted_fl2va)
                                 else shifted)
-                log.info("[OmniDirector] window %d/%d: %s, %d frames, seed %d",
+                log.info("[PulseStudio] window %d/%d: %s, %d frames, seed %d",
                          window.index + 1, window.total, window.branch,
                          window.frame_count, seed + window.seed_offset)
 
@@ -465,14 +465,14 @@ class MiniMaxH3OmniDirector:
         except SocketGapError as exc:
             message = ("Reference sockets would have been misnumbered, so the render was "
                        "stopped:\n  %s" % (exc,))
-            log.error("[OmniDirector] %s", message)
+            log.error("[PulseStudio] %s", message)
             blocked = ExecutionBlocker(message)
             return (model, blocked, blocked, blocked, blocked, message)
 
 
 # ── Retake Scissor ──────────────────────────────────────────────────────────
 
-class MiniMaxH3RetakeScissor:
+class PulseRetake:
     """Replace a bad span of a rendered clip, anchored to the frames either side."""
 
     @classmethod
@@ -519,7 +519,7 @@ class MiniMaxH3RetakeScissor:
     RETURN_TYPES = ("IMAGE", "AUDIO", "STRING")
     RETURN_NAMES = ("images", "audio", "plan")
     FUNCTION = "execute"
-    CATEGORY = "MiniMax H3/Omni-Director"
+    CATEGORY = "AddisPulse/H3"
     DESCRIPTION = ("Cuts a bad span out of a rendered clip and re-renders only the gap, "
                    "pinned to the exact frames either side. Patch length snaps to the "
                    "17k+5 grid and the cut moves with it, so the stitched result is the "
@@ -534,13 +534,13 @@ class MiniMaxH3RetakeScissor:
                                keep_base_audio=keep_base_audio, fps=fps)
         except RetakeError as exc:
             message = "Retake refused: %s" % (exc,)
-            log.error("[OmniDirector] %s", message)
+            log.error("[PulseStudio] %s", message)
             blocked = ExecutionBlocker(message)
             return (blocked, blocked, message)
 
         for note in plan.diagnostics:
-            log.warning("[OmniDirector] retake: %s", note)
-        log.info("[OmniDirector] %s", plan.describe())
+            log.warning("[PulseStudio] retake: %s", note)
+        log.info("[PulseStudio] %s", plan.describe())
 
         height, width = images.shape[1], images.shape[2]
         anchors = plan.anchors()
@@ -570,7 +570,7 @@ class MiniMaxH3RetakeScissor:
         if keep_base_audio and base_audio is not None:
             audio = base_audio
         elif keep_base_audio:
-            log.warning("[OmniDirector] keep_base_audio is on but base_audio is not "
+            log.warning("[PulseStudio] keep_base_audio is on but base_audio is not "
                         "connected; returning the patch's own audio, which covers only "
                         "the patched span.")
             audio = patch_audio
@@ -582,7 +582,7 @@ class MiniMaxH3RetakeScissor:
 
 # ── Still Mode ──────────────────────────────────────────────────────────────
 
-class MiniMaxH3StillMode:
+class PulseStill:
     """Generate or edit a single image through the same H3 pipeline."""
 
     @classmethod
@@ -633,7 +633,7 @@ class MiniMaxH3StillMode:
     RETURN_TYPES = ("IMAGE", "STRING")
     RETURN_NAMES = ("image", "plan")
     FUNCTION = "execute"
-    CATEGORY = "MiniMax H3/Omni-Director"
+    CATEGORY = "AddisPulse/H3"
     DESCRIPTION = ("A still is a 5-frame H3 render where one frame is kept. Generate a "
                    "reference image through the same reference set that will drive the "
                    "video, or edit an existing one in place.")
@@ -654,11 +654,11 @@ class MiniMaxH3StillMode:
                               reference_ids=["ref_images"] if ref_images is not None else None)
         except StillError as exc:
             message = "Still refused: %s" % (exc,)
-            log.error("[OmniDirector] %s", message)
+            log.error("[PulseStudio] %s", message)
             return (ExecutionBlocker(message), message)
 
         for note in plan.diagnostics:
-            log.warning("[OmniDirector] still: %s", note)
+            log.warning("[PulseStudio] still: %s", note)
 
         shifted = _unpack(_execute(MiniMaxH3SigmaShift, model=model,
                                    shift_video=shift_video, shift_audio=shift_audio))[0]
@@ -689,13 +689,13 @@ class MiniMaxH3StillMode:
 
 
 NODE_CLASS_MAPPINGS = {
-    "MiniMaxH3OmniDirector": MiniMaxH3OmniDirector,
-    "MiniMaxH3RetakeScissor": MiniMaxH3RetakeScissor,
-    "MiniMaxH3StillMode": MiniMaxH3StillMode,
+    "PulseSlate": PulseSlate,
+    "PulseRetake": PulseRetake,
+    "PulseStill": PulseStill,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "MiniMaxH3OmniDirector": "MiniMax H3 Omni-Director",
-    "MiniMaxH3RetakeScissor": "MiniMax H3 Retake Scissor",
-    "MiniMaxH3StillMode": "MiniMax H3 Still Mode",
+    "PulseSlate": "Pulse Slate · MiniMax H3",
+    "PulseRetake": "Pulse Retake · MiniMax H3",
+    "PulseStill": "Pulse Still · MiniMax H3",
 }

@@ -1,4 +1,4 @@
-"""MiniMax H3 Omni-Director — headless core.
+"""Pulse Studio — headless core.
 
 Nothing in this package imports torch, comfy, or any ComfyUI module. That is
 deliberate: the compiler, the frame grid, and the asset bin are where the

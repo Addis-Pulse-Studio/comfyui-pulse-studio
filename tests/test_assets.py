@@ -8,7 +8,7 @@ These tests pin the numbering to the rule read out of ComfyUI's own source.
 
 import unittest
 
-from omni_director.assets import (
+from comfyui_pulse_studio.assets import (
     KIND_AUDIO,
     KIND_IMAGE,
     KIND_VIDEO,
@@ -16,7 +16,7 @@ from omni_director.assets import (
     AssetBin,
     BudgetError,
 )
-from omni_director.constants import (
+from comfyui_pulse_studio.constants import (
     MAX_REF_AUDIOS,
     MAX_REF_FILES_TOTAL,
     MAX_REF_IMAGES,

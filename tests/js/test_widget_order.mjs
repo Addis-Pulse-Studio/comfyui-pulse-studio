@@ -17,7 +17,7 @@ import {
   checkWidgetOrder,
   describeMisalignment,
   validateWidgetValues,
-} from "../../js/od_widget_order.js";
+} from "../../js/ps_widget_order.js";
 
 let passed = 0;
 const failures = [];
@@ -154,7 +154,7 @@ test("a non-array is reported as unreadable rather than throwing", () => {
 
 test("the explanation names the file to reload", () => {
   const text = describeMisalignment(validateWidgetValues(CORRUPT));
-  assert.match(text, /OmniDirector_Starter\.json/);
+  assert.match(text, /PulseSlate_Starter\.json/);
   assert.match(text, /duration_seconds/);
 });
 

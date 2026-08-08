@@ -176,7 +176,7 @@
     },
     {
       "id": 20,
-      "type": "MiniMaxH3OmniDirector",
+      "type": "PulseSlate",
       "pos": [
         500,
         60
@@ -267,7 +267,7 @@
         }
       ],
       "properties": {
-        "Node name for S&R": "MiniMaxH3OmniDirector"
+        "Node name for S&R": "PulseSlate"
       },
       "widgets_values": [
         "style: Shot on 35mm, warm practical light, shallow depth of field, handheld.\nidentity: @Image1 keeps the red scarf in every shot.\nretention: the scarf is never removed or recoloured.\nsoundscape: Rain outside, low espresso-machine hiss, quiet room tone.\nmusic: Sparse piano, no percussion.",
@@ -293,7 +293,7 @@
         3.0,
         "{\"assets\": [{\"id\": \"amsjmvfzv2lv\", \"kind\": \"image\", \"name\": \"Image1\", \"file\": \"Generated Image August 07, 2026 - 8_25PM.jpg\"}, {\"id\": \"amsjmvxsf6qz\", \"kind\": \"image\", \"name\": \"Image2\", \"file\": \"Generated Image August 07, 2026 - 8_25PM (1).jpg\"}, {\"id\": \"amsjmw12t23s\", \"kind\": \"image\", \"name\": \"Image3\", \"file\": \"Generated Image August 07, 2026 - 8_26PM.jpg\"}]}"
       ],
-      "title": "① MiniMax H3 Omni-Director"
+      "title": "① Pulse Slate · MiniMax H3"
     },
     {
       "id": 30,
@@ -663,7 +663,7 @@
         "Node name for S&R": "SaveVideo"
       },
       "widgets_values": [
-        "video/OmniDirector_single",
+        "video/PulseSlate_single",
         "mp4",
         "h264",
         "auto"
@@ -746,7 +746,7 @@
         "Node name for S&R": "SaveVideo"
       },
       "widgets_values": [
-        "video/OmniDirector_multi",
+        "video/PulseSlate_multi",
         "mp4",
         "h264",
         "auto"
@@ -800,7 +800,7 @@
         "Node name for S&R": "MarkdownNote"
       },
       "widgets_values": [
-        "# MiniMax H3 Omni-Director — starter graph\n\n## Where you type\nThe Director node carries **two boxes on its face**:\n\n- **GLOBAL PROMPT** — art style, lighting, camera rules, identity locks, score.\n  Optional line labels: `style:` `identity:` `retention:` `soundscape:` `music:`\n  Unlabelled text is treated as style.\n- **SHOT PROMPT** — one shot per line, each starting `[Shot N]` or `[MM:SS.mmm]`.\n  Shots without a timecode spread evenly between the ones that have them.\n\n## Never type a tag number\nReference bin assets by **name**: `@Image1`, `@Mimi`, `@[Cafe wide]`.\n`<Picture 3>` is assigned from bin order at compile time and shifts whenever the\nbin changes — a hand-typed number will describe the wrong asset and still render\nsuccessfully. The node reports any it finds.\n\n## Assets\nDrag images / video / audio **onto the node body**. No loader nodes needed.\nEach gets an alias (`Image1`, `Video1`, `Audio1`) you can rename inline.\nThe meter refuses a drop that would break the budget: 9 images, 3 videos,\n3 audio, **12 files total**.\n\n## Two output paths — pick by duration\n\n| duration | use | why |\n|---|---|---|\n| **≤ 15s** (one window) | group **A** | node hands back `positive` + `latent`; your sampler runs |\n| **> 15s** (many windows) | group **B** | node renders internally per window and stitches |\n\nGroup A is enabled. For a long timeline, **mute A / unmute B**\n(select the group, press Ctrl+M).\n\n## Duration rules\n- Frames snap to **17k+5**; 362 (~15.08s) is the trained ceiling.\n- Every window is **≥124 frames** — a short tail merges backwards automatically.\n- Only a total under 124 frames renders as one short window.\n\n## cfg\nLeave at **1.0**. H3's own pipeline uses BasicGuider and has no negative\nconditioning anywhere. Above 1.0 switches to CFGGuider with an empty negative.\n\n## fl2va\nOnly connect `model_fl2va` if you set a first/last-frame branch. Both\ncheckpoints loaded at once is ~42GB.\n"
+        "# Pulse Slate · MiniMax H3 — starter graph\n\n## Where you type\nThe Director node carries **two boxes on its face**:\n\n- **GLOBAL PROMPT** — art style, lighting, camera rules, identity locks, score.\n  Optional line labels: `style:` `identity:` `retention:` `soundscape:` `music:`\n  Unlabelled text is treated as style.\n- **SHOT PROMPT** — one shot per line, each starting `[Shot N]` or `[MM:SS.mmm]`.\n  Shots without a timecode spread evenly between the ones that have them.\n\n## Never type a tag number\nReference bin assets by **name**: `@Image1`, `@Mimi`, `@[Cafe wide]`.\n`<Picture 3>` is assigned from bin order at compile time and shifts whenever the\nbin changes — a hand-typed number will describe the wrong asset and still render\nsuccessfully. The node reports any it finds.\n\n## Assets\nDrag images / video / audio **onto the node body**. No loader nodes needed.\nEach gets an alias (`Image1`, `Video1`, `Audio1`) you can rename inline.\nThe meter refuses a drop that would break the budget: 9 images, 3 videos,\n3 audio, **12 files total**.\n\n## Two output paths — pick by duration\n\n| duration | use | why |\n|---|---|---|\n| **≤ 15s** (one window) | group **A** | node hands back `positive` + `latent`; your sampler runs |\n| **> 15s** (many windows) | group **B** | node renders internally per window and stitches |\n\nGroup A is enabled. For a long timeline, **mute A / unmute B**\n(select the group, press Ctrl+M).\n\n## Duration rules\n- Frames snap to **17k+5**; 362 (~15.08s) is the trained ceiling.\n- Every window is **≥124 frames** — a short tail merges backwards automatically.\n- Only a total under 124 frames renders as one short window.\n\n## cfg\nLeave at **1.0**. H3's own pipeline uses BasicGuider and has no negative\nconditioning anywhere. Above 1.0 switches to CFGGuider with an empty negative.\n\n## fl2va\nOnly connect `model_fl2va` if you set a first/last-frame branch. Both\ncheckpoints loaded at once is ~42GB.\n"
       ],
       "title": "READ ME"
     }

@@ -1,6 +1,6 @@
-"""File loading and tensor fitting for the Omni-Director nodes.
+"""File loading and tensor fitting for the Pulse Studio nodes.
 
-Deliberately separate from omni_director/: everything in that package is stdlib
+Deliberately separate from comfyui_pulse_studio/: everything in that package is stdlib
 only and runs without torch, which is what lets the compiler, the frame grid, the
 asset bin and the scissor be tested headless. This module is where torch, PIL and
 PyAV enter, and nothing in the tested core imports it.
@@ -56,14 +56,14 @@ def load_image(path):
 
     resolved = resolve_path(path)
     if not resolved:
-        log.warning("[OmniDirector] image not found: %s", path)
+        log.warning("[PulseStudio] image not found: %s", path)
         return None
     try:
         with Image.open(resolved) as im:
             arr = np.array(im.convert("RGB"), dtype=np.float32) / 255.0
         return torch.from_numpy(arr).unsqueeze(0)
     except Exception as exc:
-        log.warning("[OmniDirector] could not load image %s: %s", path, exc)
+        log.warning("[PulseStudio] could not load image %s: %s", path, exc)
         return None
 
 
@@ -108,7 +108,7 @@ def load_video(path, trim_start=0.0, trim_end=None, max_frames=400):
 
     resolved = resolve_path(path)
     if not resolved:
-        log.warning("[OmniDirector] video not found: %s", path)
+        log.warning("[PulseStudio] video not found: %s", path)
         return None
     start = float(trim_start or 0.0)
     frames = []
@@ -134,7 +134,7 @@ def load_video(path, trim_start=0.0, trim_end=None, max_frames=400):
                 if len(frames) >= max_frames:
                     break
     except Exception as exc:
-        log.warning("[OmniDirector] video decode failed for %s: %s", path, exc)
+        log.warning("[PulseStudio] video decode failed for %s: %s", path, exc)
         return None
     if not frames:
         return None
@@ -154,7 +154,7 @@ def load_audio(path, trim_start=0.0, trim_end=None, sample_rate=44100):
 
     resolved = resolve_path(path)
     if not resolved:
-        log.warning("[OmniDirector] audio not found: %s", path)
+        log.warning("[PulseStudio] audio not found: %s", path)
         return None
     try:
         chunks = []
@@ -179,7 +179,7 @@ def load_audio(path, trim_start=0.0, trim_end=None, sample_rate=44100):
             return None
         return {"waveform": trimmed.unsqueeze(0), "sample_rate": sample_rate}
     except Exception as exc:
-        log.warning("[OmniDirector] audio decode failed for %s: %s", path, exc)
+        log.warning("[PulseStudio] audio decode failed for %s: %s", path, exc)
         return None
 
 

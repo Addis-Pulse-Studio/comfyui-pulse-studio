@@ -1,4 +1,4 @@
-# MiniMax H3 Omni-Director
+# Pulse Studio — MiniMax H3 for ComfyUI
 
 A ComfyUI director node for [MiniMax H3](https://huggingface.co/MiniMaxAI/MiniMax-H3).
 
@@ -91,7 +91,7 @@ detected and reported rather than silently trusted.
 ## Verified model constraints
 
 Everything below was read out of ComfyUI's source, not inferred. All of it is
-encoded in `omni_director/constants.py` with the file and symbol it came from.
+encoded in `comfyui_pulse_studio/constants.py` with the file and symbol it came from.
 
 **Keyframes exist at two positions only.** `comfy/ldm/minimax/model.py`,
 `PackedLayout.__init__`:
@@ -144,7 +144,7 @@ either; there is a test asserting so.
 
 ## Nodes
 
-### MiniMax H3 Omni-Director
+### Pulse Slate · MiniMax H3
 
 Compiles a timeline into a storyboard prompt and reference set.
 
@@ -195,7 +195,7 @@ The moment it grows a brush it has become a different application.
 ## Architecture
 
 ```
-omni_director/          headless core — stdlib only, no torch, no comfy
+comfyui_pulse_studio/          headless core — stdlib only, no torch, no comfy
   constants.py          every value, with the source symbol it came from
   frames.py             the 17k+5 grid; window partitioning
   assets.py             the bin, the budget, and the ONE place ordinals are assigned
@@ -209,12 +209,12 @@ omni_director/          headless core — stdlib only, no torch, no comfy
   still.py              canvas fitting, frame_pick, branch selection
 media.py                torch/PIL/PyAV loading — the only tensor code
 nodes.py                ComfyUI binding; the sampling loop
-js/od_widget_guard.js   the prompt-widget write trap (isolated so it is testable)
-js/omni_asset_bin.js    the node face: prompt cards, asset bin, thumbnails
+js/ps_widget_guard.js   the prompt-widget write trap (isolated so it is testable)
+js/pulse_slate.js    the node face: prompt cards, asset bin, thumbnails
 tests/js/               Node tests for the JavaScript that can abort a load
 ```
 
-Nothing in `omni_director/` imports torch or comfy — and that is enforced by an
+Nothing in `comfyui_pulse_studio/` imports torch or comfy — and that is enforced by an
 AST test, not a convention, so it survives the phase where the timeline canvas
 wants to decode a preview frame. It is what lets the correctness live somewhere
 testable: 321 tests run in ~0.1s with no GPU, no ComfyUI, and no pip install.
@@ -247,7 +247,7 @@ picture.
 
 ```bash
 cd ComfyUI/custom_nodes
-git clone <this repo> H3_Omni-Director
+git clone <this repo> ComfyUI-PulseStudio
 ```
 
 Needs `torch`, `numpy`, `Pillow`, `av` — all already present in a standard

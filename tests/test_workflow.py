@@ -16,7 +16,7 @@ import unittest
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).parent.parent
-WORKFLOW = PROJECT_ROOT / "example workflow" / "OmniDirector_Starter.json"
+WORKFLOW = PROJECT_ROOT / "example_workflows" / "PulseSlate_Starter.json"
 NODES_PY = PROJECT_ROOT / "nodes.py"
 
 # Widget order is the order of keys in the "required" dict, minus the ones that
@@ -83,16 +83,16 @@ class TestWorkflowShipsAndParses(unittest.TestCase):
     def test_the_director_is_in_the_graph(self):
         d = json.loads(WORKFLOW.read_text(encoding="utf-8"))
         types = {n["type"] for n in d["nodes"]}
-        self.assertIn("MiniMaxH3OmniDirector", types)
+        self.assertIn("PulseSlate", types)
 
 
 class TestWidgetOrderMatchesTheNode(unittest.TestCase):
     def _director(self):
         d = json.loads(WORKFLOW.read_text(encoding="utf-8"))
-        return next(n for n in d["nodes"] if n["type"] == "MiniMaxH3OmniDirector")
+        return next(n for n in d["nodes"] if n["type"] == "PulseSlate")
 
     def test_widget_count_matches_input_types(self):
-        widgets = _required_widgets("MiniMaxH3OmniDirector")
+        widgets = _required_widgets("PulseSlate")
         stored = self._director()["widgets_values"]
         # seed carries control_after_generate, which occupies one extra slot.
         self.assertEqual(
@@ -101,13 +101,13 @@ class TestWidgetOrderMatchesTheNode(unittest.TestCase):
             "control_after_generate).\nnode order: %r" % (len(stored), len(widgets), widgets))
 
     def test_the_two_prompt_boxes_come_first(self):
-        widgets = _required_widgets("MiniMaxH3OmniDirector")
+        widgets = _required_widgets("PulseSlate")
         self.assertEqual(widgets[:2], ["global_prompt", "shot_prompt"],
                          "the prompt boxes must be the first widgets on the node face")
 
     def test_stored_values_land_on_the_right_widgets(self):
         """Spot-check the values whose type makes a shift obvious."""
-        widgets = _required_widgets("MiniMaxH3OmniDirector")
+        widgets = _required_widgets("PulseSlate")
         stored = self._director()["widgets_values"]
         index = {name: n for n, name in enumerate(widgets)}
         self.assertIsInstance(stored[index["global_prompt"]], str)
@@ -125,7 +125,7 @@ class TestWidgetOrderMatchesTheNode(unittest.TestCase):
                              "%s did not land on its own slot" % name)
 
     def test_timeline_data_is_valid_json_and_last(self):
-        widgets = _required_widgets("MiniMaxH3OmniDirector")
+        widgets = _required_widgets("PulseSlate")
         self.assertEqual(widgets[-1], "timeline_data")
         stored = self._director()["widgets_values"]
         document = json.loads(stored[-1])
@@ -133,9 +133,9 @@ class TestWidgetOrderMatchesTheNode(unittest.TestCase):
 
     def test_the_shipped_prompts_actually_compile(self):
         """The starter text must produce a real plan, not just look plausible."""
-        from omni_director.compiler import compile_timeline
-        from omni_director.widget_state import build_timeline
-        widgets = _required_widgets("MiniMaxH3OmniDirector")
+        from comfyui_pulse_studio.compiler import compile_timeline
+        from comfyui_pulse_studio.widget_state import build_timeline
+        widgets = _required_widgets("PulseSlate")
         stored = self._director()["widgets_values"]
         index = {name: n for n, name in enumerate(widgets)}
         timeline, _ = build_timeline(
@@ -153,7 +153,7 @@ class TestWidgetOrderMatchesTheNode(unittest.TestCase):
     def test_starter_prompts_reference_assets_by_name_not_number(self):
         """The graph ships as an example, so it must not teach the wrong habit."""
         stored = self._director()["widgets_values"]
-        widgets = _required_widgets("MiniMaxH3OmniDirector")
+        widgets = _required_widgets("PulseSlate")
         index = {name: n for n, name in enumerate(widgets)}
         for key in ("global_prompt", "shot_prompt"):
             text = stored[index[key]]

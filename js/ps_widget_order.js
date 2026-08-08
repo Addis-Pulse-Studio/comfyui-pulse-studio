@@ -1,5 +1,5 @@
 /**
- * Widget ordering safety for the Omni-Director node face.
+ * Widget ordering safety for the Pulse Slate node face.
  *
  * THE BUG THIS EXISTS TO PREVENT
  *
@@ -115,12 +115,12 @@ export function describeMisalignment(report) {
   const lines = report.mismatches.slice(0, 6).map(
     (m) => `    ${m.name}: expected ${m.expected}, got ${m.got} (${JSON.stringify(m.value)})`);
   return (
-    "[OmniDirector] This workflow's stored widget values do not line up with the " +
+    "[PulseStudio] This workflow's stored widget values do not line up with the " +
     "node's inputs:\n" + lines.join("\n") +
     (report.mismatches.length > 6 ? `\n    ...and ${report.mismatches.length - 6} more` : "") +
     "\n  This file was saved by a build that inserted panel headers into the widget " +
     "list, which shifted every value. The layout bug is fixed, but the saved values " +
     "cannot be recovered — the text that landed in a header slot was discarded at " +
-    "save time.\n  Load a fresh copy of example workflow/OmniDirector_Starter.json " +
+    "save time.\n  Load a fresh copy of example_workflows/PulseSlate_Starter.json " +
     "and re-enter your prompts.");
 }

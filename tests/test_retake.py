@@ -2,9 +2,9 @@
 
 import unittest
 
-from omni_director.constants import MAX_WINDOW_FRAMES
-from omni_director.frames import is_on_grid
-from omni_director.retake import RetakeError, plan_retake
+from comfyui_pulse_studio.constants import MAX_WINDOW_FRAMES
+from comfyui_pulse_studio.frames import is_on_grid
+from comfyui_pulse_studio.retake import RetakeError, plan_retake
 
 
 class TestGeometry(unittest.TestCase):

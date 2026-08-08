@@ -3,7 +3,7 @@
 
 Deliberately stdlib-only (unittest, not pytest): the core of this project must
 be testable inside a bare ComfyUI environment with no extra install, and on a
-machine with no GPU. Nothing under omni_director/ imports torch or comfy.
+machine with no GPU. Nothing under comfyui_pulse_studio/ imports torch or comfy.
 
     python3 run_tests.py [-v]
 """

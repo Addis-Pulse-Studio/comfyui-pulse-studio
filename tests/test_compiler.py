@@ -2,8 +2,8 @@
 
 import unittest
 
-from omni_director.assets import KIND_AUDIO, KIND_IMAGE, KIND_VIDEO, Asset
-from omni_director.compiler import (
+from comfyui_pulse_studio.assets import KIND_AUDIO, KIND_IMAGE, KIND_VIDEO, Asset
+from comfyui_pulse_studio.compiler import (
     CARRY_AUDIO_ID,
     CARRY_IMAGE_ID,
     CarryPolicy,
@@ -12,9 +12,9 @@ from omni_director.compiler import (
     resolve_references,
     wrap_dialogue,
 )
-from omni_director.constants import BRANCH_FL2VA, BRANCH_REF2VA, MAX_WINDOW_FRAMES
-from omni_director.frames import is_on_grid
-from omni_director.timeline import Shot, Timeline
+from comfyui_pulse_studio.constants import BRANCH_FL2VA, BRANCH_REF2VA, MAX_WINDOW_FRAMES
+from comfyui_pulse_studio.frames import is_on_grid
+from comfyui_pulse_studio.timeline import Shot, Timeline
 
 
 def make_timeline(**kw):
@@ -193,7 +193,7 @@ class TestReferenceResolution(unittest.TestCase):
         self.assertIn("<Picture 1>", compile_timeline(tl).windows[0].prompt)
 
     def test_resolve_references_is_pure(self):
-        from omni_director.assets import AssetBin
+        from comfyui_pulse_studio.assets import AssetBin
         bin_ = AssetBin([Asset("x", KIND_IMAGE, name="Ex")])
         text, diags = resolve_references("@Ex here", bin_.tag_map(), bin_)
         self.assertEqual(text, "<Picture 1> here")
@@ -273,7 +273,7 @@ class TestWindowing(unittest.TestCase):
         self.assertEqual(len(offsets), len(set(offsets)))
 
     def test_total_frames_never_short_of_request(self):
-        from omni_director.frames import seconds_to_frames
+        from comfyui_pulse_studio.frames import seconds_to_frames
         for seconds in (3.0, 12.0, 16.0, 33.3):
             plan = compile_timeline(make_timeline(duration_seconds=seconds))
             self.assertGreaterEqual(plan.total_frames, seconds_to_frames(seconds))

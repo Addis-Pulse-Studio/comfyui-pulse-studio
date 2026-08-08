@@ -54,7 +54,7 @@ JS_DIR = PROJECT_ROOT / "js"
 # the GPL reference copy is not ours, and the rest is build residue.
 EXCLUDED_DIRS = {
     "tests", ".github", "__pycache__", ".git", ".venv", "venv",
-    "reference_purpose only", "example workflow", "example_workflows",
+    "reference_purpose only", "example_workflows",
 }
 
 # Outbound HTTP, sockets and mail/RPC transports. `http` covers http.client;
