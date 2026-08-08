@@ -85,6 +85,53 @@ schema passes through untouched rather than being downgraded.
   media — including inside the `timeline_data` string, which is a JSON document
   embedded in the workflow JSON and invisible to a casual read.
 
+### Added — packaging and CI (spec §14)
+
+- **GitHub Actions on 3.10, 3.11 and 3.12**, push and pull request. It runs
+  `python run_tests.py` — the same command the README gives a user — rather
+  than installing pytest to run the same unittest cases through a different
+  front door.
+- Node is installed in CI rather than left optional. The JS tests skip
+  themselves when `node` is missing, so that a bare ComfyUI box can still run
+  the Python suite; a skip is invisible in a green run, so both `.mjs` files
+  are additionally invoked directly, where a missing runtime is a failure.
+- **A second job with nothing installed** imports every module in
+  `comfyui_pulse_studio/` and asserts that `torch`, `comfy`, `comfy_extras`,
+  `folder_paths` and `nodes` never reach `sys.modules`. The AST test already
+  bans the imports; this one proves the package actually loads without them,
+  which is a different claim.
+- `requirements.txt` ships empty, deliberately, and says why. The real
+  requirement is a ComfyUI version, which pip cannot express for a custom
+  node, so the tested floor — **0.30.0** — is documented in the README instead.
+
+### Added — `PulseSlate_Starter_SpectrumSage.json`
+
+The second graph §15 calls for: the starter with
+`UNETLoader → Spectrum (system_ram) → Sage Attention → PulseSlate` wired in on
+both DiT inputs. Generated from the starter rather than hand-edited, so the two
+cannot drift apart.
+
+Tests walk backwards from each of the director's model inputs and assert the
+chain arrives in that order, that no patch node sits downstream of the director,
+and that Spectrum ships set to `system_ram`. A shipped example teaches its
+wiring to everyone who opens it, and the failure it would teach — patching the
+node's *output* — speeds up the ≤15 s path while doing nothing for a long
+timeline.
+
+Spectrum and KJNodes are not dependencies. Deleting the patch column leaves the
+plain starter graph.
+
+### Changed — README restructured to §15
+
+Now opens with install, the model table, the never-type-a-tag rule, the two
+duration paths, the patch chain, `cfg`, the no-network guarantee, and known
+issues — in that order, before any of the design prose. The two-path table
+states plainly that **path B is not verified on hardware**.
+
+`docs/` is now the one directory where an image may live, for the node-face
+screenshot. A test keeps that exemption narrow: flat, small, and still subject
+to the private-filename scan.
+
 ### Changed — licence
 
 Relicensed from MIT to **Apache-2.0**. The studio deploys private systems onto
@@ -135,3 +182,15 @@ a plain trademark search; that remains outstanding and blocks the tag.
 - [ ] **Trademark search** for "Pulse Studio" / "Pulse Slate" in the relevant
       jurisdiction. Availability was checked (above); clearance was not.
 - [ ] `PublisherId` confirmed against the publisher created at registry.comfy.org.
+      `pyproject.toml` carries `behailu-ai`, carried over from the previous
+      manifest and unverified. Blocking for `comfy node publish`, not for the tag.
+- [ ] **Node-face screenshot** at `docs/node_face.png`, from a real graph rather
+      than a mock-up. §15 puts it at the top of the README; the slot is marked
+      there in a comment. Needs the box with the weights on it.
+- [ ] **Both example workflows opened on a fresh ComfyUI** with no red nodes.
+      Their structure is asserted by test — ids, slots, link backfill both ways,
+      the patch chain's direction — but "no red nodes" is a claim about the host
+      install, and only loading them proves it.
+- [ ] **CI observed green on GitHub.** The workflow's every command was run
+      locally on 3.12 and passes; the matrix on 3.10 and 3.11 has not run
+      anywhere yet, and there is no remote to run it on.

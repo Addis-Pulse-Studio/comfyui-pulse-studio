@@ -1,6 +1,13 @@
 # Pulse Studio — MiniMax H3 for ComfyUI
 
-A ComfyUI director node for [MiniMax H3](https://huggingface.co/MiniMaxAI/MiniMax-H3).
+Direct a [MiniMax H3](https://huggingface.co/MiniMaxAI/MiniMax-H3) render from a
+shot timeline and an asset bin, on one node, without ever typing a reference tag
+number.
+
+<!-- Screenshot of the node face goes here, as docs/node_face.png. Captured from
+     a real graph rather than mocked up, so it still has to be taken on the box
+     with the weights on it. Outstanding — tracked in CHANGELOG.md under
+     "Pending before the tag". -->
 
 Three things it does that the existing directors don't:
 
@@ -18,6 +25,155 @@ when it's wrong.
 > **POWERED BY MINIMAX H3.** This repository contains no model weights. See
 > [NOTICE](NOTICE) for the model's separate license, which governs your use of it
 > and of anything you generate.
+
+---
+
+## Install
+
+Through the ComfyUI registry:
+
+```bash
+comfy node install comfyui-pulse-studio
+```
+
+Or by hand:
+
+```bash
+cd ComfyUI/custom_nodes
+git clone https://github.com/behailu-ai/ComfyUI-PulseStudio
+```
+
+Restart ComfyUI either way. There is nothing to `pip install`: the pack has no
+dependencies of its own, and the tensor layer uses `torch`, `numpy`, `Pillow`
+and `av`, all of which a working ComfyUI already has. See
+[requirements.txt](requirements.txt) for why that stays true.
+
+**ComfyUI 0.30.0 or newer**, which is the version this was developed and tested
+against. It has to be a build carrying `comfy_extras/nodes_minimax_h3.py` and
+`comfy/ldm/minimax/` — without those, MiniMax H3 is not there to direct. There
+is no mechanism for a custom node to enforce a host version, so this is
+documentation rather than a check.
+
+Then load `example_workflows/PulseSlate_Starter.json`.
+
+## Models
+
+Not redistributed here. Download from
+[Comfy-Org/MiniMax-H3](https://huggingface.co/Comfy-Org/MiniMax-H3) and place
+them as below — the `minimax/` subfolder is what the example workflows expect:
+
+| file | goes in | approx |
+|---|---|---|
+| `minimax_h3_ref2va_pruned_int8_convrot.safetensors` | `models/diffusion_models/minimax/` | 20 GB |
+| `minimax_h3_fl2va_pruned_int8_convrot.safetensors` | `models/diffusion_models/minimax/` | 20 GB |
+| `qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors` | `models/text_encoders/minimax/` | 15 GB |
+| `minimax_h3_video_vae_fp16.safetensors` | `models/vae/minimax/` | 4.9 GB |
+| `minimax_h3_audio_vae_fp32.safetensors` | `models/vae/minimax/` | 578 MB |
+
+Those are the exact files the example graphs were built and tested against, and
+the sizes are measured from that install. Nothing here is tied to a precision —
+if you run a different quantisation of the same weights, point the loader
+widgets at it and the rest of the graph is unchanged.
+
+The two DiT files are the ref2va and fl2va branches from
+[§ Verified model constraints](#verified-model-constraints) — you need
+whichever branches your timeline actually uses, and **only** `ref2va` for a
+plain reference-driven render. Loading both is ~42 GB.
+
+**Weights carry the MiniMax H3 Community License**, a separate agreement from
+this pack's Apache-2.0 that governs your use of the model and of what you
+generate with it. Read it before shipping client work.
+
+## Never type a tag number
+
+> ### Drag assets onto the node body. Reference them by name.
+>
+> `@Mimi`, `@Image1`, `@[Cafe wide]` — never `<Picture 2>`.
+
+H3's reference tags are ordinals assigned by socket position. Type one by hand
+and it goes stale the moment the bin changes, and the render **still succeeds** —
+describing the wrong picture, with no error anywhere. This node computes every
+ordinal at compile time from live bin order, and reports a hand-typed tag as an
+error rather than trusting it. The mechanism, and the reference-video soundtrack
+case that makes it worse, is in [The tag problem](#the-tag-problem-and-why-this-node-exists).
+
+## Two paths, by duration
+
+| duration | what happens | status |
+|---|---|---|
+| **≤ 15 s** — one window | Node hands back `positive` and `latent`. Your graph carries sampler → decode → mux. | **Verified on hardware.** |
+| **> 15 s** — many windows | Node samples internally, one H3 call per window, carrying the previous window's last frame and audio tail forward, and returns stitched `images` and `combined_audio`. | **Not yet verified on hardware.** The window math, the partitioning and the carry-over are covered by tests; a real multi-window render with the seams listened to has not been done. |
+
+That second row is stated plainly because a stitched seam is the kind of thing
+that passes every test and still sounds wrong. Treat path B as untested at the
+render level until this line says otherwise.
+
+## Model patches — wire them upstream
+
+The pack consumes a patched `MODEL`. It does not patch anything itself and takes
+no dependency on the packs that do. The documented chain:
+
+```
+UNETLoader → Spectrum (history_storage: system_ram) → Sage Attention → PulseSlate
+```
+
+Ready to load as `example_workflows/PulseSlate_Starter_SpectrumSage.json`. It
+needs [ComfyUI-Spectrum-MiniMax-H3](https://github.com/xmarre/ComfyUI-Spectrum-MiniMax-H3)
+and [ComfyUI-KJNodes](https://github.com/kijai/ComfyUI-KJNodes) installed;
+neither is required by Pulse Studio itself, and deleting the patch column leaves
+the plain starter graph.
+
+**Upstream is not a style preference.** Path B samples internally with the model
+handed *to* the node, so a patch applied to the node's `model` **output** would
+accelerate the ≤15 s path and do nothing whatsoever for a long timeline — the
+case where it matters most, and a difference you would only notice in the clock.
+
+**`system_ram` is not a speed setting.** On a 32 GB card, Spectrum storing its
+history in system RAM is what makes a 362-frame window *fit at all*. Set it to
+`vram` and a full-length window is likely to fail with an out-of-memory error
+rather than run slowly.
+
+The node inspects the model it is handed and warns — on the node face and in the
+console — when it finds no attention patch or no offload patch, naming both. It
+never blocks: running unpatched is a legitimate choice, and the warning exists so
+that it is a choice rather than an accident.
+
+## cfg stays at 1.0
+
+H3's own reference pipeline has no negative conditioning anywhere; it uses
+`BasicGuider`, which takes a single conditioning input. `cfg = 1.0` is that
+native path and it is the default here.
+
+Above 1.0 the node switches to `CFGGuider` with an **empty** negative prompt,
+because there is nowhere for a real one to come from. That is offered because it
+was asked for, not because it is recommended. Leave it at 1.0 unless you are
+deliberately experimenting.
+
+## No network
+
+**The pack makes no outbound request** — not at import, not during execution,
+not from the widget layer. No telemetry, no model auto-download, no CDN script,
+no webfont, no remote image.
+
+This is enforced by a source scan over both languages that runs in CI, not by
+policy: outbound HTTP clients, sockets and auto-download are banned in the
+Python, and absolute-origin URLs, CDN loaders, webfonts and request constructors
+are banned in the JavaScript. Registering an inbound aiohttp route is explicitly
+allowed — that is ComfyUI's own server, and answering the frontend is not egress.
+
+Everything you drop in the bin stays on your machine.
+
+## Known issues
+
+- **Workflows saved by any pre-2.0.0 build will not load.** Widget order changed
+  once, deliberately, before anything was published; a file without a schema
+  version in slot 0 is refused by name rather than guessed at. There is no
+  migration and there will not be one — the values in those files are already
+  shifted, so a "successful" load would render something wrong instead of
+  failing. Rebuild from `example_workflows/PulseSlate_Starter.json`. The full
+  reasoning is in [CHANGELOG.md](CHANGELOG.md).
+- **Path B is unverified on hardware** — see the duration table above.
+- Per-character voice binding is specified but not shipped; it lands in 1.1.
 
 ---
 
@@ -207,17 +363,21 @@ comfyui_pulse_studio/          headless core — stdlib only, no torch, no comfy
   sockets.py            Autogrow dict shape: contiguous, 0-based, gapless
   retake.py             cut geometry, anchor legality, stitch integrity
   still.py              canvas fitting, frame_pick, branch selection
+  patches.py            what the incoming model is missing — duck-typed, imports nothing
 media.py                torch/PIL/PyAV loading — the only tensor code
 nodes.py                ComfyUI binding; the sampling loop
 js/ps_widget_guard.js   the prompt-widget write trap (isolated so it is testable)
-js/pulse_slate.js    the node face: prompt cards, asset bin, thumbnails
+js/ps_widget_order.js   WIDGET_NAMES[node][version] — the slot contract's name table
+js/ps_warnings.js       paints the patch warning on the node face; owns no widget slot
+js/pulse_slate.js       the node face: prompt cards, asset bin, thumbnails
 tests/js/               Node tests for the JavaScript that can abort a load
 ```
 
 Nothing in `comfyui_pulse_studio/` imports torch or comfy — and that is enforced by an
 AST test, not a convention, so it survives the phase where the timeline canvas
 wants to decode a preview frame. It is what lets the correctness live somewhere
-testable: 321 tests run in ~0.1s with no GPU, no ComfyUI, and no pip install.
+testable: the whole suite runs in a few seconds with no GPU, no ComfyUI, and no
+pip install.
 
 ### Two erasure classes, both closed structurally
 
@@ -243,23 +403,19 @@ picture.
 
 ---
 
-## Install
-
-```bash
-cd ComfyUI/custom_nodes
-git clone <this repo> ComfyUI-PulseStudio
-```
-
-Needs `torch`, `numpy`, `Pillow`, `av` — all already present in a standard
-ComfyUI install. Restart ComfyUI.
-
 ## Tests
 
 ```bash
-python3 run_tests.py        # 326 tests, no Python dependencies
+python3 run_tests.py        # 403 tests, no Python dependencies
 python3 run_tests.py -v
 node tests/js/test_widget_guard.mjs   # also run by the suite when node exists
+node tests/js/test_widget_order.mjs
 ```
+
+CI runs exactly that, on Python 3.10, 3.11 and 3.12, on every push and pull
+request — plus a job that imports the pure core on a machine with nothing
+installed, so a stray `torch` import cannot hide behind another step. See
+[.github/workflows/ci.yml](.github/workflows/ci.yml).
 
 Covers frame quantisation (including behavioural parity with core's own
 `align_frame_count`), timestamp monotonicity, tag renumbering under

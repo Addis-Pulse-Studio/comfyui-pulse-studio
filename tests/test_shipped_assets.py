@@ -56,7 +56,12 @@ class TestTheScanHasInput(unittest.TestCase):
     def test_example_workflows_are_present(self):
         found = workflows()
         self.assertTrue(found, "no example workflows found to scan")
-        self.assertIn("PulseSlate_Starter.json", {p.name for p in found})
+        names = {p.name for p in found}
+        # §15 names both. The scan is only worth anything if what it is meant to
+        # cover is actually on disk.
+        for required in ("PulseSlate_Starter.json",
+                         "PulseSlate_Starter_SpectrumSage.json"):
+            self.assertIn(required, names)
 
 
 class TestNoPrivateAssetsShip(unittest.TestCase):
@@ -118,11 +123,33 @@ class TestNoWeightsInTheTree(unittest.TestCase):
             for path in PROJECT_ROOT.rglob("*" + suffix):
                 if ".git" in path.parts or "_scratch" in path.parts:
                     continue
+                if "docs" in path.parts:      # README illustrations -- see below
+                    continue
                 found.append(str(path.relative_to(PROJECT_ROOT)))
         self.assertEqual(found, [],
-                         "unexpected media in the tree. Screenshots belong in the README's "
-                         "assets and client material belongs in _scratch/:\n  "
+                         "unexpected media in the tree. Screenshots belong in docs/ "
+                         "and client material belongs in _scratch/:\n  "
                          + "\n  ".join(found))
+
+    def test_the_docs_exemption_stays_narrow(self):
+        """`docs/` is the one place an image may live, because the README needs a
+        screenshot of the node face. That exemption is exactly wide enough to
+        hold README illustrations and no wider -- a render dropped there is a
+        client asset in a public repo, same as anywhere else. So the private-name
+        scan still applies, and nothing may hide under a nested directory."""
+        docs = PROJECT_ROOT / "docs"
+        if not docs.is_dir():
+            self.skipTest("no docs/ directory yet")
+        for path in docs.rglob("*"):
+            if not path.is_file():
+                continue
+            rel = path.relative_to(PROJECT_ROOT)
+            self.assertEqual(path.parent, docs, "%s: docs/ is flat, no subfolders" % rel)
+            self.assertLess(path.stat().st_size, 4_000_000,
+                            "%s: too large for a README illustration" % rel)
+            for pattern in PRIVATE_PATTERNS:
+                self.assertIsNone(pattern.search(path.name),
+                                  "%s names a private asset" % rel)
 
 
 class TestWorkflowsStayParseable(unittest.TestCase):

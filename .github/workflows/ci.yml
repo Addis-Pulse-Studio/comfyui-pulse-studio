@@ -1,0 +1,92 @@
+name: CI
+
+# Spec §14. Three Python versions, both languages, on every push and PR.
+#
+# The suite is deliberately stdlib-only, so CI installs nothing to run it: what
+# runs here is the exact command the README tells a user to run. A `pip install
+# pytest` step would have CI testing a slightly different thing than everyone
+# else, for no coverage gained -- `run_tests.py` discovers the same unittest
+# TestCases pytest would.
+#
+# Node is installed rather than optional. The JS tests skip themselves when node
+# is missing (so a bare ComfyUI box can still run the Python suite), and a skip
+# is invisible in a green run -- so the .mjs files are also invoked directly
+# below, where their absence is a failure instead of a shrug.
+#
+# The no-network source scan runs here too. It inspects the shipped package and
+# excludes `tests/` and `.github/`, so this file having network access is not a
+# contradiction: the invariant is about what the pack does at import and at
+# execution, not about the runner.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Show versions
+        run: |
+          python --version
+          node --version
+
+      - name: Full suite (Python + the JS tests it drives)
+        run: python run_tests.py
+
+      - name: JS tests, run directly so a missing runtime fails
+        run: |
+          node tests/js/test_widget_guard.mjs
+          node tests/js/test_widget_order.mjs
+
+      - name: Cross-language parity, named explicitly
+        # Already inside the suite above. Called out as its own step because it
+        # is the guard that a widget added on one side of the language boundary
+        # fails the build -- worth seeing by name in the check list.
+        run: python -m unittest tests.test_js_guard -v
+
+      - name: Environment invariants (§18.1)
+        run: python -m unittest tests.test_no_network tests.test_shipped_assets -v
+
+  import-purity:
+    # A separate job with nothing installed. The pure core must import on a
+    # machine with no torch and no ComfyUI; running it alongside the matrix
+    # would let a stray dependency hide behind another step's install.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: The core imports with nothing installed
+        run: |
+          python - <<'PY'
+          import importlib, pkgutil, sys
+          import comfyui_pulse_studio as pkg
+          for module in pkgutil.iter_modules(pkg.__path__):
+              importlib.import_module("%s.%s" % (pkg.__name__, module.name))
+          for banned in ("torch", "comfy", "comfy_extras", "folder_paths", "nodes"):
+              assert banned not in sys.modules, "%s reached the pure core" % banned
+          print("imported %d modules, no torch, no comfy" % len(list(pkgutil.iter_modules(pkg.__path__))))
+          PY

@@ -16,7 +16,12 @@ import unittest
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).parent.parent
-WORKFLOW = PROJECT_ROOT / "example_workflows" / "PulseSlate_Starter.json"
+WORKFLOW_DIR = PROJECT_ROOT / "example_workflows"
+WORKFLOW = WORKFLOW_DIR / "PulseSlate_Starter.json"
+# §15 ships two starter graphs. The second is the first with the documented
+# patch chain wired in, so every structural check runs over both -- a graph that
+# loads as a silently disconnected mess is worse than one that fails to load.
+SHIPPED_GRAPHS = (WORKFLOW, WORKFLOW_DIR / "PulseSlate_Starter_SpectrumSage.json")
 NODES_PY = PROJECT_ROOT / "nodes.py"
 
 # Widget order is the order of keys in the "required" dict, minus the ones that
@@ -55,35 +60,123 @@ def _required_widgets(class_name):
 
 class TestWorkflowShipsAndParses(unittest.TestCase):
     def test_workflow_exists_and_is_valid_json(self):
-        self.assertTrue(WORKFLOW.is_file(), "missing %s" % WORKFLOW)
-        json.loads(WORKFLOW.read_text(encoding="utf-8"))
+        for path in SHIPPED_GRAPHS:
+            with self.subTest(workflow=path.name):
+                self.assertTrue(path.is_file(), "missing %s" % path)
+                json.loads(path.read_text(encoding="utf-8"))
 
     def test_links_reference_real_nodes_and_slots(self):
-        d = json.loads(WORKFLOW.read_text(encoding="utf-8"))
-        by_id = {n["id"]: n for n in d["nodes"]}
-        self.assertEqual(len(by_id), len(d["nodes"]), "duplicate node ids")
-        seen = set()
-        for link_id, src, src_slot, dst, dst_slot, _type in d["links"]:
-            self.assertNotIn(link_id, seen, "duplicate link id %s" % link_id)
-            seen.add(link_id)
-            self.assertIn(src, by_id)
-            self.assertIn(dst, by_id)
-            self.assertLess(src_slot, len(by_id[src]["outputs"]))
-            self.assertLess(dst_slot, len(by_id[dst]["inputs"]))
+        for path in SHIPPED_GRAPHS:
+            with self.subTest(workflow=path.name):
+                d = json.loads(path.read_text(encoding="utf-8"))
+                by_id = {n["id"]: n for n in d["nodes"]}
+                self.assertEqual(len(by_id), len(d["nodes"]), "duplicate node ids")
+                seen = set()
+                for link_id, src, src_slot, dst, dst_slot, _type in d["links"]:
+                    self.assertNotIn(link_id, seen, "duplicate link id %s" % link_id)
+                    seen.add(link_id)
+                    self.assertIn(src, by_id)
+                    self.assertIn(dst, by_id)
+                    self.assertLess(src_slot, len(by_id[src]["outputs"]))
+                    self.assertLess(dst_slot, len(by_id[dst]["inputs"]))
 
     def test_link_backfill_is_consistent_both_ways(self):
         """ComfyUI reads both the link table and the per-slot backfill; a
         mismatch loads as a silently disconnected graph."""
-        d = json.loads(WORKFLOW.read_text(encoding="utf-8"))
-        by_id = {n["id"]: n for n in d["nodes"]}
-        for link_id, src, src_slot, dst, dst_slot, _type in d["links"]:
-            self.assertEqual(by_id[dst]["inputs"][dst_slot]["link"], link_id)
-            self.assertIn(link_id, by_id[src]["outputs"][src_slot]["links"])
+        for path in SHIPPED_GRAPHS:
+            with self.subTest(workflow=path.name):
+                d = json.loads(path.read_text(encoding="utf-8"))
+                by_id = {n["id"]: n for n in d["nodes"]}
+                for link_id, src, src_slot, dst, dst_slot, _type in d["links"]:
+                    self.assertEqual(by_id[dst]["inputs"][dst_slot]["link"], link_id)
+                    self.assertIn(link_id, by_id[src]["outputs"][src_slot]["links"])
+
+    def test_no_slot_points_at_a_link_that_does_not_exist(self):
+        """The mirror of the check above. Deleting a link and forgetting the
+        backfill leaves an input holding a dead id, which loads as connected and
+        renders with whatever was last in that slot."""
+        for path in SHIPPED_GRAPHS:
+            with self.subTest(workflow=path.name):
+                d = json.loads(path.read_text(encoding="utf-8"))
+                live = {l[0] for l in d["links"]}
+                for node in d["nodes"]:
+                    for slot in node.get("inputs") or []:
+                        if slot.get("link") is not None:
+                            self.assertIn(slot["link"], live,
+                                          "%s input %s" % (node["type"], slot["name"]))
+                    for slot in node.get("outputs") or []:
+                        for link_id in slot.get("links") or []:
+                            self.assertIn(link_id, live,
+                                          "%s output %s" % (node["type"], slot["name"]))
 
     def test_the_director_is_in_the_graph(self):
-        d = json.loads(WORKFLOW.read_text(encoding="utf-8"))
-        types = {n["type"] for n in d["nodes"]}
-        self.assertIn("PulseSlate", types)
+        for path in SHIPPED_GRAPHS:
+            with self.subTest(workflow=path.name):
+                d = json.loads(path.read_text(encoding="utf-8"))
+                types = {n["type"] for n in d["nodes"]}
+                self.assertIn("PulseSlate", types)
+
+
+class TestThePatchChainVariant(unittest.TestCase):
+    """§15's second graph exists to teach §10: patch *upstream* of the director.
+
+    Path B samples internally with the model handed to the node, so a patch on
+    the node's output accelerates the short path and does nothing for a long
+    timeline. A graph that demonstrates the wrong wiring teaches it to everyone
+    who opens it, so the direction is asserted rather than eyeballed.
+    """
+
+    PATCH_TYPES = ("SpectrumApplyMiniMaxH3", "PathchSageAttentionKJ")
+
+    def setUp(self):
+        path = WORKFLOW_DIR / "PulseSlate_Starter_SpectrumSage.json"
+        self.d = json.loads(path.read_text(encoding="utf-8"))
+        self.by_id = {n["id"]: n for n in self.d["nodes"]}
+
+    def _source_chain(self, dst_slot_name):
+        """Walk backwards from a director input, returning the node types."""
+        director = next(n for n in self.d["nodes"] if n["type"] == "PulseSlate")
+        slot = next(i for i in director["inputs"] if i["name"] == dst_slot_name)
+        by_link = {l[0]: l for l in self.d["links"]}
+        chain, link_id = [], slot["link"]
+        while link_id is not None:
+            src = self.by_id[by_link[link_id][1]]
+            chain.append(src["type"])
+            upstream = src.get("inputs") or []
+            link_id = upstream[0]["link"] if upstream else None
+        return chain
+
+    def test_both_model_inputs_arrive_through_the_documented_chain(self):
+        for slot in ("model", "model_fl2va"):
+            with self.subTest(input=slot):
+                self.assertEqual(
+                    self._source_chain(slot),
+                    ["PathchSageAttentionKJ", "SpectrumApplyMiniMaxH3", "UNETLoader"],
+                    "spec §10's chain is UNETLoader -> Spectrum -> Sage -> PulseSlate")
+
+    def test_no_patch_node_sits_downstream_of_the_director(self):
+        director = next(n for n in self.d["nodes"] if n["type"] == "PulseSlate")
+        downstream = {l[3] for l in self.d["links"] if l[1] == director["id"]}
+        for node_id in downstream:
+            self.assertNotIn(self.by_id[node_id]["type"], self.PATCH_TYPES,
+                             "a patch downstream of the director does nothing for path B")
+
+    def test_spectrum_keeps_its_history_in_system_ram(self):
+        """§18.1: this is what makes a 362-frame window fit on a 32GB card. It
+        is not a speed knob, and an example shipping `vram` would say it is."""
+        found = [n for n in self.d["nodes"] if n["type"] == "SpectrumApplyMiniMaxH3"]
+        self.assertTrue(found, "the variant must actually contain a Spectrum node")
+        for node in found:
+            self.assertIn("system_ram", node["widgets_values"],
+                          "%s must store history in system_ram" % node.get("title"))
+
+    def test_the_variant_is_otherwise_the_starter_graph(self):
+        """Same director, same widget values. The two graphs teach one thing
+        each; a drifted copy would teach two."""
+        starter = json.loads(WORKFLOW.read_text(encoding="utf-8"))
+        a = next(n for n in starter["nodes"] if n["type"] == "PulseSlate")
+        b = next(n for n in self.d["nodes"] if n["type"] == "PulseSlate")
+        self.assertEqual(a["widgets_values"], b["widgets_values"])
 
 
 class TestWidgetOrderMatchesTheNode(unittest.TestCase):

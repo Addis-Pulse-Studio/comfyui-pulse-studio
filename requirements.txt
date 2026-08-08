@@ -1,0 +1,16 @@
+# Pulse Studio has no dependencies of its own, and that is deliberate.
+#
+# The pure core under comfyui_pulse_studio/ is stdlib-only -- there is a test
+# that walks its AST and fails if an import of torch, comfy, comfy_extras,
+# folder_paths or nodes reaches it. Everything the tensor layer needs (torch,
+# numpy, Pillow, av) is already installed in any working ComfyUI, and pinning
+# them here would let this pack fight the host install for a version.
+#
+# The real requirement is ComfyUI itself, which pip cannot express as a version
+# constraint for a custom node. It is stated in the README instead:
+#
+#     ComfyUI 0.30.0 or newer -- the version this was developed and tested
+#     against. It must be a build carrying comfy_extras/nodes_minimax_h3.py
+#     and comfy/ldm/minimax/, or MiniMax H3 is not present to direct.
+#
+# If a dependency is ever added, pin it exactly, and expect to justify it.
