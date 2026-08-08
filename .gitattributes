@@ -1,0 +1,13 @@
+# Authored on Windows, tested on Linux CI, and scanned literally by
+# tests/test_no_network.py and tests/test_js_guard.py. Normalising to LF in the
+# repository keeps line-ending churn out of diffs and out of those scans.
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.mp4 binary
+*.wav binary
+*.mp3 binary
+*.safetensors binary

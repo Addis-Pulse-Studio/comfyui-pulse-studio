@@ -70,7 +70,7 @@
         }
       },
       "widgets_values": [
-        "minimax\\minimax_h3_audio_vae_fp32.safetensors"
+        "minimax/minimax_h3_audio_vae_fp32.safetensors"
       ],
       "color": "#1d1d1d",
       "bgcolor": "#2a2a2a"
@@ -304,7 +304,7 @@
         }
       },
       "widgets_values": [
-        "minimax\\minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+        "minimax/minimax_h3_fl2va_pruned_int8_convrot.safetensors",
         "default"
       ],
       "color": "#1d1d1d",
@@ -453,7 +453,7 @@
         }
       },
       "widgets_values": [
-        "WomanPortraitRed.png",
+        "example_portrait.png",
         "image"
       ],
       "color": "#14436c",
@@ -589,7 +589,7 @@
         }
       },
       "widgets_values": [
-        "BallerinaBunny.png",
+        "example_subject.png",
         "image"
       ],
       "color": "#14436c",
@@ -720,7 +720,7 @@
         }
       },
       "widgets_values": [
-        "minimax\\minimax_h3_ref2va_pruned_int8_convrot.safetensors",
+        "minimax/minimax_h3_ref2va_pruned_int8_convrot.safetensors",
         "default"
       ],
       "color": "#1d1d1d",
@@ -954,7 +954,7 @@
         }
       },
       "widgets_values": [
-        "Generated Image August 06, 2026 - 7_10AM.jpg",
+        "example_character_a.png",
         "image"
       ],
       "color": "#14436c",
@@ -999,7 +999,7 @@
         }
       },
       "widgets_values": [
-        "Generated Image August 06, 2026 - 7_10AM (1).jpg",
+        "example_character_b.png",
         "image"
       ],
       "color": "#14436c",
@@ -1044,7 +1044,7 @@
         }
       },
       "widgets_values": [
-        "Generated Image August 06, 2026 - 7_11AM.jpg",
+        "example_character_c.png",
         "image"
       ],
       "color": "#14436c",
@@ -1089,7 +1089,7 @@
         }
       },
       "widgets_values": [
-        "Generated Image August 06, 2026 - 7_11AM (1).jpg",
+        "example_character_d.png",
         "image"
       ],
       "color": "#14436c",
@@ -1170,7 +1170,7 @@
         }
       },
       "widgets_values": [
-        "Generated Audio August 06, 2026 - 7_19AM.wav",
+        "example_voice_b.wav",
         null,
         null
       ],
@@ -1211,7 +1211,7 @@
         }
       },
       "widgets_values": [
-        "Generated Audio August 06, 2026 - 7_18AM.wav",
+        "example_voice_a.wav",
         null,
         null
       ],
@@ -2331,7 +2331,7 @@
         }
       },
       "widgets_values": [
-        "minimax\\qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+        "minimax/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
         "minimax",
         "default"
       ],
@@ -2374,7 +2374,7 @@
         }
       },
       "widgets_values": [
-        "minimax\\minimax_h3_video_vae_fp16.safetensors"
+        "minimax/minimax_h3_video_vae_fp16.safetensors"
       ],
       "color": "#1d1d1d",
       "bgcolor": "#2a2a2a"

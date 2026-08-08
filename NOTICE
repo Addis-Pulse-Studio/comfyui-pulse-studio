@@ -1,10 +1,18 @@
-Pulse Studio — MiniMax H3 for ComfyUI
-Copyright (c) 2026 Behailu AI Solutions
+ComfyUI-PulseStudio
+Copyright 2026 Addis Pulse Studio
+
+Licensed under the Apache License, Version 2.0 (the "License"); you may not
+use this file except in compliance with the License. You may obtain a copy of
+the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
 
 ============================================================
-UPSTREAM — MUSE COLLECTIVE (MIT)
+UPSTREAM — MUSE COLLECTIVE (MIT). PRESENT IN THIS TREE.
 ============================================================
 
+Stated explicitly, because the question is worth settling on the record rather
+than leaving to inference: muse-collective MIT code IS present in this project.
 This project is a fork of:
 
     MiniMaxH3-Director-Seed-Hunt
@@ -15,19 +23,47 @@ This project is a fork of:
 The upstream project's chunking design and its empirically-derived audio
 carry-over behaviour (feeding the previous window's decoded audio tail back
 through `ref_audios` so each window does not invent its own score from
-scratch) informed this fork's window-continuity design. Upstream's MIT
-license permits this reuse and relicensing; its copyright notice is retained
-in LICENSE as that license requires.
+scratch) informed this fork's window-continuity design.
+
+The MIT License is compatible with an Apache-2.0 project provided attribution
+survives, so upstream's notice is reproduced here in full as that license
+requires:
+
+    MIT License
+
+    Copyright (c) 2026 Muse Collective
+
+    Permission is hereby granted, free of charge, to any person obtaining a
+    copy of this software and associated documentation files (the "Software"),
+    to deal in the Software without restriction, including without limitation
+    the rights to use, copy, modify, merge, publish, distribute, sublicense,
+    and/or sell copies of the Software, and to permit persons to whom the
+    Software is furnished to do so, subject to the following conditions:
+
+    The above copyright notice and this permission notice shall be included in
+    all copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+    THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+    FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+    DEALINGS IN THE SOFTWARE.
 
 ============================================================
 DELIBERATELY NOT USED — GPL-3.0 SOURCES
 ============================================================
 
-No code, data, or derived text from seesee75-commits/ComfyUI-MiniMaxH3-Director
-(GPL-3.0) is present in this repository. That project was reviewed for feature
-ideas only. Copying from it would relicense this entire project under GPL-3.0,
-which is incompatible with this project's MIT licensing. Contributors must not
-introduce code derived from it.
+This product contains no code from ComfyUI-MiniMaxH3-Director
+(https://github.com/seesee75-commits/ComfyUI-MiniMaxH3-Director, GPL-3.0).
+
+That project was reviewed for feature ideas only. No code, data, or derived
+text from it is present in this repository or anywhere in its git history.
+Copying from it would relicense this entire project under GPL-3.0 and impose a
+source-offer obligation on every client deployment, which is precisely what
+the permissive licensing here exists to avoid. Contributors must not introduce
+code derived from it.
 
 ============================================================
 THIRD-PARTY — MINIMAX H3
@@ -53,10 +89,10 @@ separate third-party license governing the model weights and their use:
     https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE
 
 Use of the model weights through this node — including any output generated
-using them — is governed entirely by that agreement, independently of the MIT
-license covering this repository's own code. Every user is individually
-responsible for complying with it in full, including any territorial
-restrictions, commercial-revenue thresholds, and attribution or
+using them — is governed entirely by that agreement, independently of the
+Apache-2.0 license covering this repository's own code. Every user is
+individually responsible for complying with it in full, including any
+territorial restrictions, commercial-revenue thresholds, and attribution or
 AI-generation-identifier provisions it contains.
 
     POWERED BY MINIMAX H3
@@ -65,7 +101,7 @@ AI-generation-identifier provisions it contains.
 THIS REPOSITORY'S OWN CODE
 ============================================================
 
-All original code in this repository is Copyright (c) 2026 Behailu AI
-Solutions and is licensed under the MIT License — see LICENSE. The MIT
-License applies only to that original code and confers no rights over
-MiniMax H3 itself.
+All original code in this repository is Copyright 2026 Addis Pulse Studio and
+is licensed under the Apache License, Version 2.0 — see LICENSE. That license
+applies only to this repository's own code and confers no rights over MiniMax
+H3 itself.

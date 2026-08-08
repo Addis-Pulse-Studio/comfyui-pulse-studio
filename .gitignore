@@ -1,13 +1,45 @@
+# python
 __pycache__/
 *.py[cod]
 .pytest_cache/
 .venv/
 venv/
-.DS_Store
+*.egg-info/
+dist/
+build/
 
-# GPL-3.0 reference material, reviewed for ideas only. Kept out of the repo so it
-# can never be committed, packaged, or redistributed alongside this MIT project --
-# shipping it would create exactly the licensing entanglement the fork avoids.
+# node
+node_modules/
+
+# model weights — never committed, licensed separately under the MiniMax H3
+# Community License. The README links them; the repo never contains them.
+*.safetensors
+*.ckpt
+*.pt
+*.bin
+
+# comfyui runtime
+output/
+temp/
+input/
+
+# scratch — client assets and test renders go here
+_scratch/
+
+# secrets
+.env
+*.key
+
+# editors / os
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# GPL-3.0 reference material, reviewed for feature ideas only. Kept out of the
+# repo so it can never be committed, packaged, or redistributed alongside this
+# Apache-2.0 project — shipping it would create exactly the licensing
+# entanglement the fork exists to avoid. See NOTICE.
 reference_purpose only/
 
 # The planning document is local working material, not part of the node.

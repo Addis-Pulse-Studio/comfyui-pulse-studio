@@ -33,7 +33,7 @@
         "Node name for S&R": "UNETLoader"
       },
       "widgets_values": [
-        "minimax\\minimax_h3_ref2va_pruned_int8_convrot.safetensors",
+        "minimax/minimax_h3_ref2va_pruned_int8_convrot.safetensors",
         "default"
       ],
       "title": "ref2va checkpoint (references)"
@@ -67,7 +67,7 @@
         "Node name for S&R": "UNETLoader"
       },
       "widgets_values": [
-        "minimax\\minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+        "minimax/minimax_h3_fl2va_pruned_int8_convrot.safetensors",
         "default"
       ],
       "title": "fl2va checkpoint (anchors) — optional"
@@ -101,7 +101,7 @@
         "Node name for S&R": "CLIPLoader"
       },
       "widgets_values": [
-        "minimax\\qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+        "minimax/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
         "minimax",
         "default"
       ]
@@ -136,7 +136,7 @@
         "Node name for S&R": "VAELoader"
       },
       "widgets_values": [
-        "minimax\\minimax_h3_video_vae_fp16.safetensors"
+        "minimax/minimax_h3_video_vae_fp16.safetensors"
       ],
       "title": "video VAE"
     },
@@ -170,7 +170,7 @@
         "Node name for S&R": "VAELoader"
       },
       "widgets_values": [
-        "minimax\\minimax_h3_audio_vae_fp32.safetensors"
+        "minimax/minimax_h3_audio_vae_fp32.safetensors"
       ],
       "title": "audio VAE"
     },
@@ -291,7 +291,7 @@
         "match",
         12.0,
         3.0,
-        "{\"assets\": [{\"id\": \"amsjmvfzv2lv\", \"kind\": \"image\", \"name\": \"Image1\", \"file\": \"Generated Image August 07, 2026 - 8_25PM.jpg\"}, {\"id\": \"amsjmvxsf6qz\", \"kind\": \"image\", \"name\": \"Image2\", \"file\": \"Generated Image August 07, 2026 - 8_25PM (1).jpg\"}, {\"id\": \"amsjmw12t23s\", \"kind\": \"image\", \"name\": \"Image3\", \"file\": \"Generated Image August 07, 2026 - 8_26PM.jpg\"}]}"
+        "{\"assets\": [{\"id\": \"amsjmvfzv2lv\", \"kind\": \"image\", \"name\": \"Image1\", \"file\": \"example_character_a.png\"}, {\"id\": \"amsjmvxsf6qz\", \"kind\": \"image\", \"name\": \"Image2\", \"file\": \"example_character_b.png\"}, {\"id\": \"amsjmw12t23s\", \"kind\": \"image\", \"name\": \"Image3\", \"file\": \"example_character_c.png\"}]}"
       ],
       "title": "① Pulse Slate · MiniMax H3"
     },
