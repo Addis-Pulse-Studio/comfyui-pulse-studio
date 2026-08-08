@@ -115,13 +115,13 @@ test("a write during a bin document operation is blocked", () => {
   protectWidget(widget, "global_prompt",
                 { scope, console: { ...quietConsole, error: (m) => errors.push(m) } });
 
-  scope.__odBinWriting = true;
+  scope.__psBinWriting = true;
   widget.value = "";           // the erasure bug's signature move
   assert.equal(widget.value, "user text", "the erasure was not blocked");
   assert.equal(errors.length, 1);
   assert.match(errors[0], /blocked a write to global_prompt/);
 
-  scope.__odBinWriting = false;
+  scope.__psBinWriting = false;
   widget.value = "user typing normally";
   assert.equal(widget.value, "user typing normally");
 });
@@ -139,9 +139,9 @@ test("typing is never blocked when the bin is idle", () => {
 test("the marker does not leak into serialization", () => {
   const widget = { name: "global_prompt", value: "x" };
   protectWidget(widget, "global_prompt", { console: quietConsole });
-  assert.ok(!Object.keys(widget).includes("__odProtected"),
-            "__odProtected must be non-enumerable");
-  assert.ok(!("__odProtected" in JSON.parse(JSON.stringify(widget))));
+  assert.ok(!Object.keys(widget).includes("__psProtected"),
+            "__psProtected must be non-enumerable");
+  assert.ok(!("__psProtected" in JSON.parse(JSON.stringify(widget))));
 });
 
 test("a missing widget is a no-op", () => {

@@ -1,14 +1,22 @@
 [project]
-name = "minimax-h3-omni-director"
-description = "Director node for MiniMax H3: an Asset Bin that can never misnumber a reference tag, a Retake Scissor that patches a bad three seconds without re-rendering fifteen, and Still Mode for making your reference images in the same window you use them."
-version = "0.1.0"
+name = "comfyui-pulse-studio"
+description = "Shot-timeline direction and per-character voice binding for MiniMax H3."
+version = "2.0.0"
 license = { file = "LICENSE" }
-requires-python = ">=3.9"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = []
+classifiers = ["License :: OSI Approved :: Apache Software License"]
 
 [project.urls]
 Repository = "https://github.com/behailu-ai/ComfyUI-PulseStudio"
 
 [tool.comfy]
+# TODO(owner): PublisherId must match the publisher created at registry.comfy.org.
+# Carried over from the previous manifest and unverified against the registry.
+# Blocking for `comfy node publish`, not for the tag. Registry requirements
+# change -- check the current ComfyUI registry docs before the first publish
+# rather than trusting this block.
 PublisherId = "behailu-ai"
 DisplayName = "Pulse Studio"
 Icon = ""

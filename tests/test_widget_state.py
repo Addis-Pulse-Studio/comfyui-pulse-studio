@@ -150,8 +150,31 @@ class TestDocumentPreservation(unittest.TestCase):
             load_timeline_document("[1, 2, 3]")
 
     def test_a_genuinely_empty_document_is_fine(self):
+        """A new document is written in schema 2 form, cast key and all (§3.1)."""
         for blank in (None, "", "  ", "{}", "null"):
-            self.assertEqual(load_timeline_document(blank), {"assets": []})
+            self.assertEqual(load_timeline_document(blank),
+                             {"schema": 2, "assets": [], "cast": []})
+
+    def test_a_schema_1_document_upgrades_in_place(self):
+        """Every pre-2.0.0 build wrote a bare {"assets": [...]}. It loads with an
+        empty cast rather than being rejected, and the upgrade persists because
+        apply_bin_operation dumps whatever load returns."""
+        document = load_timeline_document('{"assets": [], "duration_seconds": 12}')
+        self.assertEqual(document["schema"], 2)
+        self.assertEqual(document["cast"], [])
+        self.assertEqual(document["duration_seconds"], 12, "an unknown key was dropped")
+
+    def test_a_future_schema_is_not_downgraded(self):
+        """The upgrade is additive. A schema 3 file passes through untouched --
+        this code has no business rewriting a format it does not know."""
+        document = load_timeline_document('{"schema": 3, "assets": [], "cast": [], "x": 1}')
+        self.assertEqual(document["schema"], 3)
+        self.assertEqual(document["x"], 1)
+
+    def test_an_existing_cast_survives_a_load(self):
+        raw = '{"schema": 2, "assets": [], "cast": [{"id": "cast_01", "name": "Mimi"}]}'
+        self.assertEqual(load_timeline_document(raw)["cast"],
+                         [{"id": "cast_01", "name": "Mimi"}])
 
     def test_reorder_preserves_the_rest(self):
         document = json.loads(self._document())

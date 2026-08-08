@@ -270,6 +270,8 @@
         "Node name for S&R": "PulseSlate"
       },
       "widgets_values": [
+        "2.0.0",
+        "{\"schema\": 2, \"assets\": [{\"id\": \"amsjmvfzv2lv\", \"kind\": \"image\", \"name\": \"Image1\", \"file\": \"example_character_a.png\"}, {\"id\": \"amsjmvxsf6qz\", \"kind\": \"image\", \"name\": \"Image2\", \"file\": \"example_character_b.png\"}, {\"id\": \"amsjmw12t23s\", \"kind\": \"image\", \"name\": \"Image3\", \"file\": \"example_character_c.png\"}], \"cast\": []}",
         "style: Shot on 35mm, warm practical light, shallow depth of field, handheld.\nidentity: @Image1 keeps the red scarf in every shot.\nretention: the scarf is never removed or recoloured.\nsoundscape: Rain outside, low espresso-machine hiss, quiet room tone.\nmusic: Sparse piano, no percussion.",
         "[Shot 1] @Image1 pushes through the cafe door, shaking rain off her scarf.\n[Shot 2] At 00:04.000, she crosses to the counter and says \"you're still open, thank god\"\n[Shot 3] At 00:08.000, she sits by the window with @Image2 behind her.",
         12.0,
@@ -290,8 +292,7 @@
         4.0,
         "match",
         12.0,
-        3.0,
-        "{\"assets\": [{\"id\": \"amsjmvfzv2lv\", \"kind\": \"image\", \"name\": \"Image1\", \"file\": \"example_character_a.png\"}, {\"id\": \"amsjmvxsf6qz\", \"kind\": \"image\", \"name\": \"Image2\", \"file\": \"example_character_b.png\"}, {\"id\": \"amsjmw12t23s\", \"kind\": \"image\", \"name\": \"Image3\", \"file\": \"example_character_c.png\"}]}"
+        3.0
       ],
       "title": "① Pulse Slate · MiniMax H3"
     },

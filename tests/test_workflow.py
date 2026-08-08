@@ -100,10 +100,26 @@ class TestWidgetOrderMatchesTheNode(unittest.TestCase):
             "workflow stores %d values but the node declares %d widgets (+1 for "
             "control_after_generate).\nnode order: %r" % (len(stored), len(widgets), widgets))
 
-    def test_the_two_prompt_boxes_come_first(self):
+    def test_the_frozen_prefix_leads_the_widget_list(self):
+        """Spec §3.1. schema_version must be readable before anything else is,
+        because it is what says which layout the rest of the array is in."""
         widgets = _required_widgets("PulseSlate")
-        self.assertEqual(widgets[:2], ["global_prompt", "shot_prompt"],
-                         "the prompt boxes must be the first widgets on the node face")
+        self.assertEqual(widgets[:2], ["schema_version", "timeline_data"])
+
+    def test_the_two_prompt_boxes_follow_the_frozen_prefix(self):
+        widgets = _required_widgets("PulseSlate")
+        self.assertEqual(widgets[2:4], ["global_prompt", "shot_prompt"],
+                         "the prompt boxes must lead the visible node face")
+
+    def test_every_node_in_the_pack_opens_with_schema_version(self):
+        for name in ("PulseSlate", "PulseRetake", "PulseStill"):
+            with self.subTest(node=name):
+                self.assertEqual(_required_widgets(name)[0], "schema_version")
+
+    def test_the_workflow_declares_the_current_schema(self):
+        stored = self._director()["widgets_values"]
+        self.assertEqual(stored[0], "2.0.0",
+                         "slot 0 must carry the schema version the file was saved in")
 
     def test_stored_values_land_on_the_right_widgets(self):
         """Spot-check the values whose type makes a shift obvious."""
@@ -124,12 +140,15 @@ class TestWidgetOrderMatchesTheNode(unittest.TestCase):
             self.assertEqual(stored[index[name] + 1], expected,
                              "%s did not land on its own slot" % name)
 
-    def test_timeline_data_is_valid_json_and_last(self):
+    def test_timeline_data_is_valid_json_in_schema_2_form(self):
         widgets = _required_widgets("PulseSlate")
-        self.assertEqual(widgets[-1], "timeline_data")
+        self.assertEqual(widgets[1], "timeline_data")
         stored = self._director()["widgets_values"]
-        document = json.loads(stored[-1])
+        document = json.loads(stored[1])
         self.assertIn("assets", document)
+        # §3.1: shipped in schema 2 form now, so 1.1 adds to a key that exists.
+        self.assertEqual(document["schema"], 2)
+        self.assertIn("cast", document)
 
     def test_the_shipped_prompts_actually_compile(self):
         """The starter text must produce a real plan, not just look plausible."""
@@ -139,7 +158,7 @@ class TestWidgetOrderMatchesTheNode(unittest.TestCase):
         stored = self._director()["widgets_values"]
         index = {name: n for n, name in enumerate(widgets)}
         timeline, _ = build_timeline(
-            stored[-1],
+            stored[index["timeline_data"]],
             global_prompt=stored[index["global_prompt"]],
             shot_prompt=stored[index["shot_prompt"]],
             duration_seconds=stored[index["duration_seconds"]])

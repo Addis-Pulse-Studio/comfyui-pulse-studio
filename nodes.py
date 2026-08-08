@@ -43,11 +43,27 @@ from .comfyui_pulse_studio.constants import (
     DEFAULT_AUDIO_CARRY_SECONDS,
     MAX_PIXELS,
     REF_IMAGE_SIZE_OPTIONS,
+    SCHEMA_VERSION,
 )
 from .comfyui_pulse_studio.retake import RetakeError, plan_retake
 from .comfyui_pulse_studio.sockets import SocketGapError, check_socket_groups, drop_missing
 from .comfyui_pulse_studio.still import StillError, plan_still
-from .comfyui_pulse_studio.widget_state import build_timeline
+from .comfyui_pulse_studio.widget_state import EMPTY_TIMELINE_DATA, build_timeline
+
+# ── The slot contract, in one place ─────────────────────────────────────────
+# Every node in this pack opens its widget list with `schema_version`, so that
+# a saved workflow always states which layout it was written in before anything
+# tries to read it back. Spelled as a helper rather than copied three times:
+# three copies is three chances for one of them to drift, and drift here is the
+# failure mode the whole contract exists to prevent. See spec §3.
+
+
+def schema_widget():
+    """The `schema_version` widget. Always widget index 0. Never displayed."""
+    return ("STRING", {
+        "default": SCHEMA_VERSION, "multiline": False,
+        "tooltip": "Which widget layout this node was saved with. Written by the "
+                   "node, read at load time to restore values by name. Do not edit."})
 
 log = logging.getLogger(__name__)
 
@@ -272,6 +288,22 @@ class PulseSlate:
                     "Required on both branches -- H3 always builds a joint audio+video "
                     "latent, even when no reference audio is encoded."}),
 
+                # ── the frozen prefix — widget indices 0 and 1 ──────────────
+                # Both are hidden on the node face (the JS sets type="hidden"
+                # and a zero computeSize). They lead the widget list because
+                # LiteGraph serialises widgets positionally, so a saved file has
+                # to be able to say which order it was written in BEFORE anything
+                # tries to read it. See js/ps_widget_order.js and spec §3.
+                #
+                # Nothing may ever be inserted ahead of these two, and nothing
+                # between them. New widgets append at the end of this dict.
+                "schema_version": schema_widget(),
+                "timeline_data": ("STRING", {
+                    "default": EMPTY_TIMELINE_DATA, "multiline": False,
+                    "tooltip":
+                    "The Asset Bin's storage: assets and cast, as JSON. Managed by "
+                    "the panel and never written to by the execute path."}),
+
                 # ── the two prompt boxes ────────────────────────────────────
                 "global_prompt": ("STRING", {
                     "multiline": True, "dynamicPrompts": False,
@@ -348,10 +380,7 @@ class PulseSlate:
                                           "step": 0.01}),
                 "shift_audio": ("FLOAT", {"default": 3.0, "min": 0.01, "max": 100.0,
                                           "step": 0.01}),
-
-                # The Asset Bin's storage. Hidden by the panel, never written to
-                # by the execute path.
-                "timeline_data": ("STRING", {"default": "{}", "multiline": False}),
+                # ── append new widgets HERE, at the end, and nowhere else ────
             },
             "optional": {
                 "model_fl2va": ("MODEL", {"tooltip":
@@ -368,11 +397,12 @@ class PulseSlate:
                    "A single window hands back positive/latent for your own sampler; a longer "
                    "timeline renders internally, one H3 call per window, and is stitched.")
 
-    def execute(self, model, clip, vae, audio_vae, global_prompt, shot_prompt,
+    def execute(self, model, clip, vae, audio_vae, schema_version, timeline_data,
+                global_prompt, shot_prompt,
                 duration_seconds, aspect_ratio, width, height, steps, sampler_name,
                 scheduler, cfg, seed, partition_strategy, window_seconds, resize_method,
                 carry_mode, carry_audio, carry_audio_seconds, ref_image_size,
-                shift_video, shift_audio, timeline_data, model_fl2va=None):
+                shift_video, shift_audio, model_fl2va=None):
 
         width, height = resolution_for(aspect_ratio, width, height)
 
@@ -486,6 +516,10 @@ class PulseRetake:
                 "vae": ("VAE",),
                 "audio_vae": ("VAE",),
                 "images": ("IMAGE", {"tooltip": "The rendered clip to patch."}),
+
+                # Widget index 0, under the same contract as PulseSlate (§3).
+                "schema_version": schema_widget(),
+
                 "prompt": ("STRING", {"multiline": True, "dynamicPrompts": False,
                                       "default": "",
                                       "tooltip": "What should happen in the patched span. "
@@ -509,6 +543,7 @@ class PulseRetake:
                                           "step": 0.01}),
                 "shift_audio": ("FLOAT", {"default": 3.0, "min": 0.01, "max": 100.0,
                                           "step": 0.01}),
+                # ── append new widgets HERE, at the end, and nowhere else ────
             },
             "optional": {
                 "base_audio": ("AUDIO", {"tooltip": "The clip's original audio, returned "
@@ -525,7 +560,7 @@ class PulseRetake:
                    "17k+5 grid and the cut moves with it, so the stitched result is the "
                    "same length as the base.")
 
-    def execute(self, model_fl2va, clip, vae, audio_vae, images, prompt,
+    def execute(self, model_fl2va, clip, vae, audio_vae, images, schema_version, prompt,
                 cut_start_seconds, cut_end_seconds, keep_base_audio, fps, seed, steps,
                 sampler_name, scheduler, cfg, shift_video, shift_audio, base_audio=None):
         try:
@@ -595,6 +630,10 @@ class PulseStill:
                 "audio_vae": ("VAE", {"tooltip":
                     "H3 always builds a joint audio+video latent, so this is required even "
                     "though a still discards the audio."}),
+
+                # Widget index 0, under the same contract as PulseSlate (§3).
+                "schema_version": schema_widget(),
+
                 "prompt": ("STRING", {"multiline": True, "dynamicPrompts": False,
                                       "default": ""}),
                 "aspect_ratio": (ASPECT_OPTIONS, {"default": "16:9 landscape"}),
@@ -619,6 +658,7 @@ class PulseStill:
                                           "step": 0.01}),
                 "shift_audio": ("FLOAT", {"default": 3.0, "min": 0.01, "max": 100.0,
                                           "step": 0.01}),
+                # ── append new widgets HERE, at the end, and nowhere else ────
             },
             "optional": {
                 "source_image": ("IMAGE", {"tooltip":
@@ -638,7 +678,8 @@ class PulseStill:
                    "reference image through the same reference set that will drive the "
                    "video, or edit an existing one in place.")
 
-    def execute(self, model, clip, vae, audio_vae, prompt, aspect_ratio, width, height,
+    def execute(self, model, clip, vae, audio_vae, schema_version,
+                prompt, aspect_ratio, width, height,
                 frame_pick, canvas_from_reference, seed, steps, sampler_name, scheduler,
                 cfg, shift_video, shift_audio, source_image=None, ref_images=None):
         width, height = resolution_for(aspect_ratio, width, height)

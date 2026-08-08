@@ -12,7 +12,7 @@
  * Three failures it is written against, all seen or latent in that first version:
  *
  *   1. NOT IDEMPOTENT -- reloading a workflow re-ran the setup and called
- *      defineProperty on an already-trapped widget. Fixed by the __odProtected
+ *      defineProperty on an already-trapped widget. Fixed by the __psProtected
  *      marker.
  *   2. NOT CAPABILITY-CHECKED -- if ComfyUI's own `value` descriptor is
  *      non-configurable, defineProperty throws "Cannot redefine property: value"
@@ -27,7 +27,7 @@
 
 /** Is the Asset Bin currently performing a document write? */
 export function isBinWriting(scope) {
-  return Boolean((scope ?? globalThis).__odBinWriting);
+  return Boolean((scope ?? globalThis).__psBinWriting);
 }
 
 /**
@@ -41,7 +41,7 @@ export function protectWidget(widget, name, options = {}) {
   if (!widget) return "skipped";
 
   try {
-    if (widget.__odProtected) return "already";
+    if (widget.__psProtected) return "already";
 
     const desc = Object.getOwnPropertyDescriptor(widget, "value");
     if (desc && desc.configurable === false) {
@@ -78,7 +78,7 @@ export function protectWidget(widget, name, options = {}) {
         set(v);
       },
     });
-    Object.defineProperty(widget, "__odProtected", {
+    Object.defineProperty(widget, "__psProtected", {
       value: true, enumerable: false, configurable: true, writable: true,
     });
     return "installed";

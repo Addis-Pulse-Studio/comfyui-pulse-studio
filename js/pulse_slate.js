@@ -21,10 +21,18 @@
 import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
 import { protectWidget } from "./ps_widget_guard.js";
-import { checkWidgetOrder, describeMisalignment, validateWidgetValues }
-  from "./ps_widget_order.js";
+import {
+  CURRENT,
+  NODE_IDS,
+  applySavedValues,
+  checkWidgetOrder,
+  describeMisalignment,
+  describeUnloadable,
+  validateWidgetValues,
+} from "./ps_widget_order.js";
 
 const NODE_ID = "PulseSlate";
+const SCHEMA_WIDGET = "schema_version";
 const STORAGE_WIDGET = "timeline_data";
 const PROMPT_WIDGETS = ["global_prompt", "shot_prompt"];
 const CONTROLS_START = "duration_seconds"; // first widget of the generation panel
@@ -43,79 +51,79 @@ const KIND_META = {
 };
 
 const CSS = `
-.od-wrap { display:flex; flex-direction:column; gap:8px; font-size:11px;
+.ps-wrap { display:flex; flex-direction:column; gap:8px; font-size:11px;
   font-family:var(--font-family, sans-serif); color:#dcdcdc; box-sizing:border-box;
   height:100%; overflow:auto; padding:2px; }
-.od-card { border:1px solid #444; border-left-width:3px; border-radius:6px;
+.ps-card { border:1px solid #444; border-left-width:3px; border-radius:6px;
   background:#141414; padding:7px 8px; box-sizing:border-box; }
-.od-card.od-filedrop { background:#18232c; box-shadow:inset 0 0 0 1px #6ab0ff; }
-.od-card-head { display:flex; justify-content:space-between; align-items:baseline;
+.ps-card.ps-filedrop { background:#18232c; box-shadow:inset 0 0 0 1px #6ab0ff; }
+.ps-card-head { display:flex; justify-content:space-between; align-items:baseline;
   gap:8px; margin-bottom:6px; }
-.od-card-title { font-size:10px; font-weight:700; letter-spacing:.09em; }
-.od-card-hint { font-size:9px; color:#7d7d7d; font-style:italic; }
-.od-count { font-size:9px; color:#9a9a9a; font-variant-numeric:tabular-nums; }
+.ps-card-title { font-size:10px; font-weight:700; letter-spacing:.09em; }
+.ps-card-hint { font-size:9px; color:#7d7d7d; font-style:italic; }
+.ps-count { font-size:9px; color:#9a9a9a; font-variant-numeric:tabular-nums; }
 
-.od-meter { display:flex; gap:10px; flex-wrap:wrap; padding:5px 8px; border-radius:5px;
+.ps-meter { display:flex; gap:10px; flex-wrap:wrap; padding:5px 8px; border-radius:5px;
   background:#141414; border:1px solid #444; border-left:3px solid #6d7f92;
   font-variant-numeric:tabular-nums; font-size:10px; }
-.od-meter.od-over { background:#3a1717; border-color:#8d3b3b; color:#ffb4b4; }
+.ps-meter.ps-over { background:#3a1717; border-color:#8d3b3b; color:#ffb4b4; }
 
-.od-row { display:grid; grid-template-columns:44px 1fr auto auto; gap:7px;
+.ps-row { display:grid; grid-template-columns:44px 1fr auto auto; gap:7px;
   align-items:center; padding:4px; border-radius:4px; background:#1d1d1d;
   margin-bottom:4px; cursor:grab; }
-.od-row:last-child { margin-bottom:0; }
-.od-row.od-drag { opacity:.35; }
-.od-row.od-over-drop { box-shadow:inset 0 0 0 1px #6ab0ff; }
+.ps-row:last-child { margin-bottom:0; }
+.ps-row.ps-drag { opacity:.35; }
+.ps-row.ps-over-drop { box-shadow:inset 0 0 0 1px #6ab0ff; }
 
-.od-thumb { width:44px; height:34px; border-radius:3px; background:#0c0c0c;
+.ps-thumb { width:44px; height:34px; border-radius:3px; background:#0c0c0c;
   object-fit:cover; display:block; border:1px solid #333; }
-.od-thumb-box { width:44px; height:34px; border-radius:3px; background:#0c0c0c;
+.ps-thumb-box { width:44px; height:34px; border-radius:3px; background:#0c0c0c;
   border:1px solid #333; display:flex; align-items:center; justify-content:center;
   overflow:hidden; position:relative; }
-.od-thumb-box video { width:100%; height:100%; object-fit:cover; }
-.od-badge { position:absolute; right:1px; bottom:1px; font-size:7px; padding:0 2px;
+.ps-thumb-box video { width:100%; height:100%; object-fit:cover; }
+.ps-badge { position:absolute; right:1px; bottom:1px; font-size:7px; padding:0 2px;
   border-radius:2px; background:rgba(0,0,0,.7); color:#ddd; letter-spacing:.04em; }
 
-.od-name { background:#111; border:1px solid #3a3a3a; color:#eee; font:inherit;
+.ps-name { background:#111; border:1px solid #3a3a3a; color:#eee; font:inherit;
   width:100%; padding:3px 5px; border-radius:3px; box-sizing:border-box; }
-.od-name:focus { border-color:#6ab0ff; outline:none; background:#161c22; }
-.od-tag { font-family:ui-monospace,Consolas,monospace; font-size:10px; color:#8fc7ff;
+.ps-name:focus { border-color:#6ab0ff; outline:none; background:#161c22; }
+.ps-tag { font-family:ui-monospace,Consolas,monospace; font-size:10px; color:#8fc7ff;
   white-space:nowrap; }
-.od-sub { grid-column:1/5; font-size:9px; color:#8a8a8a; display:flex;
+.ps-sub { grid-column:1/5; font-size:9px; color:#8a8a8a; display:flex;
   align-items:center; gap:4px; padding-left:2px; }
-.od-btn { background:#2e2e2e; border:1px solid #444; color:#ccc; border-radius:3px;
+.ps-btn { background:#2e2e2e; border:1px solid #444; color:#ccc; border-radius:3px;
   cursor:pointer; padding:3px 7px; font-size:10px; }
-.od-btn:hover { background:#3c3c3c; color:#fff; border-color:#666; }
-.od-warn { color:#ffb4b4; font-size:10px; padding:2px 0; }
-.od-diff { background:#18242e; border-left:2px solid #6ab0ff; padding:4px 6px;
+.ps-btn:hover { background:#3c3c3c; color:#fff; border-color:#666; }
+.ps-warn { color:#ffb4b4; font-size:10px; padding:2px 0; }
+.ps-diff { background:#18242e; border-left:2px solid #6ab0ff; padding:4px 6px;
   border-radius:3px; font-size:10px; font-family:ui-monospace,Consolas,monospace;
   white-space:pre-wrap; margin-top:5px; }
-.od-empty { color:#6d6d6d; text-align:center; padding:10px 6px; font-style:italic;
+.ps-empty { color:#6d6d6d; text-align:center; padding:10px 6px; font-style:italic;
   border:1px dashed #3a3a3a; border-radius:4px; font-size:10px; }
-.od-actions { display:flex; gap:5px; margin-top:6px; }
+.ps-actions { display:flex; gap:5px; margin-top:6px; }
 
 /* Section headers spliced between native widgets. */
-.od-header { font-size:10px; font-weight:700; letter-spacing:.09em; padding:5px 8px;
+.ps-header { font-size:10px; font-weight:700; letter-spacing:.09em; padding:5px 8px;
   border-radius:5px; background:#141414; border:1px solid #444; border-left-width:3px;
   box-sizing:border-box; display:flex; justify-content:space-between; align-items:baseline;
   gap:8px; font-family:var(--font-family, sans-serif); }
-.od-header small { font-weight:400; letter-spacing:0; color:#7d7d7d; font-style:italic;
+.ps-header small { font-weight:400; letter-spacing:0; color:#7d7d7d; font-style:italic;
   font-size:9px; }
 
 /* Native multiline textareas, restyled in place. ComfyUI keeps owning the value. */
-textarea.od-prompt { background:#0f0f0f !important; color:#eaeaea !important;
+textarea.ps-prompt { background:#0f0f0f !important; color:#eaeaea !important;
   border:1px solid #444 !important; border-left-width:3px !important;
   border-radius:5px !important; padding:7px 8px !important;
   font-family:ui-monospace,Consolas,monospace !important; font-size:11px !important;
   line-height:1.45 !important; caret-color:#6ab0ff; }
-textarea.od-prompt:focus { outline:none !important; box-shadow:0 0 0 1px currentColor inset; }
-textarea.od-prompt::placeholder { color:#5c5c5c; font-style:italic; }
+textarea.ps-prompt:focus { outline:none !important; box-shadow:0 0 0 1px currentColor inset; }
+textarea.ps-prompt::placeholder { color:#5c5c5c; font-style:italic; }
 `;
 
 function injectStyle() {
-  if (document.getElementById("od-bin-style")) return;
+  if (document.getElementById("ps-bin-style")) return;
   const el = document.createElement("style");
-  el.id = "od-bin-style";
+  el.id = "ps-bin-style";
   el.textContent = CSS;
   document.head.appendChild(el);
 }
@@ -217,18 +225,18 @@ function decoratePrompt(node, name) {
   const area = textareaOf(widget);
   const meta = PROMPT_STYLE[name];
   if (!area || !meta) return false;
-  area.classList.add("od-prompt");
+  area.classList.add("ps-prompt");
   area.style.borderLeftColor = meta.accent;
   area.style.color = "#eaeaea";
   area.placeholder = meta.placeholder;
   area.spellcheck = false;
   area.title = `${meta.title} — ${meta.hint}`;
   // Never let the canvas swallow a click meant for the editor.
-  if (!area.__odFocusWired) {
+  if (!area.__psFocusWired) {
     for (const ev of ["mousedown", "pointerdown", "wheel", "keydown"]) {
       area.addEventListener(ev, (e) => e.stopPropagation());
     }
-    area.__odFocusWired = true;
+    area.__psFocusWired = true;
   }
   if (widget) widget.computeSize = () => [node.size?.[0] ?? 400, 132];
   return true;
@@ -261,7 +269,7 @@ class AssetBinPanel {
     this.node = node;
     this.storage = storage;
     this.root = document.createElement("div");
-    this.root.className = "od-wrap";
+    this.root.className = "ps-wrap";
     this.dragId = null;
     this.pendingDiff = null;
     this.busy = false;
@@ -308,7 +316,7 @@ class AssetBinPanel {
 
     if (result.status !== "ok") {
       const err = document.createElement("div");
-      err.className = "od-warn";
+      err.className = "ps-warn";
       err.textContent = result.message || "Asset Bin backend unavailable.";
       this.root.appendChild(err);
       return;
@@ -318,7 +326,7 @@ class AssetBinPanel {
     this.root.appendChild(this.buildMeter(state.budget));
     for (const problem of state.name_problems) {
       const warn = document.createElement("div");
-      warn.className = "od-warn";
+      warn.className = "ps-warn";
       warn.textContent = `⚠ ${problem.problem}`;
       this.root.appendChild(warn);
     }
@@ -329,7 +337,7 @@ class AssetBinPanel {
 
     if (this.pendingDiff) {
       const diff = document.createElement("div");
-      diff.className = "od-diff";
+      diff.className = "ps-diff";
       diff.textContent = this.pendingDiff;
       this.root.appendChild(diff);
     }
@@ -337,7 +345,7 @@ class AssetBinPanel {
 
   buildMeter(budget) {
     const meter = document.createElement("div");
-    meter.className = "od-meter" + (budget.ok ? "" : " od-over");
+    meter.className = "ps-meter" + (budget.ok ? "" : " ps-over");
     for (const part of budget.meter.split("|")) {
       const span = document.createElement("span");
       span.textContent = part.trim();
@@ -350,24 +358,24 @@ class AssetBinPanel {
   buildKindCard(kind, rows) {
     const meta = KIND_META[kind];
     const card = document.createElement("div");
-    card.className = "od-card";
+    card.className = "ps-card";
     card.style.borderLeftColor = meta.accent;
 
     const head = document.createElement("div");
-    head.className = "od-card-head";
+    head.className = "ps-card-head";
     const title = document.createElement("span");
-    title.className = "od-card-title";
+    title.className = "ps-card-title";
     title.style.color = meta.accent;
     title.textContent = meta.label;
     const hint = document.createElement("span");
-    hint.className = "od-card-hint";
+    hint.className = "ps-card-hint";
     hint.textContent = meta.hint;
     head.append(title, hint);
     card.appendChild(head);
 
     if (!rows.length) {
       const empty = document.createElement("div");
-      empty.className = "od-empty";
+      empty.className = "ps-empty";
       empty.textContent = `drop ${kind} files here`;
       card.appendChild(empty);
     } else {
@@ -375,9 +383,9 @@ class AssetBinPanel {
     }
 
     const actions = document.createElement("div");
-    actions.className = "od-actions";
+    actions.className = "ps-actions";
     const add = document.createElement("button");
-    add.className = "od-btn";
+    add.className = "ps-btn";
     add.textContent = `+ ${kind}`;
     add.addEventListener("click", () => this.pickFiles(kind));
     actions.appendChild(add);
@@ -389,12 +397,12 @@ class AssetBinPanel {
 
   buildThumb(row) {
     const box = document.createElement("div");
-    box.className = "od-thumb-box";
+    box.className = "ps-thumb-box";
     const url = viewURL(row.file);
 
     if (row.kind === "image") {
       const img = document.createElement("img");
-      img.className = "od-thumb";
+      img.className = "ps-thumb";
       img.loading = "lazy";
       img.src = url;
       img.alt = row.name;
@@ -421,17 +429,17 @@ class AssetBinPanel {
       });
       box.appendChild(video);
       const badge = document.createElement("span");
-      badge.className = "od-badge";
+      badge.className = "ps-badge";
       badge.textContent = "VID";
       box.appendChild(badge);
     } else {
       const img = document.createElement("img");
-      img.className = "od-thumb";
+      img.className = "ps-thumb";
       img.src = waveformSVG(row.file || row.name || row.id);
       img.alt = "waveform";
       box.appendChild(img);
       const badge = document.createElement("span");
-      badge.className = "od-badge";
+      badge.className = "ps-badge";
       badge.textContent = "AUD";
       box.appendChild(badge);
     }
@@ -441,14 +449,14 @@ class AssetBinPanel {
 
   buildRow(row) {
     const el = document.createElement("div");
-    el.className = "od-row";
+    el.className = "ps-row";
     el.draggable = true;
     el.dataset.id = row.id;
 
     el.appendChild(this.buildThumb(row));
 
     const name = document.createElement("input");
-    name.className = "od-name";
+    name.className = "ps-name";
     name.value = row.name;
     name.title = row.file || "";
     name.addEventListener("change", () =>
@@ -459,13 +467,13 @@ class AssetBinPanel {
     el.appendChild(name);
 
     const tag = document.createElement("span");
-    tag.className = "od-tag";
+    tag.className = "ps-tag";
     tag.textContent = row.tag || "";
     tag.title = `Assigned from bin order. Write @${row.name} in a prompt, never the number.`;
     el.appendChild(tag);
 
     const remove = document.createElement("button");
-    remove.className = "od-btn";
+    remove.className = "ps-btn";
     remove.textContent = "✕";
     remove.title = "Remove from bin";
     remove.addEventListener("click", () => this.apply("remove", { asset_id: row.id }));
@@ -473,7 +481,7 @@ class AssetBinPanel {
 
     if (row.kind === "video") {
       const sub = document.createElement("label");
-      sub.className = "od-sub";
+      sub.className = "ps-sub";
       const box = document.createElement("input");
       box.type = "checkbox";
       box.checked = !!row.include_audio;
@@ -495,29 +503,29 @@ class AssetBinPanel {
   wireReorder(el, id) {
     el.addEventListener("dragstart", (e) => {
       this.dragId = id;
-      el.classList.add("od-drag");
+      el.classList.add("ps-drag");
       e.dataTransfer.effectAllowed = "move";
       e.dataTransfer.setData("text/plain", id);
       e.stopPropagation();
     });
     el.addEventListener("dragend", () => {
-      el.classList.remove("od-drag");
+      el.classList.remove("ps-drag");
       this.dragId = null;
     });
     el.addEventListener("dragover", async (e) => {
       if (!this.dragId || this.dragId === id) return;
       e.preventDefault();
       e.stopPropagation();
-      el.classList.add("od-over-drop");
+      el.classList.add("ps-over-drop");
       const diff = await this.previewMove(this.dragId, id);
       if (diff && diff !== this.pendingDiff) this.pendingDiff = diff;
     });
-    el.addEventListener("dragleave", () => el.classList.remove("od-over-drop"));
+    el.addEventListener("dragleave", () => el.classList.remove("ps-over-drop"));
     el.addEventListener("drop", async (e) => {
       if (!this.dragId || this.dragId === id) return;
       e.preventDefault();
       e.stopPropagation();
-      el.classList.remove("od-over-drop");
+      el.classList.remove("ps-over-drop");
       const index = await this.indexOf(id);
       if (index >= 0) await this.apply("move", { asset_id: this.dragId, new_index: index });
     });
@@ -583,13 +591,13 @@ class AssetBinPanel {
       e.preventDefault();
       e.stopPropagation();
       e.dataTransfer.dropEffect = "copy";
-      element.classList.add("od-filedrop");
+      element.classList.add("ps-filedrop");
     });
     element.addEventListener("dragleave", (e) => {
-      if (e.target === element) element.classList.remove("od-filedrop");
+      if (e.target === element) element.classList.remove("ps-filedrop");
     });
     element.addEventListener("drop", (e) => {
-      element.classList.remove("od-filedrop");
+      element.classList.remove("ps-filedrop");
       if (!hasFiles(e) || this.dragId) return;
       e.preventDefault();
       e.stopPropagation();
@@ -600,12 +608,23 @@ class AssetBinPanel {
 
 // ── extension registration ──────────────────────────────────────────────────
 
+/** Take a widget off the node face without taking it out of node.widgets.
+ *  The slot must survive -- it is what the saved array is indexed by. */
+function hideWidget(node, name) {
+  const widget = node.widgets?.find((w) => w.name === name);
+  if (!widget) return null;
+  widget.type = "hidden";
+  widget.computeSize = () => [0, -4];
+  return widget;
+}
+
 function buildFace(node) {
   const storage = node.widgets?.find((w) => w.name === STORAGE_WIDGET);
   if (!storage) return;
 
-  storage.type = "hidden";
-  storage.computeSize = () => [0, -4];
+  // Widget indices 0 and 1. Hidden on the face, present in every save.
+  hideWidget(node, SCHEMA_WIDGET);
+  hideWidget(node, STORAGE_WIDGET);
 
   for (const name of PROMPT_WIDGETS) {
     protectWidget(node.widgets?.find((w) => w.name === name), name);
@@ -613,49 +632,120 @@ function buildFace(node) {
   for (const name of PROMPT_WIDGETS) decoratePrompt(node, name);
   applyLabels(node);
 
-  if (!node.odAssetBin) {
+  if (!node.psAssetBin) {
     const panel = new AssetBinPanel(node, storage);
     // APPENDED, never inserted. addDOMWidget pushes onto node.widgets, and
     // LiteGraph serialises widgets_values positionally over that same list, so a
     // widget placed before a native one shifts every value after it. Trailing
     // slots are harmless; leading ones corrupt the whole node.
-    const widget = node.addDOMWidget("od_asset_bin", "div", panel.root, {
+    const widget = node.addDOMWidget("ps_asset_bin", "div", panel.root, {
       serialize: false, hideOnZoom: false,
     });
     widget.computeSize = () => [node.size?.[0] ?? 460, 430];
-    node.odAssetBin = panel;
-    node.odBinWidget = widget;
+    node.psAssetBin = panel;
+    node.psBinWidget = widget;
 
-    // The invariant, checked at runtime rather than merely intended.
-    const order = checkWidgetOrder(node.widgets);
-    if (!order.ok) {
+    // Both invariants, checked at construction rather than merely intended:
+    // nothing custom ahead of a native widget, and the live native names still
+    // equal the table the loader reads workflows against.
+    const order = checkWidgetOrder(node.widgets, undefined, NODE_ID);
+    if (order.offenders.length) {
       console.error(
         `[PulseStudio] widget order is unsafe: ${order.offenders.join(", ")} follow the ` +
         `custom widget "${order.firstCustom}". Their saved values would be shifted. ` +
         `Custom widgets must be appended after every native one.`);
     }
+    if (order.nameError) {
+      console.error(`[PulseStudio] ${order.nameError}\n  ` +
+        `Workflows will load values into the wrong widgets until ` +
+        `js/ps_widget_order.js is updated to match INPUT_TYPES.`);
+    }
 
     node.size = [Math.max(node.size?.[0] ?? 0, 480), Math.max(node.size?.[1] ?? 0, 1020)];
   } else {
-    node.odAssetBin.storage = storage;
-    node.odAssetBin.render();
+    node.psAssetBin.storage = storage;
+    node.psAssetBin.render();
   }
 }
 
-/** Warn when a loaded workflow's stored values do not line up with the inputs. */
-function auditLoadedValues(node, info) {
+/**
+ * Restore a saved workflow into this node BY NAME. Spec §3.3.
+ *
+ * LiteGraph has already done its positional assignment by the time onConfigure
+ * runs; this overwrites that with the name-based result, which is the only one
+ * that stays correct once the widget list grows. A file whose slot 0 is not a
+ * known schema version is refused outright and marked on the node -- guessing
+ * at its layout is what produced `duration_seconds = 'res_multistep'`.
+ */
+function restoreByName(node, nodeId, info) {
   const values = info?.widgets_values;
   if (!Array.isArray(values)) return;
-  const report = validateWidgetValues(values);
-  if (report.ok) return;
-  console.error(describeMisalignment(report));
-  // Surfaced on the node itself, because a console message is easy to miss and
-  // the graph will otherwise fail validation with thirteen confusing type errors.
-  node.has_errors = true;
-  if (typeof node.addWidget === "function" && !node.__odMisalignWarned) {
-    node.__odMisalignWarned = true;
+
+  const result = applySavedValues(node, nodeId, values);
+  if (result.ok) {
+    if (result.defaulted.length) {
+      console.info(`[PulseStudio] ${nodeId}: widgets absent from this ` +
+                   `(schema ${result.version}) file took their defaults: ` +
+                   `${result.defaulted.join(", ")}`);
+    }
+    return;
   }
+
+  // Unloadable. Say so on the node face, not only in the console: the graph
+  // will otherwise fail validation with a pile of confusing type errors.
+  console.error(describeUnloadable(nodeId, result.reason));
+  node.has_errors = true;
+
+  // The pre-2.0.0 corruption has its own explanation, which names the widgets
+  // that received the wrong kind of value. Worth printing when it applies.
+  const report = validateWidgetValues(values);
+  if (!report.ok && !report.unreadable) console.error(describeMisalignment(report));
 }
+
+/**
+ * The slot contract, installed on every node in the pack.
+ *
+ * Separate from the Asset Bin extension because all three nodes are frozen
+ * under §3 but only PulseSlate has a bin. `onSerialize` stamps the schema
+ * version the file is being written in; `onConfigure` reads it back and
+ * restores by name. Both are wrapped -- a throw in either aborts the whole
+ * "Loading workflow data" step for the user's entire graph, not just this node.
+ */
+app.registerExtension({
+  name: "comfyui_pulse_studio.slot_contract",
+  async beforeRegisterNodeDef(nodeType, nodeData) {
+    if (!NODE_IDS.includes(nodeData.name)) return;
+    const nodeId = nodeData.name;
+
+    const onSerialize = nodeType.prototype.onSerialize;
+    nodeType.prototype.onSerialize = function (info) {
+      const result = onSerialize?.apply(this, arguments);
+      try {
+        // Stamp the version this build writes, in the widget AND in the array
+        // that has already been captured, so the two can never disagree.
+        const widget = this.widgets?.find((w) => w.name === SCHEMA_WIDGET);
+        if (widget) widget.value = CURRENT;
+        if (Array.isArray(info?.widgets_values) && info.widgets_values.length) {
+          info.widgets_values[0] = CURRENT;
+        }
+      } catch (err) {
+        console.warn(`[PulseStudio] ${nodeId}: could not stamp schema version:`, err);
+      }
+      return result;
+    };
+
+    const onConfigureContract = nodeType.prototype.onConfigure;
+    nodeType.prototype.onConfigure = function (info) {
+      const result = onConfigureContract?.apply(this, arguments);
+      try {
+        restoreByName(this, nodeId, info);
+      } catch (err) {
+        console.warn(`[PulseStudio] ${nodeId}: name-based restore failed:`, err);
+      }
+      return result;
+    };
+  },
+});
 
 app.registerExtension({
   name: "comfyui_pulse_studio.asset_bin",
@@ -688,8 +778,8 @@ app.registerExtension({
     nodeType.prototype.onDragDrop = function (e) {
       try {
         const files = [...(e?.dataTransfer?.files || [])];
-        if (files.length && this.odAssetBin) {
-          this.odAssetBin.addFiles(files);
+        if (files.length && this.psAssetBin) {
+          this.psAssetBin.addFiles(files);
           return true;
         }
       } catch (err) {
@@ -699,12 +789,13 @@ app.registerExtension({
     };
 
     // Re-render after a workflow load, when timeline_data arrives populated.
+    // The name-based restore already ran in the slot_contract extension, which
+    // registers first; this only rebuilds the face from the restored values.
     // Wrapped: a throw here is what aborts "Loading workflow data".
     const onConfigure = nodeType.prototype.onConfigure;
     nodeType.prototype.onConfigure = function (info) {
       const result = onConfigure?.apply(this, arguments);
       try {
-        auditLoadedValues(this, info);
         buildFace(this);
       } catch (err) {
         console.warn("[PulseStudio] re-init after workflow load failed:", err);

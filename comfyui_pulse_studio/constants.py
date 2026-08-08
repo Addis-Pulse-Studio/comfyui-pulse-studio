@@ -9,6 +9,27 @@ Verified against ComfyUI core at:
   comfy/text_encoders/minimax.py   (MiniMaxTokenizer.tokenize_with_weights)
 """
 
+# ── Slot contract ───────────────────────────────────────────────────────────
+# The one value in this file that is ours rather than ComfyUI's, and the one
+# that must never be edited casually.
+#
+# LiteGraph serialises a node as widgets_values[i] = node.widgets[i].value -- a
+# positional array over the live widget list. The moment one workflow is saved,
+# widget order is a public API indexed by position. SCHEMA_VERSION is what lets
+# a saved file say which order it was written in, so loading can go by name
+# instead of by position (js/ps_widget_order.js).
+#
+# Bump it only alongside a new entry in WIDGET_NAMES and a CHANGELOG migration
+# note. Appending a widget does NOT require a bump; inserting, reordering,
+# removing, retyping or renaming one does -- and those are forbidden anyway.
+SCHEMA_VERSION = "2.0.0"
+
+# The empty asset-bin document, written in schema 2 form from 1.0 onward even
+# though the cast UI ships in 1.1. An empty `cast` key costs nothing today and
+# means 1.1 adds entries to a key that already exists, rather than migrating a
+# file format that is already in the wild.
+TIMELINE_SCHEMA = 2
+
 # ── Frame grid ──────────────────────────────────────────────────────────────
 # nodes_minimax_h3.align_frame_count():  while n % 17 != 5: n += 1
 # Legal frame counts are therefore exactly {5, 22, 39, 56, ...} = 17k + 5.
