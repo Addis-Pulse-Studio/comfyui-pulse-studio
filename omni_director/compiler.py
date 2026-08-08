@@ -1,0 +1,792 @@
+"""The compiler: timeline JSON in, storyboard prompt + ordered file list out.
+
+Headless by construction -- stdlib only. This module decides *what* each render
+call will say and which files it will carry; it never touches a tensor, loads a
+checkpoint, or talks to ComfyUI. That separation is what makes the correctness
+properties here testable at all.
+
+The output of `compile_timeline` is a CompiledPlan: one CompiledWindow per real
+H3 call, each already quantised to the frame grid, each carrying its own resolved
+prompt and its own socket->file mapping. The node layer's job is then purely
+mechanical -- walk the windows, sample, decode, carry forward, stitch.
+
+Three properties this module exists to guarantee:
+
+  1. No ordinal is ever stored. <Picture i>/<Video k>/<Audio j> are computed from
+     live bin order at compile time, per window, so add/remove/reorder cannot
+     desynchronise prompt text from sockets.
+  2. Every frame count handed downstream is on the 17k+5 grid.
+  3. [Shot N] timestamps within a window are strictly increasing.
+"""
+
+from .assets import (
+    KIND_AUDIO,
+    KIND_IMAGE,
+    KIND_VIDEO,
+    LITERAL_TAG_RE,
+    REF_TOKEN_RE,
+    Asset,
+    AssetBin,
+)
+from .constants import (
+    BRANCH_FL2VA,
+    BRANCH_REF2VA,
+    DEFAULT_AUDIO_CARRY_SECONDS,
+    MAX_REF_AUDIOS,
+    MAX_REF_IMAGES,
+    MAX_REF_VIDEOS,
+    MAX_WINDOW_FRAMES,
+    MIN_TRAINED_FRAMES,
+)
+from .frames import (
+    align_frame_count,
+    frames_to_seconds,
+    last_anchor_index,
+    partition_windows,
+    seconds_to_frames,
+    window_bounds,
+)
+from .timeline import Timeline
+
+__all__ = [
+    "CompiledWindow",
+    "CompiledPlan",
+    "CarryPolicy",
+    "compile_timeline",
+    "format_timestamp",
+    "resolve_references",
+    "wrap_dialogue",
+]
+
+CARRY_IMAGE_ID = "__carry_frame__"
+CARRY_VIDEO_ID = "__carry_clip__"
+CARRY_AUDIO_ID = "__carry_audio__"
+
+
+# ── small text helpers ──────────────────────────────────────────────────────
+
+def format_timestamp(seconds):
+    """MM:SS.mmm, H3's own shot-marker format.
+
+    Minutes are not capped at 60 -- a 90-minute project would read '90:00.000'
+    rather than wrapping to an hour field the model has never been shown.
+    """
+    seconds = max(0.0, float(seconds))
+    minutes = int(seconds // 60)
+    return "%02d:%06.3f" % (minutes, seconds - minutes * 60)
+
+
+def wrap_dialogue(text, language):
+    """Wrap every "..." span as <d>[Language] ...</d>, H3's dialogue tag.
+
+    Only quoted spans are touched; any tag the compiler already resolved outside
+    the quotes is left exactly as it was.
+    """
+    out = []
+    i = 0
+    while True:
+        a = text.find('"', i)
+        if a == -1:
+            out.append(text[i:])
+            break
+        b = text.find('"', a + 1)
+        if b == -1:
+            out.append(text[i:])
+            break
+        out.append(text[i:a])
+        inner = _normalise_dialogue(text[a + 1:b])
+        out.append("<d>[%s] %s</d>" % (language, inner))
+        i = b + 1
+    return "".join(out)
+
+
+def _normalise_dialogue(text):
+    """Collapse decorative and repeated punctuation, then terminate the line.
+
+    A quote captured mid-sentence usually ends on a comma by ordinary grammar
+    (he says, "this must be it," and turns away) -- that comma is the narration's,
+    not the line's, so it is dropped before the terminator is added.
+    """
+    text = text.strip()
+    for ch in "*_#~":
+        text = text.replace(ch, "")
+    for mark in ".!?,":
+        while mark * 2 in text:
+            text = text.replace(mark * 2, mark)
+    text = text.rstrip(",").strip()
+    if text and text[-1] not in ".!?":
+        text += "."
+    return text
+
+
+# ── reference resolution ────────────────────────────────────────────────────
+
+def resolve_references(text, tag_map, bin_, subject_tags=None):
+    """Replace {{asset_id}} / @Name / @[Name With Spaces] with live tags.
+
+    An image that has been promoted to a <Subject N> definition resolves to that
+    Subject tag rather than to its raw <Picture i>: MiniMax's own reference-mode
+    format wants prose to talk about subjects, with the picture cited once inside
+    the definition. Assets with no subject (videos, audio, undescribed images)
+    resolve to their raw tag.
+
+    Returns (resolved_text, diagnostics).
+    """
+    subject_tags = subject_tags or {}
+    diagnostics = []
+
+    def _sub(match):
+        by_id, bracketed, bare = match.group(1), match.group(2), match.group(3)
+        key = by_id or bracketed or bare
+        asset = bin_.get(key) if by_id else (bin_.get(key) or bin_.find_by_name(key))
+        if asset is None:
+            diagnostics.append(
+                "unresolved reference %r -- no asset with that id or unique name" % (key,))
+            return match.group(0)
+        if asset.asset_id in subject_tags:
+            return subject_tags[asset.asset_id]
+        tag = tag_map.by_id.get(asset.asset_id)
+        if tag is None:
+            diagnostics.append(
+                "asset %r (%s) is in the bin but carries no tag in this window -- it was "
+                "dropped to make room for carry-over references" % (asset.name, asset.asset_id))
+            return match.group(0)
+        return tag
+
+    resolved = REF_TOKEN_RE.sub(_sub, text)
+
+    # A hand-typed ordinal is the exact hazard this design removes. It is not
+    # rewritten -- silently "fixing" it would be its own guess -- but it is
+    # always reported, because it will not track the bin.
+    for m in LITERAL_TAG_RE.finditer(text):
+        diagnostics.append(
+            "prompt contains a hand-typed tag %r. Ordinals shift whenever the bin "
+            "changes; reference the asset by name (@Name) or id ({{id}}) instead."
+            % (m.group(0),))
+
+    return resolved, diagnostics
+
+
+# ── plan objects ────────────────────────────────────────────────────────────
+
+class CarryPolicy:
+    """How continuity is held across a window seam.
+
+    `mode` selects what the previous window's tail contributes on a ref2va
+    continuation window:
+      'image' -- its last decoded frame enters as a reference image at the front
+                 of the image sockets, so it becomes <Picture 1>. Cheapest, and
+                 the blueprint's default.
+      'video' -- its last decoded frames enter as reference video slot 0. Costs a
+                 video socket but carries motion, not just a pose.
+      'both'  -- both of the above.
+      'none'  -- no visual carry-over; text alone holds continuity.
+
+    `audio` feeds the previous window's decoded audio tail through the reference
+    audio sockets. Without it each window invents its own score from scratch and
+    the seam is audible -- upstream observed this directly on a real render. The
+    tail length is a tunable, not a discovery: 4s is what upstream shipped, and
+    whether it is optimal is untested.
+    """
+
+    __slots__ = ("mode", "audio", "audio_seconds")
+
+    def __init__(self, mode="image", audio=True, audio_seconds=DEFAULT_AUDIO_CARRY_SECONDS):
+        if mode not in ("image", "video", "both", "none"):
+            raise ValueError("carry mode must be image|video|both|none, got %r" % (mode,))
+        self.mode = mode
+        self.audio = bool(audio)
+        self.audio_seconds = float(audio_seconds)
+
+    @property
+    def wants_image(self):
+        return self.mode in ("image", "both")
+
+    @property
+    def wants_video(self):
+        return self.mode in ("video", "both")
+
+
+class FileRef:
+    """One entry in a window's ordered file list.
+
+    `socket` is the literal kwarg name the stock node expects, so the node layer
+    can hand these straight through without re-deriving slot numbers.
+    """
+
+    __slots__ = ("socket", "kind", "asset_id", "name", "file", "tag",
+                 "trim_start", "trim_end", "synthetic")
+
+    def __init__(self, socket, kind, asset_id, name, file, tag,
+                 trim_start=0.0, trim_end=None, synthetic=False):
+        self.socket = socket
+        self.kind = kind
+        self.asset_id = asset_id
+        self.name = name
+        self.file = file
+        self.tag = tag
+        self.trim_start = trim_start
+        self.trim_end = trim_end
+        self.synthetic = synthetic
+
+    def to_dict(self):
+        return {"socket": self.socket, "kind": self.kind, "asset_id": self.asset_id,
+                "name": self.name, "file": self.file, "tag": self.tag,
+                "trim_start": self.trim_start, "trim_end": self.trim_end,
+                "synthetic": self.synthetic}
+
+    def __repr__(self):
+        return "FileRef(%s -> %s %r)" % (self.socket, self.tag, self.name)
+
+
+class CompiledWindow:
+    """One real H3 call, fully specified."""
+
+    __slots__ = ("index", "total", "branch", "frame_count", "start_seconds",
+                 "end_seconds", "prompt", "files", "tag_map", "anchors",
+                 "diagnostics", "shot_ids", "seed_offset")
+
+    def __init__(self, index, total, branch, frame_count, start_seconds, end_seconds,
+                 prompt, files, tag_map, anchors, diagnostics, shot_ids, seed_offset=0):
+        self.index = index
+        self.total = total
+        self.branch = branch
+        self.frame_count = frame_count
+        self.start_seconds = start_seconds
+        self.end_seconds = end_seconds
+        self.prompt = prompt
+        self.files = files
+        self.tag_map = tag_map
+        self.anchors = anchors
+        self.diagnostics = diagnostics
+        self.shot_ids = shot_ids
+        self.seed_offset = seed_offset
+
+    @property
+    def duration_seconds(self):
+        return self.end_seconds - self.start_seconds
+
+    @property
+    def last_anchor_index(self):
+        return last_anchor_index(self.frame_count)
+
+    def socket_kwargs(self):
+        """The reference sockets for this window, grouped as the stock node wants:
+        {'ref_images': {...}, 'ref_videos': {...}, ...}. Values are FileRefs; the
+        node layer swaps each for a loaded tensor."""
+        groups = {"ref_images": {}, "ref_videos": {}, "ref_video_audios": {}, "ref_audios": {}}
+        for f in self.files:
+            if f.socket.startswith("ref_image_"):
+                groups["ref_images"][f.socket] = f
+            elif f.socket.startswith("ref_video_audio_"):
+                groups["ref_video_audios"][f.socket] = f
+            elif f.socket.startswith("ref_video_"):
+                groups["ref_videos"][f.socket] = f
+            elif f.socket.startswith("ref_audio_"):
+                groups["ref_audios"][f.socket] = f
+        return groups
+
+    def to_dict(self):
+        return {"index": self.index, "total": self.total, "branch": self.branch,
+                "frame_count": self.frame_count, "start_seconds": self.start_seconds,
+                "end_seconds": self.end_seconds, "prompt": self.prompt,
+                "files": [f.to_dict() for f in self.files], "anchors": dict(self.anchors),
+                "diagnostics": list(self.diagnostics), "shot_ids": list(self.shot_ids),
+                "seed_offset": self.seed_offset}
+
+    def __repr__(self):
+        return "CompiledWindow(%d/%d, %s, %d frames)" % (
+            self.index + 1, self.total, self.branch, self.frame_count)
+
+
+class CompiledPlan:
+    """Every window for one render, plus whole-plan diagnostics."""
+
+    __slots__ = ("windows", "diagnostics", "problems")
+
+    def __init__(self, windows, diagnostics, problems):
+        self.windows = windows
+        self.diagnostics = diagnostics
+        self.problems = problems  # fatal: from Timeline.validate()
+
+    @property
+    def ok(self):
+        return not self.problems
+
+    @property
+    def total_frames(self):
+        return sum(w.frame_count for w in self.windows)
+
+    @property
+    def total_seconds(self):
+        return frames_to_seconds(self.total_frames)
+
+    def preview(self):
+        """The live compiled-prompt preview -- read the exact string before
+        spending a render."""
+        parts = []
+        for w in self.windows:
+            parts.append("=== Window %d/%d | %s | %d frames (%.2fs) ===\n%s"
+                         % (w.index + 1, w.total, w.branch, w.frame_count,
+                            w.duration_seconds, w.prompt))
+        return "\n\n".join(parts)
+
+    def to_dict(self):
+        return {"windows": [w.to_dict() for w in self.windows],
+                "diagnostics": list(self.diagnostics),
+                "problems": list(self.problems),
+                "total_frames": self.total_frames,
+                "ok": self.ok}
+
+    def __repr__(self):
+        return "CompiledPlan(%d window(s), %d frames, ok=%s)" % (
+            len(self.windows), self.total_frames, self.ok)
+
+
+# ── the compiler ────────────────────────────────────────────────────────────
+
+def compile_timeline(timeline, window_frames=None, policy="balanced",
+                     carry=None, strict=False):
+    """Compile a Timeline into a CompiledPlan.
+
+    `window_frames` overrides the per-window ceiling (defaults to the timeline's
+    own window_seconds, else H3's trained ceiling). `policy` is passed to
+    frames.partition_windows. `carry` is a CarryPolicy.
+
+    Structural problems are collected rather than raised, so the UI can show all
+    of them at once; pass strict=True to raise on the first fatal one instead.
+    """
+    if isinstance(timeline, dict):
+        timeline = Timeline.from_dict(timeline)
+    elif isinstance(timeline, str):
+        timeline = Timeline.from_json(timeline)
+
+    carry = carry or CarryPolicy()
+    problems = timeline.validate()
+    if strict and problems:
+        raise ValueError("; ".join(problems))
+
+    if window_frames is None:
+        window_frames = (seconds_to_frames(timeline.window_seconds, timeline.fps, "down")
+                         if timeline.window_seconds else MAX_WINDOW_FRAMES)
+
+    diagnostics = []
+    total_frames = seconds_to_frames(timeline.duration_seconds, timeline.fps, "up")
+    windows = partition_windows(total_frames, window_frames, policy=policy,
+                                diagnostics=diagnostics)
+    bounds = window_bounds(windows, timeline.fps)
+
+    requested = timeline.duration_seconds
+    actual = frames_to_seconds(sum(windows), timeline.fps)
+    if abs(actual - requested) > 1e-6:
+        diagnostics.append(
+            "duration snapped to the frame grid: %.3fs requested -> %.3fs rendered "
+            "(%d frames across %d window(s))" % (requested, actual, sum(windows), len(windows)))
+
+    # partition_windows guarantees the floor and reports its own overrides, so the
+    # only sub-floor window that can reach here is a whole render shorter than the
+    # floor -- which it has already diagnosed. This is a safety net, not a policy.
+    for i, f in enumerate(windows):
+        if f < MIN_TRAINED_FRAMES and len(windows) > 1:  # pragma: no cover - invariant guard
+            raise AssertionError(
+                "partitioner emitted a %d-frame window (%d of %d), below the %d-frame floor"
+                % (f, i + 1, len(windows), MIN_TRAINED_FRAMES))
+
+    compiled = []
+    for i, (frame_count, (start, end)) in enumerate(zip(windows, bounds)):
+        branch = timeline.branch if i == 0 else timeline.continuation_branch
+        compiled.append(_compile_window(
+            timeline, i, len(windows), branch, frame_count, start, end, carry))
+
+    return CompiledPlan(compiled, diagnostics, problems)
+
+
+def _window_bin(timeline, index, branch, carry):
+    """The effective asset bin for one window, carry-over included.
+
+    Carry-over references claim the *front* of their socket group, so on a
+    continuation window the carried frame is <Picture 1> and every user image
+    shifts up by one. That shift is the whole reason ordinals are computed here
+    rather than typed by the author.
+
+    Returns (bin, diagnostics). User assets that no longer fit after carry-over
+    has taken its slots are dropped, loudly.
+    """
+    diagnostics = []
+    if branch == BRANCH_FL2VA:
+        # fl2va carries no references at all -- different checkpoint, disjoint inputs.
+        return AssetBin(), diagnostics
+
+    user_images = timeline.assets.by_kind(KIND_IMAGE)
+    user_videos = timeline.assets.by_kind(KIND_VIDEO)
+    user_audios = timeline.assets.by_kind(KIND_AUDIO)
+
+    images, videos, audios = [], [], []
+    if index > 0:
+        if carry.wants_image:
+            images.append(Asset(CARRY_IMAGE_ID, KIND_IMAGE, name="Previous window, last frame",
+                                description="", retention="fully_preserved", synthetic=True))
+        if carry.wants_video:
+            videos.append(Asset(CARRY_VIDEO_ID, KIND_VIDEO, name="Previous window, tail clip",
+                                retention="fully_preserved", synthetic=True))
+        if carry.audio:
+            audios.append(Asset(CARRY_AUDIO_ID, KIND_AUDIO, name="Previous window, audio tail",
+                                retention="partially_copy", synthetic=True))
+
+    def _take(dst, src, limit, label):
+        for a in src:
+            if len(dst) >= limit:
+                diagnostics.append(
+                    "%s %r dropped from window %d: only %d %s socket(s) exist and "
+                    "carry-over holds the first" % (label, a.name, index + 1, limit, label))
+                continue
+            dst.append(a)
+
+    _take(images, user_images, MAX_REF_IMAGES, "image")
+    _take(videos, user_videos, MAX_REF_VIDEOS, "video")
+    _take(audios, user_audios, MAX_REF_AUDIOS, "audio")
+
+    return AssetBin(images + videos + audios), diagnostics
+
+
+def _build_subjects(bin_, tag_map):
+    """Promote described reference images and videos to <Subject N> definitions.
+
+    Per MiniMax's reference-mode format, an image whose job is to define how
+    someone looks belongs inside a Subject definition citing that picture, not as
+    a bare <Picture N> mention in prose. Undescribed assets get no subject and are
+    referenced by their raw tag.
+
+    Returns (subject_lines, subject_tag_by_asset, retention_meta).
+    """
+    subject_lines = []
+    subject_tag = {}
+    retention_meta = []
+    n = 0
+
+    for asset in list(bin_.by_kind(KIND_IMAGE)) + list(bin_.by_kind(KIND_VIDEO)):
+        if asset.synthetic:
+            continue  # a carry-over anchor is a keyframe citation, not a character
+        if not asset.description:
+            continue
+        n += 1
+        tag = tag_map.by_id[asset.asset_id]
+        subject_lines.append("<Subject %d> is %s (from `%s`)." % (n, asset.description.rstrip("."), tag))
+        subject_tag[asset.asset_id] = "<Subject %d>" % n
+        retention_meta.append((n, tag, asset.retention or "fully_preserved"))
+
+    return subject_lines, subject_tag, retention_meta
+
+
+def _resolve_note_block(text, tag_map, bin_, subject_tag):
+    """Resolve @Name / {{id}} references in a global-prompt note block.
+
+    Returns (lines, diagnostics). Blank lines are dropped so an empty labelled
+    section contributes nothing rather than an empty prompt line.
+    """
+    if not text:
+        return [], []
+    lines, diagnostics = [], []
+    for raw in text.split("\n"):
+        raw = raw.strip()
+        if not raw:
+            continue
+        resolved, diags = resolve_references(raw, tag_map, bin_, subject_tag)
+        diagnostics.extend(diags)
+        lines.append(resolved)
+    return lines, diagnostics
+
+
+def _presence_clause(subject_tag, shot_texts):
+    """"(present throughout)" only when the tag genuinely appears in every shot.
+
+    A character who walks in at Shot 3 must not be asserted as present from the
+    start -- the model takes that literally and puts them in Shot 1.
+    """
+    if not shot_texts:
+        return "(referenced in this window)"
+    hits = [i + 1 for i, t in enumerate(shot_texts) if subject_tag in t]
+    if not hits:
+        return "(referenced in this window)"
+    if len(hits) == len(shot_texts):
+        return "(present throughout)"
+    return "(appears in " + ", ".join("[Shot %d]" % s for s in hits) + ")"
+
+
+def _compile_window(timeline, index, total, branch, frame_count, start, end, carry):
+    diagnostics = []
+    bin_, bin_diags = _window_bin(timeline, index, branch, carry)
+    diagnostics.extend(bin_diags)
+    tag_map = bin_.tag_map()
+
+    subject_lines, subject_tag, retention_meta = _build_subjects(bin_, tag_map)
+
+    shots = timeline.shots_in(start, end)
+    shot_ids = [s.shot_id for s in shots]
+
+    # ── shot lines, with strictly increasing timestamps ─────────────────────
+    shot_lines = []
+    shot_texts = []
+    previous_ts = None
+    ordinal = 0
+    for shot in shots:
+        text = (shot.prompt or "").strip()
+        if not text:
+            continue
+        ordinal += 1
+        resolved, ref_diags = resolve_references(text, tag_map, bin_, subject_tag)
+        diagnostics.extend("shot %r: %s" % (shot.shot_id, d) for d in ref_diags)
+        resolved = wrap_dialogue(resolved, timeline.dialogue_language)
+        shot_texts.append(resolved)
+
+        if ordinal == 1:
+            # H3's format leaves the opening shot unstamped -- it is the window's
+            # zero by definition, and stamping it invites the model to wait.
+            shot_lines.append("[Shot 1] %s" % resolved)
+            previous_ts = 0
+            continue
+
+        # Compare at the resolution the format actually emits. Two shots 100ns
+        # apart are distinct floats but render the same MM:SS.mmm, so a raw
+        # float comparison would pass the guard and still emit a duplicate stamp.
+        offset_ms = max(0, round((shot.start - start) * 1000.0))
+        if previous_ts is not None and offset_ms <= previous_ts:
+            nudged = previous_ts + 1
+            diagnostics.append(
+                "shot %r at %s collides with the previous stamp in window %d; "
+                "nudged to %s to keep timestamps strictly increasing"
+                % (shot.shot_id, format_timestamp(offset_ms / 1000.0), index + 1,
+                   format_timestamp(nudged / 1000.0)))
+            offset_ms = nudged
+        shot_lines.append("[Shot %d] At %s, %s"
+                          % (ordinal, format_timestamp(offset_ms / 1000.0), resolved))
+        previous_ts = offset_ms
+
+    if not shot_lines:
+        diagnostics.append(
+            "window %d has no shot text; it will render on the style line and "
+            "continuity instruction alone" % (index + 1,))
+
+    # ── the ordered file list ──────────────────────────────────────────────
+    files = []
+    for socket, asset_id in sorted(tag_map.sockets.items(), key=_socket_sort_key):
+        asset = bin_.get(asset_id)
+        tag = (tag_map.by_id.get(asset_id + "#soundtrack")
+               if socket.startswith("ref_video_audio_") else tag_map.by_id.get(asset_id))
+        files.append(FileRef(socket, asset.kind, asset.asset_id, asset.name, asset.file,
+                             tag, asset.trim_start, asset.trim_end, asset.synthetic))
+
+    # ── anchors (fl2va only) ───────────────────────────────────────────────
+    anchors = {}
+    if branch == BRANCH_FL2VA:
+        if index == 0:
+            if timeline.first_frame:
+                anchors["first_frame"] = timeline.first_frame
+        else:
+            # Continuation on fl2va: the previous window's last decoded frame is
+            # the hard lock. This is the one thing fl2va does better than ref2va.
+            anchors["first_frame"] = CARRY_IMAGE_ID
+        if timeline.last_frame and index == total - 1:
+            anchors["last_frame"] = timeline.last_frame
+        # Both anchors are legal here and nowhere else: PackedLayout accepts
+        # pixel_index 0 and frame_count-1 only.
+        anchors["first_frame_index"] = 0
+        if "last_frame" in anchors:
+            anchors["last_frame_index"] = last_anchor_index(frame_count)
+
+    # Identity and retention notes from the global prompt box are authored text
+    # like any shot, so they get the same reference resolution. Without this an
+    # @Name written in the global box would reach the model as a literal "@Name".
+    extra_subject_lines, note_diags = _resolve_note_block(
+        getattr(timeline, "identity_notes", ""), tag_map, bin_, subject_tag)
+    diagnostics.extend("global prompt (identity): %s" % d for d in note_diags)
+    extra_retention_lines, note_diags = _resolve_note_block(
+        getattr(timeline, "retention_notes", ""), tag_map, bin_, subject_tag)
+    diagnostics.extend("global prompt (retention): %s" % d for d in note_diags)
+
+    prompt = (_assemble_reference_prompt if branch == BRANCH_REF2VA
+              else _assemble_base_prompt)(
+        timeline, index, total, bin_, tag_map, subject_lines, subject_tag,
+        retention_meta, shot_lines, shot_texts, anchors, frame_count, carry,
+        extra_subject_lines, extra_retention_lines)
+
+    return CompiledWindow(index, total, branch, frame_count, start, end, prompt,
+                          files, tag_map, anchors, diagnostics, shot_ids, seed_offset=index)
+
+
+def _socket_sort_key(item):
+    """Order sockets the way the tokenizer walks ref_items: images, then each
+    video preceded by its own soundtrack, then standalone audio."""
+    socket = item[0]
+    group, slot = socket.rsplit("_", 1)
+    rank = {"ref_image": 0, "ref_video_audio": 1, "ref_video": 2, "ref_audio": 4}[group]
+    # A soundtrack must sort immediately ahead of its own video, so both key on
+    # the same slot with the soundtrack winning the tie.
+    return (0 if rank == 0 else (1 if rank in (1, 2) else 2), int(slot), rank)
+
+
+def _assemble_reference_prompt(timeline, index, total, bin_, tag_map, subject_lines,
+                               subject_tag, retention_meta, shot_lines, shot_texts,
+                               anchors, frame_count, carry,
+                               extra_subject_lines=(), extra_retention_lines=()):
+    """ref2va: MiniMax's six-section reference-mode format, in its required order."""
+    subject_lines = list(subject_lines)
+    retention_lines = [
+        "<Subject %d> %s: %s - matches `%s`."
+        % (n, _presence_clause("<Subject %d>" % n, shot_texts), retention, tag)
+        for n, tag, retention in retention_meta
+    ]
+
+    # Audio definitions always follow every visual one, per MiniMax's own worked
+    # example, regardless of the order the sockets happened to fill.
+    audio_lines = []
+    continuity_bits = []
+
+    carry_image = bin_.get(CARRY_IMAGE_ID)
+    if carry_image is not None:
+        tag = tag_map.by_id[CARRY_IMAGE_ID]
+        retention_lines.append(
+            "`%s` ([Shot 1] continuity anchor): fully_preserved - the exact framing, "
+            "pose, and camera angle at the end of the previous window." % (tag,))
+        continuity_bits.append("continuing directly from `%s`" % (tag,))
+
+    carry_video = bin_.get(CARRY_VIDEO_ID)
+    if carry_video is not None:
+        tag = tag_map.by_id[CARRY_VIDEO_ID]
+        retention_lines.append(
+            "`%s` (continuation source): fully_preserved - continues the immediately "
+            "preceding window's action and camera framing without a cut." % (tag,))
+        continuity_bits.append("continuing the motion of `%s`" % (tag,))
+
+    for asset in bin_.by_kind(KIND_VIDEO):
+        if asset.synthetic or not asset.include_audio:
+            continue
+        a_tag = tag_map.by_id.get(asset.asset_id + "#soundtrack")
+        v_tag = tag_map.by_id.get(asset.asset_id)
+        audio_lines.append("`%s` is the soundtrack of `%s`." % (a_tag, v_tag))
+
+    carry_audio = bin_.get(CARRY_AUDIO_ID)
+    if carry_audio is not None:
+        tag = tag_map.by_id[CARRY_AUDIO_ID]
+        audio_lines.append(
+            "`%s` is the tail of the previous window's own score and ambience." % (tag,))
+        retention_lines.append(
+            "`%s` (previous window's tail): partially_copy - the same score and ambience "
+            "continues into this window rather than restarting." % (tag,))
+
+    for asset in bin_.by_kind(KIND_AUDIO):
+        if asset.synthetic:
+            continue
+        tag = tag_map.by_id[asset.asset_id]
+        if asset.description:
+            audio_lines.append("`%s` is a voice-timbre reference: %s." % (tag, asset.description.rstrip(".")))
+        else:
+            audio_lines.append("`%s` is a voice-timbre reference." % (tag,))
+
+    # Reference audio is conditioning, not a temporal driver. It shapes timbre and
+    # sonic character; it does not align to frames. Nothing in this prompt may
+    # promise lip-sync or beat-matching, because the model cannot deliver it.
+
+    summary = _summary_line(subject_tag, continuity_bits, index, total)
+
+    soundscape = timeline.overall_soundscape.strip()
+    if carry_audio is not None:
+        note = ("The score and ambience carried in from the previous window continue "
+                "unbroken through this one.")
+        soundscape = (soundscape + " " + note) if soundscape else note
+
+    # Identity locks typed into the global prompt box join the definitions the bin
+    # generated. They go last so a generated <Subject N> line is never displaced
+    # by prose that has no socket behind it.
+    subject_lines = subject_lines + list(extra_subject_lines)
+    retention_lines = retention_lines + list(extra_retention_lines)
+
+    sections = []
+    if subject_lines or audio_lines:
+        sections.append("subject_definitions:\n" + "\n".join(subject_lines + audio_lines))
+    sections.append("summary:\n" + summary)
+    if retention_lines:
+        sections.append("retention_analysis:\n" + "\n".join(retention_lines))
+    desc = ([timeline.style_line.strip()] if timeline.style_line.strip() else []) + shot_lines
+    if desc:
+        sections.append("detailed_description:\n" + "\n".join(desc))
+    sections.append("overall_soundscape:\n" + (soundscape or "N/A"))
+    sections.append("non_diegetic_music:\n" + (timeline.non_diegetic_music.strip() or "N/A"))
+    return "\n\n".join(sections)
+
+
+def _summary_line(subject_tag, continuity_bits, index, total):
+    tags = list(subject_tag.values())
+    if not tags:
+        base = "The target video follows the shot description below."
+    elif len(tags) == 1:
+        base = "The target video shows %s." % tags[0]
+    else:
+        base = "The target video shows %s and %s." % (", ".join(tags[:-1]), tags[-1])
+    if continuity_bits:
+        base = base.rstrip(".") + ", " + ", ".join(continuity_bits) + "."
+    if total > 1:
+        base = "[window %d of %d] " % (index + 1, total) + base
+    return base
+
+
+def _assemble_base_prompt(timeline, index, total, bin_, tag_map, subject_lines,
+                          subject_tag, retention_meta, shot_lines, shot_texts,
+                          anchors, frame_count, carry,
+                          extra_subject_lines=(), extra_retention_lines=()):
+    """fl2va / t2va: MiniMax's three-section base-mode format.
+
+    Base mode has no <Subject N> layer and no reference tags -- only the keyframe
+    images, which MiniMaxH3ImageToVideo appends in the order (first_frame,
+    last_frame). <Picture N> here follows that append order exactly, so the
+    numbering below must be derived from which anchors are actually present, not
+    from a fixed slot.
+    """
+    has_first = "first_frame" in anchors
+    has_last = "last_frame" in anchors
+    picture_n = 0
+    lines = []
+
+    if has_first or has_last:
+        parts = []
+        if has_first:
+            picture_n += 1
+            parts.append("`<Picture %d>` aligns with the 0.00-second mark" % picture_n)
+        if has_last:
+            picture_n += 1
+            end_ts = format_timestamp(frames_to_seconds(frame_count - 1, timeline.fps))
+            parts.append("`<Picture %d>` aligns with the %s mark" % (picture_n, end_ts))
+        line = "How the reference pictures align with the target video — " + "; ".join(parts) + "."
+        if index > 0:
+            line += (" Continue the ongoing action naturally from this pose and framing — "
+                     "no restart, no new take.")
+        lines.append(line)
+
+    if timeline.style_line.strip():
+        lines.append(timeline.style_line.strip())
+    # Base mode has no subject_definitions or retention_analysis section, so
+    # identity and retention notes ride in the description rather than being
+    # silently dropped -- they are still direction the user wrote.
+    lines.extend(extra_subject_lines)
+    lines.extend(extra_retention_lines)
+    lines.extend(shot_lines)
+
+    soundscape = timeline.overall_soundscape.strip()
+    if index > 0:
+        # This branch encodes no reference audio at all, so the window has no
+        # sonic grounding. Left unconstrained, H3 tends to invent vocalisation.
+        # Only say so when the shots do not themselves call for speech.
+        has_dialogue = any("<d>[" in t for t in shot_texts)
+        if not has_dialogue:
+            note = ("No reference audio grounds this window — keep the soundscape ambient "
+                    "and grounded only in what the shot description states, consistent with "
+                    "the previous window's environment. No invented sound effects, and no "
+                    "dialogue or vocalisation unless a shot explicitly includes spoken lines.")
+            soundscape = (soundscape + " " + note) if soundscape else note
+
+    sections = []
+    if lines:
+        sections.append("integrated_multimodal_description:\n" + "\n".join(lines))
+    sections.append("overall_soundscape:\n" + (soundscape or "N/A"))
+    sections.append("non_diegetic_music:\n" + (timeline.non_diegetic_music.strip() or "N/A"))
+    return "\n\n".join(sections)

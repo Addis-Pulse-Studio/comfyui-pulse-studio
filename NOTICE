@@ -1,0 +1,71 @@
+MiniMax H3 Omni-Director
+Copyright (c) 2026 Behailu AI Solutions
+
+============================================================
+UPSTREAM — MUSE COLLECTIVE (MIT)
+============================================================
+
+This project is a fork of:
+
+    MiniMaxH3-Director-Seed-Hunt
+    https://github.com/muse-collective-26/MiniMaxH3-Director-Seed-Hunt
+    Copyright (c) 2026 Muse Collective
+    Licensed under the MIT License
+
+The upstream project's chunking design and its empirically-derived audio
+carry-over behaviour (feeding the previous window's decoded audio tail back
+through `ref_audios` so each window does not invent its own score from
+scratch) informed this fork's window-continuity design. Upstream's MIT
+license permits this reuse and relicensing; its copyright notice is retained
+in LICENSE as that license requires.
+
+============================================================
+DELIBERATELY NOT USED — GPL-3.0 SOURCES
+============================================================
+
+No code, data, or derived text from seesee75-commits/ComfyUI-MiniMaxH3-Director
+(GPL-3.0) is present in this repository. That project was reviewed for feature
+ideas only. Copying from it would relicense this entire project under GPL-3.0,
+which is incompatible with this project's MIT licensing. Contributors must not
+introduce code derived from it.
+
+============================================================
+THIRD-PARTY — MINIMAX H3
+============================================================
+
+This product is a control and prompt-compilation layer built on top of, and
+entirely dependent on, MiniMax H3 — a third-party open-weights omni-modal
+video generation model published by MiniMax (https://www.minimax.io/). Every
+generated frame and every second of generated audio comes from MiniMax H3
+itself, invoked through ComfyUI core's own stock MiniMax H3 nodes. This
+repository contains none of MiniMax H3's model weights, training code, or
+inference architecture, and none are distributed alongside it. MiniMax H3
+must be downloaded separately by each end user from its official publisher.
+
+Model:    MiniMax H3
+Homepage: https://huggingface.co/MiniMaxAI/MiniMax-H3
+Author:   MiniMax
+Copyright (c) MiniMax. All Rights Reserved.
+
+MiniMax H3 is licensed under the MiniMax H3 Community License Agreement, a
+separate third-party license governing the model weights and their use:
+
+    https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE
+
+Use of the model weights through this node — including any output generated
+using them — is governed entirely by that agreement, independently of the MIT
+license covering this repository's own code. Every user is individually
+responsible for complying with it in full, including any territorial
+restrictions, commercial-revenue thresholds, and attribution or
+AI-generation-identifier provisions it contains.
+
+    POWERED BY MINIMAX H3
+
+============================================================
+THIS REPOSITORY'S OWN CODE
+============================================================
+
+All original code in this repository is Copyright (c) 2026 Behailu AI
+Solutions and is licensed under the MIT License — see LICENSE. The MIT
+License applies only to that original code and confers no rights over
+MiniMax H3 itself.

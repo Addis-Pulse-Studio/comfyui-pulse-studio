@@ -1,0 +1,17 @@
+[project]
+name = "minimax-h3-omni-director"
+description = "Director node for MiniMax H3: an Asset Bin that can never misnumber a reference tag, a Retake Scissor that patches a bad three seconds without re-rendering fifteen, and Still Mode for making your reference images in the same window you use them."
+version = "0.1.0"
+license = { file = "LICENSE" }
+requires-python = ">=3.9"
+
+[project.urls]
+Repository = "https://github.com/behailu-ai/MiniMaxH3-Omni-Director"
+
+[tool.comfy]
+PublisherId = "behailu-ai"
+DisplayName = "MiniMax H3 Omni-Director"
+Icon = ""
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

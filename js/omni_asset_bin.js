@@ -1,0 +1,715 @@
+/**
+ * Asset Bin panel + node-face layout for the MiniMax H3 Omni-Director.
+ *
+ * TWO RULES THIS FILE OBEYS
+ *
+ * 1. It never computes a reference ordinal. The numbering rule lives on the
+ *    server, in omni_director/assets.py, and is the tested one. A second
+ *    implementation here is how the two would drift apart, and a drifted tag
+ *    renders successfully while describing the wrong picture.
+ *
+ * 2. It never builds timeline JSON, and never writes to a prompt widget.
+ *    Every edit is POSTed to /omni_director/apply, which merges server-side and
+ *    returns the complete new string. This file only assigns the string it was
+ *    handed back.
+ *
+ * NOTHING HERE MAY ABORT A WORKFLOW LOAD. Every hook is wrapped: a failure in
+ * this extension must degrade the node's appearance, never stop ComfyUI from
+ * opening the user's file.
+ */
+
+import { app } from "../../scripts/app.js";
+import { api } from "../../scripts/api.js";
+import { protectWidget } from "./od_widget_guard.js";
+import { checkWidgetOrder, describeMisalignment, validateWidgetValues }
+  from "./od_widget_order.js";
+
+const NODE_ID = "MiniMaxH3OmniDirector";
+const STORAGE_WIDGET = "timeline_data";
+const PROMPT_WIDGETS = ["global_prompt", "shot_prompt"];
+const CONTROLS_START = "duration_seconds"; // first widget of the generation panel
+
+const EXT_KIND = {
+  png: "image", jpg: "image", jpeg: "image", webp: "image", bmp: "image", gif: "image",
+  mp4: "video", mov: "video", webm: "video", mkv: "video", avi: "video", m4v: "video",
+  wav: "audio", mp3: "audio", flac: "audio", ogg: "audio", m4a: "audio", aac: "audio",
+};
+const ACCEPT = Object.keys(EXT_KIND).map((e) => "." + e).join(",");
+
+const KIND_META = {
+  image: { label: "IMAGE REFERENCES", accent: "#4ea36b", hint: "characters, props, locations" },
+  video: { label: "VIDEO REFERENCES", accent: "#d19a3a", hint: "motion and camera reference, 2-15s" },
+  audio: { label: "AUDIO REFERENCES", accent: "#d1743a", hint: "voice timbre and sonic character" },
+};
+
+const CSS = `
+.od-wrap { display:flex; flex-direction:column; gap:8px; font-size:11px;
+  font-family:var(--font-family, sans-serif); color:#dcdcdc; box-sizing:border-box;
+  height:100%; overflow:auto; padding:2px; }
+.od-card { border:1px solid #444; border-left-width:3px; border-radius:6px;
+  background:#141414; padding:7px 8px; box-sizing:border-box; }
+.od-card.od-filedrop { background:#18232c; box-shadow:inset 0 0 0 1px #6ab0ff; }
+.od-card-head { display:flex; justify-content:space-between; align-items:baseline;
+  gap:8px; margin-bottom:6px; }
+.od-card-title { font-size:10px; font-weight:700; letter-spacing:.09em; }
+.od-card-hint { font-size:9px; color:#7d7d7d; font-style:italic; }
+.od-count { font-size:9px; color:#9a9a9a; font-variant-numeric:tabular-nums; }
+
+.od-meter { display:flex; gap:10px; flex-wrap:wrap; padding:5px 8px; border-radius:5px;
+  background:#141414; border:1px solid #444; border-left:3px solid #6d7f92;
+  font-variant-numeric:tabular-nums; font-size:10px; }
+.od-meter.od-over { background:#3a1717; border-color:#8d3b3b; color:#ffb4b4; }
+
+.od-row { display:grid; grid-template-columns:44px 1fr auto auto; gap:7px;
+  align-items:center; padding:4px; border-radius:4px; background:#1d1d1d;
+  margin-bottom:4px; cursor:grab; }
+.od-row:last-child { margin-bottom:0; }
+.od-row.od-drag { opacity:.35; }
+.od-row.od-over-drop { box-shadow:inset 0 0 0 1px #6ab0ff; }
+
+.od-thumb { width:44px; height:34px; border-radius:3px; background:#0c0c0c;
+  object-fit:cover; display:block; border:1px solid #333; }
+.od-thumb-box { width:44px; height:34px; border-radius:3px; background:#0c0c0c;
+  border:1px solid #333; display:flex; align-items:center; justify-content:center;
+  overflow:hidden; position:relative; }
+.od-thumb-box video { width:100%; height:100%; object-fit:cover; }
+.od-badge { position:absolute; right:1px; bottom:1px; font-size:7px; padding:0 2px;
+  border-radius:2px; background:rgba(0,0,0,.7); color:#ddd; letter-spacing:.04em; }
+
+.od-name { background:#111; border:1px solid #3a3a3a; color:#eee; font:inherit;
+  width:100%; padding:3px 5px; border-radius:3px; box-sizing:border-box; }
+.od-name:focus { border-color:#6ab0ff; outline:none; background:#161c22; }
+.od-tag { font-family:ui-monospace,Consolas,monospace; font-size:10px; color:#8fc7ff;
+  white-space:nowrap; }
+.od-sub { grid-column:1/5; font-size:9px; color:#8a8a8a; display:flex;
+  align-items:center; gap:4px; padding-left:2px; }
+.od-btn { background:#2e2e2e; border:1px solid #444; color:#ccc; border-radius:3px;
+  cursor:pointer; padding:3px 7px; font-size:10px; }
+.od-btn:hover { background:#3c3c3c; color:#fff; border-color:#666; }
+.od-warn { color:#ffb4b4; font-size:10px; padding:2px 0; }
+.od-diff { background:#18242e; border-left:2px solid #6ab0ff; padding:4px 6px;
+  border-radius:3px; font-size:10px; font-family:ui-monospace,Consolas,monospace;
+  white-space:pre-wrap; margin-top:5px; }
+.od-empty { color:#6d6d6d; text-align:center; padding:10px 6px; font-style:italic;
+  border:1px dashed #3a3a3a; border-radius:4px; font-size:10px; }
+.od-actions { display:flex; gap:5px; margin-top:6px; }
+
+/* Section headers spliced between native widgets. */
+.od-header { font-size:10px; font-weight:700; letter-spacing:.09em; padding:5px 8px;
+  border-radius:5px; background:#141414; border:1px solid #444; border-left-width:3px;
+  box-sizing:border-box; display:flex; justify-content:space-between; align-items:baseline;
+  gap:8px; font-family:var(--font-family, sans-serif); }
+.od-header small { font-weight:400; letter-spacing:0; color:#7d7d7d; font-style:italic;
+  font-size:9px; }
+
+/* Native multiline textareas, restyled in place. ComfyUI keeps owning the value. */
+textarea.od-prompt { background:#0f0f0f !important; color:#eaeaea !important;
+  border:1px solid #444 !important; border-left-width:3px !important;
+  border-radius:5px !important; padding:7px 8px !important;
+  font-family:ui-monospace,Consolas,monospace !important; font-size:11px !important;
+  line-height:1.45 !important; caret-color:#6ab0ff; }
+textarea.od-prompt:focus { outline:none !important; box-shadow:0 0 0 1px currentColor inset; }
+textarea.od-prompt::placeholder { color:#5c5c5c; font-style:italic; }
+`;
+
+function injectStyle() {
+  if (document.getElementById("od-bin-style")) return;
+  const el = document.createElement("style");
+  el.id = "od-bin-style";
+  el.textContent = CSS;
+  document.head.appendChild(el);
+}
+
+async function post(route, payload) {
+  try {
+    const res = await api.fetchApi(`/omni_director/${route}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    return await res.json();
+  } catch (err) {
+    console.error(`[OmniDirector] ${route} failed`, err);
+    return { status: "error", message: String(err) };
+  }
+}
+
+async function uploadFile(file) {
+  const body = new FormData();
+  body.append("image", file); // the endpoint takes any file type despite the name
+  body.append("overwrite", "false");
+  const res = await api.fetchApi("/upload/image", { method: "POST", body });
+  if (res.status !== 200) throw new Error(`upload failed: ${res.status}`);
+  const data = await res.json();
+  return data.subfolder ? `${data.subfolder}/${data.name}` : data.name;
+}
+
+function kindForFile(name) {
+  return EXT_KIND[(name.split(".").pop() || "").toLowerCase()] || "image";
+}
+
+/** URL for a file already uploaded into ComfyUI's input directory. */
+function viewURL(path) {
+  if (!path) return "";
+  const parts = String(path).split(/[\\/]/);
+  const filename = parts.pop();
+  const subfolder = parts.join("/");
+  return api.apiURL(
+    `/view?filename=${encodeURIComponent(filename)}` +
+    `&type=input&subfolder=${encodeURIComponent(subfolder)}` +
+    `&rand=${Math.random().toString(36).slice(2, 8)}`);
+}
+
+/** A deterministic soundwave icon, drawn from the filename so it stays stable. */
+function waveformSVG(seedText) {
+  let h = 0;
+  for (let i = 0; i < seedText.length; i++) h = (h * 31 + seedText.charCodeAt(i)) >>> 0;
+  const bars = [];
+  for (let i = 0; i < 14; i++) {
+    h = (h * 1103515245 + 12345) >>> 0;
+    const mag = 2 + ((h >>> 16) % 13); // 2..14
+    const y = 17 - mag / 2;
+    bars.push(`<rect x="${2 + i * 3}" y="${y.toFixed(1)}" width="1.6" ` +
+              `height="${mag}" rx="0.8" fill="#d1743a"/>`);
+  }
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 44 34">` +
+              `<rect width="44" height="34" fill="#141010"/>${bars.join("")}</svg>`;
+  return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+}
+
+// ── node-face layout ────────────────────────────────────────────────────────
+
+function textareaOf(widget) {
+  const el = widget?.element ?? widget?.inputEl ?? null;
+  if (!el) return null;
+  if (el.tagName === "TEXTAREA") return el;
+  return el.querySelector?.("textarea") ?? null;
+}
+
+const PROMPT_STYLE = {
+  global_prompt: {
+    accent: "#4a86c8",
+    title: "GLOBAL PROMPT",
+    hint: "style · identity · score",
+    placeholder:
+      "Art style, lighting, camera rules, identity locks, score.\n\n" +
+      "style: shot on 35mm, warm practical light\n" +
+      "identity: @Image1 keeps the red scarf in every shot\n" +
+      "retention: the scarf is never removed\n" +
+      "soundscape: rain outside, espresso hiss\n" +
+      "music: sparse piano, no percussion",
+  },
+  shot_prompt: {
+    accent: "#8b62c4",
+    title: "SHOT TIMELINE",
+    hint: "one shot per line",
+    placeholder:
+      "Timecoded shots. Reference assets by @name, never by number.\n\n" +
+      "[Shot 1] @Image1 pushes through the cafe door\n" +
+      "[Shot 2] At 00:04.000, she says \"you're still open\"\n" +
+      "[Shot 3] At 00:08.000, she sits by the window",
+  },
+};
+
+/** Style a native multiline widget in place. Its value stays ComfyUI's. */
+function decoratePrompt(node, name) {
+  const widget = node.widgets?.find((w) => w.name === name);
+  const area = textareaOf(widget);
+  const meta = PROMPT_STYLE[name];
+  if (!area || !meta) return false;
+  area.classList.add("od-prompt");
+  area.style.borderLeftColor = meta.accent;
+  area.style.color = "#eaeaea";
+  area.placeholder = meta.placeholder;
+  area.spellcheck = false;
+  area.title = `${meta.title} — ${meta.hint}`;
+  // Never let the canvas swallow a click meant for the editor.
+  if (!area.__odFocusWired) {
+    for (const ev of ["mousedown", "pointerdown", "wheel", "keydown"]) {
+      area.addEventListener(ev, (e) => e.stopPropagation());
+    }
+    area.__odFocusWired = true;
+  }
+  if (widget) widget.computeSize = () => [node.size?.[0] ?? 400, 132];
+  return true;
+}
+
+/** Section labels, applied to the NATIVE widgets themselves.
+ *
+ * Deliberately not DOM header widgets. A widget inserted before a native one
+ * takes a slot in the positional `widgets_values` array and shifts every value
+ * after it -- see js/od_widget_order.js. `widget.label` is free.
+ */
+const WIDGET_LABELS = {
+  global_prompt: "◆ GLOBAL PROMPT — style · identity · score",
+  shot_prompt: "◆ SHOT TIMELINE — one shot per line",
+  duration_seconds: "▬ GENERATION CONTROLS — total duration (s)",
+  timeline_data: "asset bin storage",
+};
+
+function applyLabels(node) {
+  for (const [name, label] of Object.entries(WIDGET_LABELS)) {
+    const widget = node.widgets?.find((w) => w.name === name);
+    if (widget) widget.label = label;
+  }
+}
+
+// ── the Asset Bin panel ─────────────────────────────────────────────────────
+
+class AssetBinPanel {
+  constructor(node, storage) {
+    this.node = node;
+    this.storage = storage;
+    this.root = document.createElement("div");
+    this.root.className = "od-wrap";
+    this.dragId = null;
+    this.pendingDiff = null;
+    this.busy = false;
+    this.render();
+  }
+
+  /** The ONLY widget assignment in this file, and only ever the storage widget
+   *  with a string the server produced. */
+  commit(timelineData) {
+    if (typeof timelineData !== "string") return;
+    this.storage.value = timelineData;
+    this.node.graph?.setDirtyCanvas(true, true);
+  }
+
+  get raw() {
+    return this.storage.value ?? "{}";
+  }
+
+  async apply(operation, kwargs) {
+    if (this.busy) return;
+    this.busy = true;
+    try {
+      const res = await post("apply", { timeline_data: this.raw, operation, kwargs });
+      if (res.status !== "ok") { alert(res.message || "Asset Bin backend error."); return; }
+      if (res.error) { alert(res.error); return; }
+      this.commit(res.timeline_data);
+    } finally {
+      this.busy = false;
+      this.pendingDiff = null;
+      await this.render();
+    }
+  }
+
+  // ── rendering ─────────────────────────────────────────────────────────────
+
+  async render() {
+    let result;
+    try {
+      result = await post("bin_state", { timeline_data: this.raw });
+    } catch (err) {
+      result = { status: "error", message: String(err) };
+    }
+    this.root.replaceChildren();
+
+    if (result.status !== "ok") {
+      const err = document.createElement("div");
+      err.className = "od-warn";
+      err.textContent = result.message || "Asset Bin backend unavailable.";
+      this.root.appendChild(err);
+      return;
+    }
+
+    const state = result.state;
+    this.root.appendChild(this.buildMeter(state.budget));
+    for (const problem of state.name_problems) {
+      const warn = document.createElement("div");
+      warn.className = "od-warn";
+      warn.textContent = `⚠ ${problem.problem}`;
+      this.root.appendChild(warn);
+    }
+
+    for (const kind of ["image", "video", "audio"]) {
+      this.root.appendChild(this.buildKindCard(kind, state.assets.filter((a) => a.kind === kind)));
+    }
+
+    if (this.pendingDiff) {
+      const diff = document.createElement("div");
+      diff.className = "od-diff";
+      diff.textContent = this.pendingDiff;
+      this.root.appendChild(diff);
+    }
+  }
+
+  buildMeter(budget) {
+    const meter = document.createElement("div");
+    meter.className = "od-meter" + (budget.ok ? "" : " od-over");
+    for (const part of budget.meter.split("|")) {
+      const span = document.createElement("span");
+      span.textContent = part.trim();
+      meter.appendChild(span);
+    }
+    if (!budget.ok) meter.title = budget.errors.join("\n");
+    return meter;
+  }
+
+  buildKindCard(kind, rows) {
+    const meta = KIND_META[kind];
+    const card = document.createElement("div");
+    card.className = "od-card";
+    card.style.borderLeftColor = meta.accent;
+
+    const head = document.createElement("div");
+    head.className = "od-card-head";
+    const title = document.createElement("span");
+    title.className = "od-card-title";
+    title.style.color = meta.accent;
+    title.textContent = meta.label;
+    const hint = document.createElement("span");
+    hint.className = "od-card-hint";
+    hint.textContent = meta.hint;
+    head.append(title, hint);
+    card.appendChild(head);
+
+    if (!rows.length) {
+      const empty = document.createElement("div");
+      empty.className = "od-empty";
+      empty.textContent = `drop ${kind} files here`;
+      card.appendChild(empty);
+    } else {
+      for (const row of rows) card.appendChild(this.buildRow(row));
+    }
+
+    const actions = document.createElement("div");
+    actions.className = "od-actions";
+    const add = document.createElement("button");
+    add.className = "od-btn";
+    add.textContent = `+ ${kind}`;
+    add.addEventListener("click", () => this.pickFiles(kind));
+    actions.appendChild(add);
+    card.appendChild(actions);
+
+    this.wireFileDrop(card);
+    return card;
+  }
+
+  buildThumb(row) {
+    const box = document.createElement("div");
+    box.className = "od-thumb-box";
+    const url = viewURL(row.file);
+
+    if (row.kind === "image") {
+      const img = document.createElement("img");
+      img.className = "od-thumb";
+      img.loading = "lazy";
+      img.src = url;
+      img.alt = row.name;
+      img.addEventListener("error", () => {
+        box.replaceChildren();
+        box.textContent = "🖼";
+        box.style.fontSize = "16px";
+      });
+      box.appendChild(img);
+    } else if (row.kind === "video") {
+      // A real keyframe: seek slightly in, because frame 0 is often black.
+      const video = document.createElement("video");
+      video.src = url;
+      video.muted = true;
+      video.playsInline = true;
+      video.preload = "metadata";
+      video.addEventListener("loadedmetadata", () => {
+        try { video.currentTime = Math.min(0.5, (video.duration || 1) * 0.25); } catch {}
+      });
+      video.addEventListener("error", () => {
+        box.replaceChildren();
+        box.textContent = "🎬";
+        box.style.fontSize = "16px";
+      });
+      box.appendChild(video);
+      const badge = document.createElement("span");
+      badge.className = "od-badge";
+      badge.textContent = "VID";
+      box.appendChild(badge);
+    } else {
+      const img = document.createElement("img");
+      img.className = "od-thumb";
+      img.src = waveformSVG(row.file || row.name || row.id);
+      img.alt = "waveform";
+      box.appendChild(img);
+      const badge = document.createElement("span");
+      badge.className = "od-badge";
+      badge.textContent = "AUD";
+      box.appendChild(badge);
+    }
+    box.title = row.file || "";
+    return box;
+  }
+
+  buildRow(row) {
+    const el = document.createElement("div");
+    el.className = "od-row";
+    el.draggable = true;
+    el.dataset.id = row.id;
+
+    el.appendChild(this.buildThumb(row));
+
+    const name = document.createElement("input");
+    name.className = "od-name";
+    name.value = row.name;
+    name.title = row.file || "";
+    name.addEventListener("change", () =>
+      this.apply("rename", { asset_id: row.id, name: name.value }));
+    for (const ev of ["mousedown", "pointerdown", "keydown"]) {
+      name.addEventListener(ev, (e) => e.stopPropagation());
+    }
+    el.appendChild(name);
+
+    const tag = document.createElement("span");
+    tag.className = "od-tag";
+    tag.textContent = row.tag || "";
+    tag.title = `Assigned from bin order. Write @${row.name} in a prompt, never the number.`;
+    el.appendChild(tag);
+
+    const remove = document.createElement("button");
+    remove.className = "od-btn";
+    remove.textContent = "✕";
+    remove.title = "Remove from bin";
+    remove.addEventListener("click", () => this.apply("remove", { asset_id: row.id }));
+    el.appendChild(remove);
+
+    if (row.kind === "video") {
+      const sub = document.createElement("label");
+      sub.className = "od-sub";
+      const box = document.createElement("input");
+      box.type = "checkbox";
+      box.checked = !!row.include_audio;
+      box.addEventListener("change", () =>
+        this.apply("set_include_audio", { asset_id: row.id, include: box.checked }));
+      sub.appendChild(box);
+      sub.appendChild(document.createTextNode(
+        row.include_audio ? `use its soundtrack → ${row.soundtrack_tag}`
+                          : "use its soundtrack"));
+      el.appendChild(sub);
+    }
+
+    this.wireReorder(el, row.id);
+    return el;
+  }
+
+  // ── reorder, with a live renumber preview ─────────────────────────────────
+
+  wireReorder(el, id) {
+    el.addEventListener("dragstart", (e) => {
+      this.dragId = id;
+      el.classList.add("od-drag");
+      e.dataTransfer.effectAllowed = "move";
+      e.dataTransfer.setData("text/plain", id);
+      e.stopPropagation();
+    });
+    el.addEventListener("dragend", () => {
+      el.classList.remove("od-drag");
+      this.dragId = null;
+    });
+    el.addEventListener("dragover", async (e) => {
+      if (!this.dragId || this.dragId === id) return;
+      e.preventDefault();
+      e.stopPropagation();
+      el.classList.add("od-over-drop");
+      const diff = await this.previewMove(this.dragId, id);
+      if (diff && diff !== this.pendingDiff) this.pendingDiff = diff;
+    });
+    el.addEventListener("dragleave", () => el.classList.remove("od-over-drop"));
+    el.addEventListener("drop", async (e) => {
+      if (!this.dragId || this.dragId === id) return;
+      e.preventDefault();
+      e.stopPropagation();
+      el.classList.remove("od-over-drop");
+      const index = await this.indexOf(id);
+      if (index >= 0) await this.apply("move", { asset_id: this.dragId, new_index: index });
+    });
+  }
+
+  async indexOf(assetId) {
+    const res = await post("bin_state", { timeline_data: this.raw });
+    if (res.status !== "ok") return -1;
+    return res.state.assets.findIndex((a) => a.id === assetId);
+  }
+
+  async previewMove(assetId, targetId) {
+    const index = await this.indexOf(targetId);
+    if (index < 0) return "";
+    const res = await post("preview_change", {
+      timeline_data: this.raw, operation: "move",
+      kwargs: { asset_id: assetId, new_index: index },
+    });
+    if (res.status !== "ok" || res.error) return res.error || "";
+    if (!res.deltas?.length) return "";
+    return "this reorder renumbers:\n" + res.deltas
+      .map((d) => `  ${d.name}: ${d.before || "—"} → ${d.after || "removed"}`)
+      .join("\n");
+  }
+
+  // ── adding files ──────────────────────────────────────────────────────────
+
+  pickFiles(kind) {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.multiple = true;
+    input.accept = kind
+      ? Object.keys(EXT_KIND).filter((e) => EXT_KIND[e] === kind).map((e) => "." + e).join(",")
+      : ACCEPT;
+    input.addEventListener("change", () => this.addFiles([...input.files]));
+    input.click();
+  }
+
+  async addFiles(files) {
+    for (const file of files) {
+      try {
+        const kind = kindForFile(file.name);
+        const path = await uploadFile(file);
+        const alias = await post("suggest_name", { timeline_data: this.raw, kind });
+        await this.apply("add", {
+          asset: {
+            id: `a${Date.now().toString(36)}${Math.floor(Math.random() * 1e4).toString(36)}`,
+            kind,
+            name: alias.name || kind,
+            file: path,
+          },
+        });
+      } catch (err) {
+        alert(`Could not add ${file.name}: ${err}`);
+      }
+    }
+  }
+
+  wireFileDrop(element) {
+    const hasFiles = (e) => [...(e.dataTransfer?.types || [])].includes("Files");
+    element.addEventListener("dragover", (e) => {
+      if (!hasFiles(e) || this.dragId) return;
+      e.preventDefault();
+      e.stopPropagation();
+      e.dataTransfer.dropEffect = "copy";
+      element.classList.add("od-filedrop");
+    });
+    element.addEventListener("dragleave", (e) => {
+      if (e.target === element) element.classList.remove("od-filedrop");
+    });
+    element.addEventListener("drop", (e) => {
+      element.classList.remove("od-filedrop");
+      if (!hasFiles(e) || this.dragId) return;
+      e.preventDefault();
+      e.stopPropagation();
+      this.addFiles([...e.dataTransfer.files]);
+    });
+  }
+}
+
+// ── extension registration ──────────────────────────────────────────────────
+
+function buildFace(node) {
+  const storage = node.widgets?.find((w) => w.name === STORAGE_WIDGET);
+  if (!storage) return;
+
+  storage.type = "hidden";
+  storage.computeSize = () => [0, -4];
+
+  for (const name of PROMPT_WIDGETS) {
+    protectWidget(node.widgets?.find((w) => w.name === name), name);
+  }
+  for (const name of PROMPT_WIDGETS) decoratePrompt(node, name);
+  applyLabels(node);
+
+  if (!node.odAssetBin) {
+    const panel = new AssetBinPanel(node, storage);
+    // APPENDED, never inserted. addDOMWidget pushes onto node.widgets, and
+    // LiteGraph serialises widgets_values positionally over that same list, so a
+    // widget placed before a native one shifts every value after it. Trailing
+    // slots are harmless; leading ones corrupt the whole node.
+    const widget = node.addDOMWidget("od_asset_bin", "div", panel.root, {
+      serialize: false, hideOnZoom: false,
+    });
+    widget.computeSize = () => [node.size?.[0] ?? 460, 430];
+    node.odAssetBin = panel;
+    node.odBinWidget = widget;
+
+    // The invariant, checked at runtime rather than merely intended.
+    const order = checkWidgetOrder(node.widgets);
+    if (!order.ok) {
+      console.error(
+        `[OmniDirector] widget order is unsafe: ${order.offenders.join(", ")} follow the ` +
+        `custom widget "${order.firstCustom}". Their saved values would be shifted. ` +
+        `Custom widgets must be appended after every native one.`);
+    }
+
+    node.size = [Math.max(node.size?.[0] ?? 0, 480), Math.max(node.size?.[1] ?? 0, 1020)];
+  } else {
+    node.odAssetBin.storage = storage;
+    node.odAssetBin.render();
+  }
+}
+
+/** Warn when a loaded workflow's stored values do not line up with the inputs. */
+function auditLoadedValues(node, info) {
+  const values = info?.widgets_values;
+  if (!Array.isArray(values)) return;
+  const report = validateWidgetValues(values);
+  if (report.ok) return;
+  console.error(describeMisalignment(report));
+  // Surfaced on the node itself, because a console message is easy to miss and
+  // the graph will otherwise fail validation with thirteen confusing type errors.
+  node.has_errors = true;
+  if (typeof node.addWidget === "function" && !node.__odMisalignWarned) {
+    node.__odMisalignWarned = true;
+  }
+}
+
+app.registerExtension({
+  name: "omni_director.asset_bin",
+  async beforeRegisterNodeDef(nodeType, nodeData) {
+    if (nodeData.name !== NODE_ID) return;
+    injectStyle();
+
+    const onCreated = nodeType.prototype.onNodeCreated;
+    nodeType.prototype.onNodeCreated = function () {
+      onCreated?.apply(this, arguments);
+      // Widgets are not all present until the frame settles on some frontends.
+      try { buildFace(this); } catch (err) {
+        console.warn("[OmniDirector] node face setup failed:", err);
+      }
+      setTimeout(() => {
+        try { buildFace(this); } catch (err) {
+          console.warn("[OmniDirector] deferred node face setup failed:", err);
+        }
+      }, 0);
+    };
+
+    // Files dropped on the node body go to the bin -- no loader nodes needed.
+    const onDragOver = nodeType.prototype.onDragOver;
+    nodeType.prototype.onDragOver = function (e) {
+      if ([...(e?.dataTransfer?.types || [])].includes("Files")) return true;
+      return onDragOver?.apply(this, arguments) ?? false;
+    };
+
+    const onDragDrop = nodeType.prototype.onDragDrop;
+    nodeType.prototype.onDragDrop = function (e) {
+      try {
+        const files = [...(e?.dataTransfer?.files || [])];
+        if (files.length && this.odAssetBin) {
+          this.odAssetBin.addFiles(files);
+          return true;
+        }
+      } catch (err) {
+        console.warn("[OmniDirector] drop failed:", err);
+      }
+      return onDragDrop?.apply(this, arguments) ?? false;
+    };
+
+    // Re-render after a workflow load, when timeline_data arrives populated.
+    // Wrapped: a throw here is what aborts "Loading workflow data".
+    const onConfigure = nodeType.prototype.onConfigure;
+    nodeType.prototype.onConfigure = function (info) {
+      const result = onConfigure?.apply(this, arguments);
+      try {
+        auditLoadedValues(this, info);
+        buildFace(this);
+      } catch (err) {
+        console.warn("[OmniDirector] re-init after workflow load failed:", err);
+      }
+      return result;
+    };
+  },
+});
