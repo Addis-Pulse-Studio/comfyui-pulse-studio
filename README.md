@@ -519,6 +519,23 @@ wants to decode a preview frame. It is what lets the correctness live somewhere
 testable: the whole suite runs in a few seconds with no GPU, no ComfyUI, and no
 pip install.
 
+### Window continuity
+
+Two mechanisms hold a multi-window film together. Both originate upstream; see
+[Credits](#credits).
+
+**Chunked windows.** A timeline longer than one H3 call is cut into chained
+windows at a fixed frame ceiling. `frames.py` owns the partitioning policies, the
+124-frame trained floor, the backwards tail merge and the rebalancing that keeps
+window lengths even.
+
+**Audio carry-over.** On each continuation window, the previous window's decoded
+audio tail is fed back through the reference audio sockets, so the window
+continues the existing score and room tone rather than generating an unrelated
+one. The tail length is a tunable (`carry_audio_seconds`, default 4 s). A reused
+window decodes nothing, so its successor's carry-over is rebuilt from the cached
+segment's own PNG and FLAC rather than from tensors in memory.
+
 ### Two erasure classes, both closed structurally
 
 **Prompt erasure.** The bin panel used to own the timeline JSON, with a
@@ -605,22 +622,18 @@ Developed with assistance from Claude, Anthropic's AI assistant.
 
 ## Credits
 
-Pulse Studio is a fork of
-[muse-collective-26/MiniMaxH3-Director-Seed-Hunt](https://github.com/muse-collective-26/MiniMaxH3-Director-Seed-Hunt)
-(MIT). Two things came from there and are worth naming rather than burying in a
-licence file:
+This project is a fork of
+[muse-collective-26/MiniMaxH3-Director-Seed-Hunt](https://github.com/muse-collective-26/MiniMaxH3-Director-Seed-Hunt),
+licensed under the MIT License. The upstream copyright notice is reproduced in
+[NOTICE](NOTICE), and derived modules carry an attribution header.
 
-- **Chunking a long timeline into chained fixed-ceiling windows.** The design is
-  upstream's; the partitioning policies, the 124-frame floor and the tail merge
-  in `comfyui_pulse_studio/frames.py` are this project's implementation of it.
-- **Audio carry-over across a window seam.** Feeding the previous window's
-  decoded audio tail back through the reference audio sockets, so each window
-  does not invent its own score. That is an empirical finding — observed on real
-  renders, not derived — and it is the difference between a seam you can hear and
-  one you cannot.
+Two design elements originate upstream:
 
-Both derived modules carry an attribution header pointing here, so the credit
-survives a refactor by someone who no longer remembers the reason for it.
+- Chunking a long timeline into chained fixed-ceiling windows.
+- Audio carry-over across a window seam.
+
+Their implementation in this project is described under
+[Architecture](#window-continuity).
 
 ## License
 
