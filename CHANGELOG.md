@@ -550,10 +550,21 @@ a plain trademark search; that remains outstanding and blocks the tag.
       Their structure is asserted by test — ids, slots, link backfill both ways,
       the patch chain's direction — but "no red nodes" is a claim about the host
       install, and only loading them proves it.
-- [ ] **CI observed green on GitHub.** The remote exists now
-      (`Addis-Pulse-Studio/comfyui-addis-pulse`) and the matrix runs on push.
-      The Python and JS steps were run locally on 3.12 and pass; 3.10 and 3.11
-      have still never run anywhere. The `distribution` job has never run at
-      all — this box has setuptools 68 and no `build`, `wheel` or `pip`, so the
-      PEP 639 manifest it checks could not be built locally. That job going
-      green is what actually proves NOTICE ships.
+- [x] **CI observed green on GitHub** — run `31318598402`, 2026-08-09, the first
+      push to `Addis-Pulse-Studio/comfyui-addis-pulse`. All five jobs: `test`
+      on 3.10, 3.11 and 3.12, `import-purity`, and `distribution`.
+
+      The `distribution` job is the one that mattered, because it could not be
+      run here at all — this box has setuptools 68 and no `build`, `wheel` or
+      `pip`, so the PEP 639 manifest was written unbuilt. On the runner
+      (setuptools 84) it built both artefacts and opened them:
+
+          built: comfyui_pulse_studio-3.0.0-py3-none-any.whl
+                 comfyui_pulse_studio-3.0.0.tar.gz
+          sdist: NOTICE -> comfyui_pulse_studio-3.0.0/NOTICE
+          wheel: NOTICE -> comfyui_pulse_studio-3.0.0.dist-info/licenses/NOTICE
+          both artefacts carry LICENSE and NOTICE; no GPL reference tree
+
+      Upstream's MIT notice now demonstrably ships, and the GPL-3.0 reference
+      tree demonstrably does not. Both are checked against the artefacts on
+      every push rather than asserted in prose.
