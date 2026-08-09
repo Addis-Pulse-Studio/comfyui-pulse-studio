@@ -22,9 +22,10 @@ Three things it does that the existing directors don't:
 Plus compiler correctness, which is invisible when it's right and destroys trust
 when it's wrong.
 
-> **POWERED BY MINIMAX H3.** This repository contains no model weights. See
-> [NOTICE](NOTICE) for the model's separate license, which governs your use of it
-> and of anything you generate.
+> **POWERED BY MINIMAX H3.** This repository contains no model weights. The
+> weights carry the
+> [MiniMax H3 Community License](https://huggingface.co/MiniMaxAI/MiniMax-H3),
+> a separate agreement governing their use and any output generated with them.
 
 ---
 
@@ -40,7 +41,7 @@ Or by hand:
 
 ```bash
 cd ComfyUI/custom_nodes
-git clone https://github.com/behailu-ai/ComfyUI-PulseStudio
+git clone https://github.com/Addis-Pulse-Studio/comfyui-addis-pulse
 ```
 
 Restart ComfyUI either way. There is nothing to `pip install`: the pack has no
@@ -545,7 +546,7 @@ picture.
 ## Tests
 
 ```bash
-python3 run_tests.py        # 572 tests, no Python dependencies
+python3 run_tests.py        # the whole suite, no Python dependencies
 python3 run_tests.py -v
 node tests/js/test_widget_guard.mjs   # also run by the suite when node exists
 node tests/js/test_widget_order.mjs
