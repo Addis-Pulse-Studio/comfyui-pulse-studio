@@ -1,23 +1,42 @@
+[build-system]
+# Declared explicitly. Without a build-system table pip falls back to setuptools'
+# legacy backend, and this is a flat layout: `nodes.py`, `media.py`, `render.py`
+# and `comfyui_pulse_studio/` all sit at the root next to `tests/`, `js/` and
+# `example_workflows/`. Flat-layout autodiscovery either errors on the multiple
+# top-level names or guesses, and a wrong guess can sweep in the GPL-3.0
+# reference tree, which `.gitignore` protects from git but not from a build.
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "comfyui-pulse-studio"
+# Keep in step with SCHEMA_VERSION in comfyui_pulse_studio/constants.py.
+# tests/test_packaging.py fails if the two drift.
+version = "3.0.0"
 description = "Shot-timeline direction and per-character voice binding for MiniMax H3."
-version = "2.0.0"
-license = { file = "LICENSE" }
+license = "Apache-2.0"
+# NOTICE, not just LICENSE. It is the only place upstream's MIT copyright notice
+# exists, and MIT requires that notice to travel with every copy while
+# Apache-2.0 section 4(d) requires the same of NOTICE itself. Shipping LICENSE
+# alone breaks both conditions at once -- and the whole licence boundary of this
+# project rests on that attribution surviving distribution. See NOTICE.
+license-files = ["LICENSE", "NOTICE"]
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = []
-classifiers = ["License :: OSI Approved :: Apache Software License"]
 
 [project.urls]
-Repository = "https://github.com/behailu-ai/ComfyUI-PulseStudio"
+Repository = "https://github.com/Addis-Pulse-Studio/comfyui-addis-pulse"
+
+[tool.setuptools]
+# Spelled out rather than discovered, for the reason in [build-system] above.
+packages = ["comfyui_pulse_studio"]
+py-modules = ["nodes", "media", "render"]
 
 [tool.comfy]
-# TODO(owner): PublisherId must match the publisher created at registry.comfy.org.
-# Carried over from the previous manifest and unverified against the registry.
-# Blocking for `comfy node publish`, not for the tag. Registry requirements
-# change -- check the current ComfyUI registry docs before the first publish
-# rather than trusting this block.
-PublisherId = "behailu-ai"
+# Confirmed 2026-08-09 against the publisher at
+# https://registry.comfy.org/publishers/addis-pulse
+PublisherId = "addis-pulse"
 DisplayName = "Pulse Studio"
 Icon = ""
 

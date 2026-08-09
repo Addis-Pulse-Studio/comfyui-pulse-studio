@@ -132,6 +132,43 @@ together, so a twelve-window film is never held in RAM at all. The `frames`
 output is only materialised when it is actually wired — answered from the prompt
 graph, since ComfyUI does not tell a node which of its outputs are used.
 
+### Fixed — packaging, and the attribution that rides in it
+
+- **The package version was still `2.0.0`.** The v3 work bumped
+  `SCHEMA_VERSION` and the widget tables and left `pyproject.toml` behind, so a
+  publish would have shipped an artefact labelled 2.0.0 containing three nodes
+  2.0.0 never had. Both numbers are `3.0.0`, and `tests/test_packaging.py` fails
+  if they drift again.
+
+- **`NOTICE` was not going to ship.** `pyproject.toml` declared
+  `license = { file = "LICENSE" }` and nothing else — no `license-files`, no
+  `MANIFEST.in`. NOTICE holds the *only* copy of upstream's MIT copyright
+  notice, and MIT grants its permissions on the condition that the notice
+  travels with every copy, while Apache-2.0 §4(d) requires the same of NOTICE
+  itself. Every word of the licence boundary was correct in the repository and
+  absent from the thing users would actually receive.
+
+  Fixed in three places, because one of them is a promise and the others are
+  facts: PEP 639 `license-files = ["LICENSE", "NOTICE"]`, a `MANIFEST.in` that
+  covers the sdist and older builders, and a new CI `distribution` job that
+  builds both artefacts and opens them to check. Nothing in CI built anything
+  before, so this class of fault had no way to be caught.
+
+- **There was no `[build-system]` table.** pip would have fallen back to
+  setuptools' legacy backend and run flat-layout autodiscovery over a root that
+  holds `nodes.py`, `media.py`, `render.py`, `tests/`, `js/`, and the GPL-3.0
+  reference tree. That either errors on the multiple top-level names or guesses,
+  and the expensive guess sweeps the reference tree into an sdist — `.gitignore`
+  keeps it out of git, which is not the same as keeping it out of a build. The
+  backend and the package list are spelled out now, `MANIFEST.in` prunes the
+  tree explicitly, and the CI job asserts it is absent from both artefacts.
+
+- **`PublisherId` and the repository URL were unverified placeholders** carried
+  over from the pre-fork manifest. Confirmed 2026-08-09 against the publisher at
+  `registry.comfy.org/publishers/addis-pulse` and the repository at
+  `github.com/Addis-Pulse-Studio/comfyui-addis-pulse`; both are pinned by test,
+  so a stale value cannot publish under someone else's namespace.
+
 ### Fixed — from the first real run
 
 - **`PulseSlate_LongForm.json` shipped with only one of its three shot nodes
@@ -502,9 +539,10 @@ a plain trademark search; that remains outstanding and blocks the tag.
       in its note. The pack was not installed on the machine this was built on.
 - [ ] **Trademark search** for "Pulse Studio" / "Pulse Slate" in the relevant
       jurisdiction. Availability was checked (above); clearance was not.
-- [ ] `PublisherId` confirmed against the publisher created at registry.comfy.org.
-      `pyproject.toml` carries `behailu-ai`, carried over from the previous
-      manifest and unverified. Blocking for `comfy node publish`, not for the tag.
+- [x] **`PublisherId` confirmed** — 2026-08-09, against the publisher at
+      `registry.comfy.org/publishers/addis-pulse`. `pyproject.toml` carried
+      `behailu-ai` from the pre-fork manifest; it is `addis-pulse` now, pinned by
+      `tests/test_packaging.py`.
 - [ ] **Node-face screenshot** at `docs/node_face.png`, from a real graph rather
       than a mock-up. §15 puts it at the top of the README; the slot is marked
       there in a comment. Needs the box with the weights on it.
@@ -512,6 +550,10 @@ a plain trademark search; that remains outstanding and blocks the tag.
       Their structure is asserted by test — ids, slots, link backfill both ways,
       the patch chain's direction — but "no red nodes" is a claim about the host
       install, and only loading them proves it.
-- [ ] **CI observed green on GitHub.** The workflow's every command was run
-      locally on 3.12 and passes; the matrix on 3.10 and 3.11 has not run
-      anywhere yet, and there is no remote to run it on.
+- [ ] **CI observed green on GitHub.** The remote exists now
+      (`Addis-Pulse-Studio/comfyui-addis-pulse`) and the matrix runs on push.
+      The Python and JS steps were run locally on 3.12 and pass; 3.10 and 3.11
+      have still never run anywhere. The `distribution` job has never run at
+      all — this box has setuptools 68 and no `build`, `wheel` or `pip`, so the
+      PEP 639 manifest it checks could not be built locally. That job going
+      green is what actually proves NOTICE ships.

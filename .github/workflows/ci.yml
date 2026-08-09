@@ -91,3 +91,53 @@ jobs:
               assert banned not in sys.modules, "%s reached the pure core" % banned
           print("imported %d modules, no torch, no comfy" % len(list(pkgutil.iter_modules(pkg.__path__))))
           PY
+
+  distribution:
+    # The licence boundary of this project is a claim about what ships, and
+    # nothing else in CI builds anything. NOTICE holds the only copy of
+    # upstream's MIT copyright notice; MIT grants its permissions on the
+    # condition that the notice travels with every copy, so a build that drops
+    # it is a violation that correct prose in the repository does not cure.
+    # Asserted against the built artefacts rather than against pyproject.toml,
+    # because the manifest is the intent and the artefact is the fact.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build the sdist and the wheel
+        run: |
+          python -m pip install --upgrade "setuptools>=77" build
+          python -m build
+
+      - name: NOTICE and LICENSE are in both artefacts
+        run: |
+          python - <<'PY'
+          import pathlib, tarfile, zipfile
+
+          dist = sorted(pathlib.Path("dist").iterdir())
+          print("built:", [p.name for p in dist])
+          sdist = next(p for p in dist if p.suffix == ".gz")
+          wheel = next(p for p in dist if p.suffix == ".whl")
+
+          with tarfile.open(sdist) as tar:
+              sdist_names = tar.getnames()
+          with zipfile.ZipFile(wheel) as zf:
+              wheel_names = zf.namelist()
+
+          for label, names in (("sdist", sdist_names), ("wheel", wheel_names)):
+              for wanted in ("LICENSE", "NOTICE"):
+                  hits = [n for n in names if n.rsplit("/", 1)[-1] == wanted]
+                  assert hits, "%s is missing from the %s" % (wanted, label)
+                  print("%s: %s -> %s" % (label, wanted, hits[0]))
+              # The GPL-3.0 reference tree must never reach a distribution.
+              # .gitignore does not apply to a build; MANIFEST.in's prune does.
+              leaked = [n for n in names if "reference_purpose" in n]
+              assert not leaked, "GPL reference tree leaked into the %s: %r" % (label, leaked)
+              assert not [n for n in names if n.startswith(("tests/", "tests\\"))
+                          and label == "wheel"], "tests/ leaked into the wheel"
+          print("both artefacts carry LICENSE and NOTICE; no GPL reference tree")
+          PY

@@ -1,0 +1,19 @@
+# `license-files` in pyproject.toml puts LICENSE and NOTICE into a wheel's
+# .dist-info. This covers the sdist as well, and covers builders older than the
+# setuptools that understands PEP 639 -- NOTICE carries upstream's MIT copyright
+# notice, and MIT grants its permissions only while that notice travels with the
+# copy, so it is worth stating twice.
+include LICENSE
+include NOTICE
+include README.md
+include CHANGELOG.md
+include requirements.txt
+
+recursive-include js *.js
+recursive-include example_workflows *.json
+
+# The GPL-3.0 reference tree is reviewed for feature ideas only; code from it
+# would relicense this whole project. .gitignore keeps it out of git, which is
+# not the same as keeping it out of a build. See NOTICE.
+prune reference_purpose only
+global-exclude __pycache__ *.py[cod]
