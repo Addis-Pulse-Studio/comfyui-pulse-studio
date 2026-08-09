@@ -436,3 +436,63 @@ class TestWidgetOrderMatchesTheNode(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestShippedGraphsCarryEveryWidget(unittest.TestCase):
+    """A shipped graph must store a value for every widget its node declares.
+
+    This is the guard that was missing when `ref_audio_mode` and
+    `use_reference_audio` were appended: the cross-language parity test caught
+    `ps_widget_order.js` drifting from `INPUT_TYPES`, and nothing at all noticed
+    that four nodes across two shipped workflows were still storing the previous
+    layout.
+
+    Nothing *broke* -- a fresh frontend builds the node from `object_info` and the
+    appended widget keeps its default. The failure it invites is quieter than
+    that. `widgets_values` is applied positionally, so the moment anyone inserts
+    rather than appends, a short array silently shifts every value past the
+    insertion point, and a graph that loads without complaint renders with the
+    wrong sampler or the wrong continuity mode. Storing the full array is what
+    keeps the shipped graphs a faithful record of the layout that wrote them.
+    """
+
+    def _tables(self):
+        from tests.test_js_guard import js_widget_names
+        return {name: js_widget_names(name)
+                for name in ("PulseSlate", "PulseShot", "PulseRender", "PulseBench")}
+
+    def test_every_pulse_node_stores_a_full_widget_array(self):
+        tables = self._tables()
+        for path in WORKFLOW_DIR.glob("*.json"):
+            doc = json.loads(path.read_text(encoding="utf-8"))
+            for node in doc.get("nodes", []):
+                names = tables.get(node.get("type"))
+                if names is None:
+                    continue
+                stored = node.get("widgets_values") or []
+                with self.subTest(workflow=path.name, node=node["type"], id=node["id"]):
+                    self.assertGreaterEqual(
+                        len(stored), len(names),
+                        "%s node %s stores %d widget values but %s declares %d "
+                        "(%r). Append the new value(s) to the shipped graph in the "
+                        "same commit that appends the widget."
+                        % (path.name, node["id"], len(stored), node["type"],
+                           len(names), names[len(stored):]))
+
+    def test_no_graph_stores_more_values_than_the_node_has_widgets(self):
+        """The other direction: a stale extra value is a removed widget, and
+        removing one is forbidden outright by the slot contract."""
+        tables = self._tables()
+        for path in WORKFLOW_DIR.glob("*.json"):
+            doc = json.loads(path.read_text(encoding="utf-8"))
+            for node in doc.get("nodes", []):
+                names = tables.get(node.get("type"))
+                if names is None:
+                    continue
+                stored = node.get("widgets_values") or []
+                with self.subTest(workflow=path.name, node=node["type"], id=node["id"]):
+                    # One spare is legitimate: LiteGraph appends a hidden
+                    # control_after_generate value after every seed widget.
+                    self.assertLessEqual(len(stored), len(names) + 1,
+                                         "%s node %s stores %d values for %d widgets"
+                                         % (path.name, node["id"], len(stored), len(names)))

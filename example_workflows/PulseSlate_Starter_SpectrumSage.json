@@ -393,7 +393,8 @@
         "She pushes through the cafe door, shaking rain off her scarf.",
         "",
         6.0,
-        "inherit"
+        "inherit",
+        "lip_sync"
       ],
       "title": "Shot 1"
     },
@@ -457,7 +458,8 @@
         "She crosses to the counter and says \"you're still open, thank god\"",
         "",
         6.0,
-        "inherit"
+        "inherit",
+        "lip_sync"
       ],
       "title": "Shot 2"
     },
@@ -521,7 +523,8 @@
         "She sits by the window as the rain runs down the glass.",
         "",
         6.0,
-        "inherit"
+        "inherit",
+        "lip_sync"
       ],
       "title": "Shot 3"
     },
@@ -769,6 +772,7 @@
         "",
         true,
         true,
+        false,
         false,
         false
       ],
