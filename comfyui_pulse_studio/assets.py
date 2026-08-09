@@ -70,11 +70,11 @@ class Asset:
     """
 
     __slots__ = ("asset_id", "kind", "name", "file", "description", "retention",
-                 "trim_start", "trim_end", "include_audio", "synthetic")
+                 "trim_start", "trim_end", "include_audio", "synthetic", "audio_role")
 
     def __init__(self, asset_id, kind, name="", file="", description="",
                  retention=None, trim_start=0.0, trim_end=None, include_audio=False,
-                 synthetic=False):
+                 synthetic=False, audio_role=None):
         if kind not in KINDS:
             raise ValueError("unknown asset kind %r (expected one of %r)" % (kind, KINDS))
         self.asset_id = str(asset_id)
@@ -94,6 +94,11 @@ class Asset:
         # socket and a real ordinal, so every per-type limit still applies to
         # them, but they are not files and must not move the 12-file meter.
         self.synthetic = bool(synthetic)
+        # Only meaningful on an audio asset: whether the model should match a
+        # mouth to this recording or merely borrow its voice. Drives the prompt
+        # sentence and, for lip_sync, the trim to the window's own span. None on
+        # everything else, and on carry-over audio, which is neither.
+        self.audio_role = audio_role if kind == KIND_AUDIO else None
 
     @property
     def duration(self):
@@ -116,6 +121,8 @@ class Asset:
             d["include_audio"] = True
         if self.synthetic:
             d["synthetic"] = True
+        if self.audio_role:
+            d["audio_role"] = self.audio_role
         return d
 
     @classmethod
@@ -131,6 +138,7 @@ class Asset:
             trim_end=d.get("trim_end"),
             include_audio=d.get("include_audio", False),
             synthetic=d.get("synthetic", False),
+            audio_role=d.get("audio_role"),
         )
 
     def __repr__(self):

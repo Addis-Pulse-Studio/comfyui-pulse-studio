@@ -132,6 +132,59 @@ together, so a twelve-window film is never held in RAM at all. The `frames`
 output is only materialised when it is actually wired — answered from the prompt
 graph, since ComfyUI does not tell a node which of its outputs are used.
 
+### Fixed — lip-sync to a supplied recording never worked
+
+H3 can match a character's mouth to audio you provide. This project shipped the
+socket for it and none of the three things that make it function, so a wired
+recording produced a clean render, no error, and a mouth tracking nothing.
+
+- **The prompt never asked for the match.** `<Audio j>` was introduced to the
+  model as "a voice-timbre reference" and the tag was left as a bare token at the
+  end of the shot line. The directive *is* the mechanism: the tokenizer emits only
+  the marker `"<Audio j>: "` and `comfy/text_encoders/minimax.py` states outright
+  that "audio never enters Qwen", so nothing about connecting a socket tells the
+  model what the recording is for. A `lip_sync` reference is now introduced as the
+  speech the character is saying, with their lip movements matching that tag
+  precisely — phrasing taken from a reference workflow that demonstrably works.
+
+- **The clip was never trimmed to the window.** Reference audio rows are packed
+  against the target audio grid (`comfy/ldm/minimax/model.py`, `PackedLayout`), so
+  a 30-second file against a 9.42-second window asks the model to align two
+  different stretches of time. Each `lip_sync` clip is now cut to its window's
+  exact span, `frames / fps`, and padded with silence rather than shortened when
+  the recording runs out — a voice that stops should leave the mouth still, not
+  desynchronise every window after it. The index arithmetic lives in
+  `concat.audio_span_bounds`, stdlib-only, for the same reason the placement maths
+  does: it is what has to be right, and nothing needing torch is reachable by the
+  suite on a box with no GPU.
+
+- **New `PulseShot.ref_audio_mode`,** `lip_sync` (default) or `voice_timbre`. Two
+  different jobs needing different sentences and different handling: timbre asks
+  no temporal question and is not trimmed. **It is in the cache key** — the
+  directive lives in the window's subject definitions, which no shot's
+  `resolved_prompt` covers, so without it flipping the widget would change what
+  the model is told while the cache returned the segment rendered under the other
+  instruction. Appended to the reference descriptor only when set, so a project
+  with no audio reference keeps every key already on disk.
+
+- **New `PulseRender.use_reference_audio`.** On a lip-sync shot the audio H3
+  generates is a re-synthesis of your recording; this muxes the original in
+  instead. Built from the timeline rather than from the render loop, because a
+  reused window decodes nothing and never resolves its references — collecting
+  these during rendering would leave holes exactly where the cache did its job.
+  Off by default, and the generated track still goes to every segment's `.flac`,
+  so it is reversible without re-rendering.
+
+**Behaviour change:** a shot with a connected `ref_audio` and no explicit mode
+loads as `lip_sync` and its segments re-render once. That is the intended
+correction — the previous behaviour was a timbre reference the prompt asked
+nothing of.
+
+Still true, and worth stating because it looks like a bug: **a `lip_sync`
+reference on a shot with no dialogue produces no mouth movement.** There is no
+speech to match. That was the shape of the fault in the shipped 18-second graph,
+where the only audio reference sat on the one shot that never speaks.
+
 ### Fixed — packaging, and the attribution that rides in it
 
 - **The package version was still `2.0.0`.** The v3 work bumped

@@ -172,6 +172,33 @@ TAG_AUDIO = "Audio"
 # soundtrack to video 1 renumbers every standalone audio tag in the prompt.
 REF_ITEM_ORDER = ("images", "videos_with_soundtracks", "standalone_audios")
 
+# ── What a reference audio is FOR ───────────────────────────────────────────
+# Two different jobs, and they need different prompt text and different handling.
+#
+# `lip_sync`: the model matches the character's mouth to this recording. The
+# audio rows are frozen conditioning the DiT attends to (model.py PackedLayout
+# marks them `audio_update=False`), and the prompt has to *ask* for the match --
+# the tokenizer only ever sees the marker "<Audio j>: ", never the waveform, so
+# nothing about the sockets alone tells the model what the audio is for. A
+# working reference workflow phrases it as "lip movements matching <Audio 1>
+# precisely", and that sentence is the whole mechanism.
+#
+# Because it is a temporal alignment, the clip must span exactly the window it
+# rides in -- see AUDIO_LIP_SYNC_TRIM in render.py. An untrimmed 30s file
+# against a 9.42s window is asking the model to align two different spans of
+# time, which is the failure that reads as "lip sync doesn't work".
+#
+# `voice_timbre`: the model generates its own speech from the shot's dialogue
+# and borrows only the voice's character from this sample. No frame alignment
+# is required or wanted.
+#
+# H3 always synthesises its own audio track either way. On the lip_sync path
+# that track is a re-synthesis of the reference, which is why PulseRender can
+# mux the original instead -- see `use_reference_audio`.
+AUDIO_ROLE_LIP_SYNC = "lip_sync"
+AUDIO_ROLE_TIMBRE = "voice_timbre"
+AUDIO_ROLES = (AUDIO_ROLE_LIP_SYNC, AUDIO_ROLE_TIMBRE)
+
 # ── Audio carry-over ────────────────────────────────────────────────────────
 # Upstream (muse-collective, MIT) fed the previous window's last ~4s of decoded
 # audio back through ref_audios slot 0, having observed an audible hard reset

@@ -197,6 +197,32 @@ def audio_tail(audio, seconds):
     return {"waveform": audio["waveform"][..., -n:], "sample_rate": sr}
 
 
+def audio_span(audio, start_seconds, seconds):
+    """`seconds` of an AUDIO dict beginning at `start_seconds`, zero-padded if short.
+
+    A lip-sync reference has to describe the same span of time as the window it
+    rides in. The DiT packs the reference audio rows against the target audio
+    grid, so a clip of a different length is asking the model to align two
+    different stretches of time -- which is the failure that reads as "lip sync
+    does not work" rather than as any kind of error.
+
+    Padding rather than truncating the window is deliberate: a recording that
+    runs out mid-window should leave the mouth still, not shorten the shot.
+    """
+    from .comfyui_pulse_studio.concat import audio_span_bounds
+
+    if audio is None:
+        return None
+    sr = int(audio["sample_rate"])
+    waveform = audio["waveform"]
+    start, stop, pad = audio_span_bounds(waveform.shape[-1], sr, start_seconds, seconds)
+    piece = waveform[..., start:stop]
+    if pad:
+        piece = torch.cat(
+            [piece, piece.new_zeros(piece.shape[:-1] + (pad,))], dim=-1)
+    return {"waveform": piece, "sample_rate": sr}
+
+
 def concat_audio(chunks):
     """Concatenate AUDIO dicts along time. Returns None for an empty list."""
     chunks = [c for c in chunks if c is not None]
@@ -204,6 +230,41 @@ def concat_audio(chunks):
         return None
     sr = chunks[0]["sample_rate"]
     return {"waveform": torch.cat([c["waveform"] for c in chunks], dim=-1), "sample_rate": sr}
+
+
+def resample_audio(audio, sample_rate):
+    """An AUDIO dict at `sample_rate`, using torchaudio when it is available.
+
+    Linear interpolation is the fallback rather than the default: it is audibly
+    worse than a windowed-sinc resampler, and this runs on a voice track the user
+    supplied and expects to hear back. torchaudio ships with every working
+    ComfyUI, so the fallback is for the headless test path.
+    """
+    if audio is None:
+        return None
+    src = int(audio["sample_rate"])
+    dst = int(sample_rate)
+    if src == dst:
+        return audio
+    waveform = audio["waveform"]
+    try:
+        import torchaudio
+        out = torchaudio.functional.resample(waveform, src, dst)
+    except Exception:  # pragma: no cover - torchaudio absent
+        n = max(1, int(round(waveform.shape[-1] * dst / float(src))))
+        out = torch.nn.functional.interpolate(
+            waveform.reshape(-1, 1, waveform.shape[-1]).float(),
+            size=n, mode="linear", align_corners=False).reshape(
+                waveform.shape[:-1] + (n,))
+    return {"waveform": out, "sample_rate": dst}
+
+
+def silent_audio(seconds, sample_rate=44100, channels=2):
+    """`seconds` of silence, so a window with no supplied audio still takes up its
+    own length in a concatenated track rather than pulling everything after it
+    forward."""
+    n = max(0, int(round(float(seconds) * sample_rate)))
+    return {"waveform": torch.zeros((1, channels, n)), "sample_rate": sample_rate}
 
 
 def empty_audio(sample_rate=44100):

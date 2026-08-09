@@ -97,7 +97,21 @@ def _ref_descriptor_key(ref):
     ordinal, because moving a reference from <Picture 2> to <Picture 5> changes
     every prompt that cites it.
     """
-    return [ref.get("ordinal"), ref.get("kind"), ref.get("alias", ""), ref.get("sha256", "")]
+    key = [ref.get("ordinal"), ref.get("kind"), ref.get("alias", ""), ref.get("sha256", "")]
+    # §7.1 names four fields. `audio_role` is a fifth, and it has to be here: the
+    # role decides what the prompt asks the model to do with this recording -- lip
+    # sync or timbre -- and that sentence lives in the window's subject
+    # definitions, not in any shot's `resolved_prompt`. Without it, flipping the
+    # widget changes what the model is told and the cache hands back the segment
+    # rendered under the other instruction, which is the exact failure §7.1 exists
+    # to prevent.
+    #
+    # Appended only when set, so that every timeline with no audio reference keeps
+    # the keys it already has on disk. Invalidating a user's whole cache to record
+    # a distinction their film does not make would be a poor trade.
+    if ref.get("audio_role"):
+        key.append(ref["audio_role"])
+    return key
 
 
 def _shot_key(shot):

@@ -38,6 +38,7 @@ from .assets import (
     AssetBin,
 )
 from .constants import (
+    AUDIO_ROLE_LIP_SYNC,
     BRANCH_FL2VA,
     BRANCH_REF2VA,
     DEFAULT_AUDIO_CARRY_SECONDS,
@@ -252,10 +253,10 @@ class FileRef:
     """
 
     __slots__ = ("socket", "kind", "asset_id", "name", "file", "tag",
-                 "trim_start", "trim_end", "synthetic")
+                 "trim_start", "trim_end", "synthetic", "audio_role")
 
     def __init__(self, socket, kind, asset_id, name, file, tag,
-                 trim_start=0.0, trim_end=None, synthetic=False):
+                 trim_start=0.0, trim_end=None, synthetic=False, audio_role=None):
         self.socket = socket
         self.kind = kind
         self.asset_id = asset_id
@@ -265,12 +266,15 @@ class FileRef:
         self.trim_start = trim_start
         self.trim_end = trim_end
         self.synthetic = synthetic
+        # Carried from the asset so the executor can trim a lip-sync clip to the
+        # window without re-reading the bin. See constants.AUDIO_ROLE_LIP_SYNC.
+        self.audio_role = audio_role
 
     def to_dict(self):
         return {"socket": self.socket, "kind": self.kind, "asset_id": self.asset_id,
                 "name": self.name, "file": self.file, "tag": self.tag,
                 "trim_start": self.trim_start, "trim_end": self.trim_end,
-                "synthetic": self.synthetic}
+                "synthetic": self.synthetic, "audio_role": self.audio_role}
 
     def __repr__(self):
         return "FileRef(%s -> %s %r)" % (self.socket, self.tag, self.name)
@@ -665,7 +669,8 @@ def _compile_window(timeline, index, total, branch, frame_count, start, end, car
         tag = (tag_map.by_id.get(asset_id + "#soundtrack")
                if socket.startswith("ref_video_audio_") else tag_map.by_id.get(asset_id))
         files.append(FileRef(socket, asset.kind, asset.asset_id, asset.name, asset.file,
-                             tag, asset.trim_start, asset.trim_end, asset.synthetic))
+                             tag, asset.trim_start, asset.trim_end, asset.synthetic,
+                             asset.audio_role))
 
     # ── anchors (fl2va only) ───────────────────────────────────────────────
     anchors = {}
@@ -788,14 +793,17 @@ def _assemble_reference_prompt(timeline, index, total, bin_, tag_map, subject_li
         if asset.synthetic:
             continue
         tag = tag_map.by_id[asset.asset_id]
-        if asset.description:
-            audio_lines.append("`%s` is a voice-timbre reference: %s." % (tag, asset.description.rstrip(".")))
+        detail = (": " + asset.description.rstrip(".")) if asset.description else ""
+        if asset.audio_role == AUDIO_ROLE_LIP_SYNC:
+            # The directive *is* the mechanism. The tokenizer only ever emits the
+            # marker "<Audio j>: " -- the waveform never reaches Qwen -- so the
+            # sockets alone say nothing about what the audio is for. Asking for
+            # the match in prose is what makes the DiT track those rows.
+            audio_lines.append(
+                "`%s` is the speech this character is saying%s. Their lip movements "
+                "match `%s` precisely, in time with it." % (tag, detail, tag))
         else:
-            audio_lines.append("`%s` is a voice-timbre reference." % (tag,))
-
-    # Reference audio is conditioning, not a temporal driver. It shapes timbre and
-    # sonic character; it does not align to frames. Nothing in this prompt may
-    # promise lip-sync or beat-matching, because the model cannot deliver it.
+            audio_lines.append("`%s` is a voice-timbre reference%s." % (tag, detail))
 
     summary = _summary_line(subject_tag, continuity_bits, index, total)
 

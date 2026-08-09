@@ -47,7 +47,11 @@ from comfy_extras.nodes_minimax_h3 import (
 from . import media
 from .comfyui_pulse_studio.assets import KIND_AUDIO, KIND_IMAGE, KIND_VIDEO
 from .comfyui_pulse_studio.compiler import CARRY_AUDIO_ID, CARRY_IMAGE_ID, CARRY_VIDEO_ID
-from .comfyui_pulse_studio.constants import BRANCH_FL2VA, BRANCH_REF2VA
+from .comfyui_pulse_studio.constants import (
+    AUDIO_ROLE_LIP_SYNC,
+    BRANCH_FL2VA,
+    BRANCH_REF2VA,
+)
 from .comfyui_pulse_studio.fingerprint import (
     describe_model_patches,
     model_fingerprint,
@@ -147,7 +151,8 @@ def sample(model, positive, latent, seed, steps, sampler_name, scheduler,
 # ── reference marshalling ───────────────────────────────────────────────────
 
 def load_window_references(window, side, width, height, resize_method, carry_frame,
-                           carry_clip, carry_audio_clip, carry_seconds):
+                           carry_clip, carry_audio_clip, carry_seconds,
+                           window_seconds=None):
     """Turn a CompiledWindow's ordered file list into the stock node's kwargs.
 
     The compiler already decided every socket name and every ordinal; this only
@@ -162,6 +167,19 @@ def load_window_references(window, side, width, height, resize_method, carry_fra
     """
     groups = {"ref_images": {}, "ref_videos": {}, "ref_video_audios": {}, "ref_audios": {}}
     failures = []
+
+    def _audio_for(ref, clip):
+        """A lip-sync clip is cut to this window's own span; a timbre clip is not.
+
+        Alignment is the whole difference between the two roles. The model packs
+        reference audio rows against the target audio grid, so a lip-sync clip has
+        to cover exactly the seconds the window covers -- see
+        constants.AUDIO_ROLE_LIP_SYNC. A timbre reference is asked no temporal
+        question at all, and trimming it would only throw away voice to learn from.
+        """
+        if clip is None or ref.audio_role != AUDIO_ROLE_LIP_SYNC or not window_seconds:
+            return clip
+        return media.audio_span(clip, window.start_seconds, window_seconds)
 
     for ref in window.files:
         if ref.synthetic:
@@ -198,7 +216,7 @@ def load_window_references(window, side, width, height, resize_method, carry_fra
                 failures.append(ref)
                 continue
             if ref.kind == KIND_AUDIO:
-                groups["ref_audios"][ref.socket] = tensor
+                groups["ref_audios"][ref.socket] = _audio_for(ref, tensor)
             elif ref.kind == KIND_VIDEO:
                 if ref.socket.startswith("ref_video_audio_"):
                     groups["ref_video_audios"][ref.socket] = tensor
@@ -234,7 +252,7 @@ def load_window_references(window, side, width, height, resize_method, carry_fra
             if clip is None:
                 failures.append(ref)
                 continue
-            groups["ref_audios"][ref.socket] = clip
+            groups["ref_audios"][ref.socket] = _audio_for(ref, clip)
 
     if failures:
         raise SocketGapError(
@@ -280,15 +298,19 @@ def window_wants(compiled, asset_id):
 
 
 def condition_window(window, side, width, height, carry_frame, carry_clip,
-                     carry_audio_clip):
+                     carry_audio_clip, fps=24):
     """Build (positive, latent) for one window through the correct stock node."""
     clip, vae, audio_vae = side.clip, side.vae, side.audio_vae
     resize_method = side.resize_method
 
     if window.branch == BRANCH_REF2VA:
+        # frames/fps, not end_seconds - start_seconds: the window is exactly
+        # frame_count frames long after grid snapping, and it is the frames the
+        # reference audio has to line up with.
         refs = load_window_references(
             window, side, width, height, resize_method, carry_frame, carry_clip,
-            carry_audio_clip, side.carry_audio_seconds)
+            carry_audio_clip, side.carry_audio_seconds,
+            window_seconds=(window.frame_count / float(fps or 24)))
         out = execute_node(MiniMaxH3ReferenceToVideo, clip=clip, vae=vae, audio_vae=audio_vae,
                            prompt=window.prompt, width=width, height=height,
                            length=window.frame_count, ref_image_size=side.ref_image_size,
@@ -349,15 +371,67 @@ def output_is_connected(prompt, unique_id, output_index):
 
 # ── the run ─────────────────────────────────────────────────────────────────
 
+def reference_audio_track(plan_windows, windows_doc, side, fps=24):
+    """The lip-sync recordings themselves, laid end to end over the whole film.
+
+    Built from the timeline rather than from the render loop on purpose: a reused
+    window decodes nothing and never calls `load_window_references`, so collecting
+    these during rendering would silently produce a track with holes in it exactly
+    where the cache did its job.
+
+    A window with no lip-sync reference contributes silence of its own length, so
+    the track stays in step with the video whatever mix of shots the film has.
+    Returns None when no window carries one at all.
+    """
+    pieces = []
+    for position, window in enumerate(windows_doc):
+        seconds = (window.get("frames") or 0) / float(window.get("fps") or fps or 24)
+        compiled = plan_windows[position] if position < len(plan_windows) else None
+        clip = None
+        for ref in (compiled.files if compiled is not None else []):
+            if ref.synthetic or ref.kind != KIND_AUDIO:
+                continue
+            if ref.audio_role != AUDIO_ROLE_LIP_SYNC:
+                continue
+            slot = socket_slot_of(ref.asset_id)
+            raw = side.get(slot) if slot is not None else media.load_audio(
+                ref.file, ref.trim_start, ref.trim_end)
+            if raw is None:
+                continue
+            clip = media.audio_span(raw, compiled.start_seconds, seconds)
+            break
+        pieces.append((clip, seconds))
+
+    real = [c for c, _ in pieces if c is not None]
+    if not real:
+        return None
+    # Silence has to match the clips it is spliced between. concat_audio joins on
+    # the sample axis and keeps the first chunk's rate, so filling a gap at some
+    # default rate would leave the rest of the film playing at the wrong speed.
+    sample_rate = int(real[0]["sample_rate"])
+    channels = int(real[0]["waveform"].shape[1])
+    joined = []
+    for clip, seconds in pieces:
+        if clip is None:
+            joined.append(media.silent_audio(seconds, sample_rate, channels))
+        elif int(clip["sample_rate"]) != sample_rate:
+            # Different shots may be fed from different files. Resample rather
+            # than concatenate two rates into one buffer.
+            joined.append(media.resample_audio(clip, sample_rate))
+        else:
+            joined.append(clip)
+    return media.concat_audio(joined)
+
+
 class RenderOptions:
     """The `PulseRender` widgets, in one object."""
 
     __slots__ = ("cache_mode", "run_dir", "run_id", "save_segments", "low_memory",
-                 "dry_run", "prune_unused", "want_frames")
+                 "dry_run", "prune_unused", "want_frames", "use_reference_audio")
 
     def __init__(self, cache_mode=CACHE_AUTO, run_dir="pulseslate", run_id="",
                  save_segments=True, low_memory=True, dry_run=False,
-                 prune_unused=False, want_frames=False):
+                 prune_unused=False, want_frames=False, use_reference_audio=False):
         self.cache_mode = cache_mode
         self.run_dir = (run_dir or "pulseslate").strip() or "pulseslate"
         self.run_id = (run_id or "").strip()
@@ -366,6 +440,7 @@ class RenderOptions:
         self.dry_run = bool(dry_run)
         self.prune_unused = bool(prune_unused)
         self.want_frames = bool(want_frames)
+        self.use_reference_audio = bool(use_reference_audio)
 
 
 class RenderResult:
@@ -521,7 +596,8 @@ def run(timeline_dict, side, model, vae, audio_vae, model_fl2va=None,
 
         width, height = window["width"], window["height"]
         positive, latent = condition_window(
-            compiled, side, width, height, carry_frame, carry_clip, carry_audio_clip)
+            compiled, side, width, height, carry_frame, carry_clip, carry_audio_clip,
+            fps=window.get("fps") or 24)
         window_model = (shifted_fl2va
                         if (compiled.branch == BRANCH_FL2VA and shifted_fl2va is not None)
                         else shifted)
@@ -604,6 +680,24 @@ def run(timeline_dict, side, model, vae, audio_vae, model_fl2va=None,
     except Exception as exc:  # pragma: no cover - decode failure
         log.error("[PulseStudio] could not join the segment audio (%s)", exc)
         audio_out = None
+
+    if options.use_reference_audio:
+        # The generated track is still on disk in every segment's .flac, so this
+        # is a mux choice rather than a loss -- flip the widget and requeue and
+        # the cache hands back the same segments with the other track.
+        try:
+            supplied = reference_audio_track(plan_windows, windows_doc, side)
+        except Exception as exc:  # pragma: no cover - decode failure
+            log.error("[PulseStudio] could not build the reference audio track (%s)", exc)
+            supplied = None
+        if supplied is not None:
+            audio_out = supplied
+            log.info("[PulseStudio] using the supplied lip-sync audio; H3's generated "
+                     "track is still in each segment's .flac")
+        else:
+            warnings.append(
+                "use_reference_audio is on, but no shot carries a lip_sync reference "
+                "audio, so the film kept the audio H3 generated.")
 
     video = None
     if video_files:

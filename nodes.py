@@ -45,6 +45,8 @@ from .comfyui_pulse_studio.assets import KIND_AUDIO, KIND_IMAGE, KIND_VIDEO, Ass
 from .comfyui_pulse_studio.bench import format_table, group_by_fingerprint, load_manifests
 from .comfyui_pulse_studio.compiler import CarryPolicy, compile_timeline
 from .comfyui_pulse_studio.constants import (
+    AUDIO_ROLE_LIP_SYNC,
+    AUDIO_ROLES,
     BRANCH_FL2VA,
     CANVAS_MULTIPLE,
     DEFAULT_AUDIO_CARRY_SECONDS,
@@ -282,6 +284,14 @@ class PulseShot:
                     "How this shot joins the one before it. 'inherit' takes the "
                     "PulseSlate setting, which is what you want unless one particular "
                     "cut needs different handling."}),
+                "ref_audio_mode": (list(AUDIO_ROLES), {"default": AUDIO_ROLE_LIP_SYNC,
+                    "tooltip":
+                    "What the ref_audio socket is for. 'lip_sync': the character's "
+                    "mouth matches that recording, and the clip is trimmed to this "
+                    "window's exact span so the two describe the same seconds. "
+                    "'voice_timbre': the model speaks this shot's own dialogue and "
+                    "only borrows the voice's character. Ignored when nothing is "
+                    "connected to ref_audio."}),
                 # ── append new widgets HERE, at the end, and nowhere else ────
             },
             "optional": optional,
@@ -297,7 +307,8 @@ class PulseShot:
                    "shot sockets; they replace the shot text box entirely.")
 
     def execute(self, schema_version, shot_id, label, visual, audio_line,
-                duration_seconds, continuity, start_image=None, end_image=None,
+                duration_seconds, continuity, ref_audio_mode=AUDIO_ROLE_LIP_SYNC,
+                start_image=None, end_image=None,
                 ref_audio=None, unique_id=None, **kwargs):
         # A shot_id is normally written into the widget by the frontend when the
         # node is created. Deriving one here from the text covers the headless
@@ -320,6 +331,7 @@ class PulseShot:
             "end_image": end_image,
             "ref_images": refs,
             "ref_audio": ref_audio,
+            "ref_audio_mode": ref_audio_mode or AUDIO_ROLE_LIP_SYNC,
         },)
 
 
@@ -714,7 +726,9 @@ def _apply_shot_nodes(timeline, side, payloads, project_continuity):
         if payload.get("ref_audio") is not None:
             slot = "shot.%s.ref_audio" % shot_id
             local.append(Asset(socket_asset_id(slot), KIND_AUDIO,
-                               name="Voice", file=""))
+                               name="Voice", file="",
+                               audio_role=payload.get("ref_audio_mode")
+                               or AUDIO_ROLE_LIP_SYNC))
             side.put(slot, payload["ref_audio"],
                      digest=media.audio_digest(payload["ref_audio"]))
         if local:
@@ -838,7 +852,8 @@ def _build_document(timeline, plan, shot_blocks, side, global_prompt, width, hei
             counters[asset.kind] = counters.get(asset.kind, 0) + 1
             entries.append(ref_descriptor(
                 base + counters[asset.kind], asset.kind, asset.name,
-                source="socket", sha256=_digest_for(asset, side)))
+                source="socket", sha256=_digest_for(asset, side),
+                audio_role=asset.audio_role))
         local_by_shot[shot_id] = entries
 
     for block in shot_blocks:
@@ -990,6 +1005,14 @@ class PulseRender:
                     "Delete segments in this run folder that the current timeline no "
                     "longer references. Off by default: yesterday's segments are what "
                     "make flipping back to yesterday's edit free."}),
+                "use_reference_audio": ("BOOLEAN", {"default": False, "tooltip":
+                    "Put the lip_sync reference recordings into the finished film "
+                    "instead of the audio H3 generated. H3 always synthesises its own "
+                    "track, and on a lip-sync shot that track is a re-synthesis of your "
+                    "recording -- close, but not your take. Off by default because it "
+                    "silences everything the model scored around the voice; the "
+                    "generated audio is still written to each segment's .flac either "
+                    "way, so this is reversible without re-rendering."}),
                 # ── append new widgets HERE, at the end, and nowhere else ────
             },
             "optional": {
@@ -1010,6 +1033,7 @@ class PulseRender:
 
     def execute(self, timeline, model, vae, audio_vae, schema_version, cache_mode,
                 run_dir, run_id, save_segments, low_memory, dry_run, prune_unused,
+                use_reference_audio=False,
                 model_fl2va=None, unique_id=None, prompt=None):
         document, side = _unwrap_timeline(timeline)
         if document is None:
@@ -1021,7 +1045,7 @@ class PulseRender:
         options = render.RenderOptions(
             cache_mode=cache_mode, run_dir=run_dir, run_id=run_id,
             save_segments=save_segments, low_memory=low_memory, dry_run=dry_run,
-            prune_unused=prune_unused,
+            prune_unused=prune_unused, use_reference_audio=use_reference_audio,
             # §8: never assemble a frame stack nobody asked for.
             want_frames=render.output_is_connected(prompt, unique_id, 1))
 

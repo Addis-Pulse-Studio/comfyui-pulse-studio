@@ -416,6 +416,34 @@ top, every time.
 Each shot's identity is written once and never changes, which is what keeps its
 seed and its cached segment attached to it when you reorder the film.
 
+#### `ref_audio`, and what `ref_audio_mode` decides
+
+H3 **always** generates its own audio track. What a reference recording changes is
+what the model does alongside it, and the two options are genuinely different jobs:
+
+- **`lip_sync`** (default) — the character's mouth matches your recording. The
+  prompt says so explicitly, naming the tag, because that sentence *is* the
+  mechanism: the tokenizer emits only the marker `<Audio j>: ` and the waveform
+  never reaches the language model, so wiring the socket tells the model nothing
+  on its own. The clip is also trimmed to the window's exact span — a 30-second
+  file against a 9.42-second window asks the model to align two different
+  stretches of time, and the result is a mouth that tracks nothing.
+- **`voice_timbre`** — the model speaks this shot's own dialogue and borrows only
+  the character of the voice. No alignment, no trim.
+
+The mode is part of the cache key, so switching it re-renders rather than handing
+back a segment made under the other instruction.
+
+On a `lip_sync` shot the audio H3 generates is a re-synthesis of your recording —
+close, but not your take. `PulseRender.use_reference_audio` muxes the original
+into the finished film instead. The generated track is still written to every
+segment's `.flac`, so it is a mux choice you can flip and requeue without
+re-rendering anything.
+
+**A `lip_sync` reference on a shot with no dialogue produces no mouth movement**,
+and nothing warns you: there is no speech to match. Put the recording on the shot
+that speaks.
+
 ### Pulse Render
 
 Executes a `PULSE_TIMELINE`, reusing every window already on disk. See

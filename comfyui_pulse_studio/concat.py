@@ -39,7 +39,8 @@ Pure stdlib. `tests/test_concat.py` drives it with numbers read out of real
 segment files.
 """
 
-__all__ = ["video_shifts", "video_is_gapless", "frame_duration"]
+__all__ = ["video_shifts", "video_is_gapless", "frame_duration",
+           "audio_span_bounds"]
 
 
 def frame_duration(fps, time_base):
@@ -75,3 +76,26 @@ def video_is_gapless(frame_counts, fps, time_base, shifts, frame_units=None):
         if shifts[index] != previous_end:
             return False
     return True
+
+
+def audio_span_bounds(total_samples, sample_rate, start_seconds, seconds):
+    """Where a lip-sync reference is cut for one window: (start, stop, pad).
+
+    Pure index arithmetic, here rather than in `media` for the same reason the
+    placement maths is: this is what has to be right for a mouth to track a
+    recording, and nothing that needs torch can be reached by the suite on a box
+    with no GPU. `media.audio_span` is the three lines of tensor slicing around it.
+
+    `stop` may run past the buffer; `pad` is how many samples of silence make up
+    the difference. Padding rather than returning a short clip is deliberate -- a
+    recording that ends mid-window should leave the mouth still for the rest of
+    it, not shorten the window and desynchronise every window after.
+    """
+    rate = int(sample_rate)
+    if rate <= 0:
+        raise ValueError("sample_rate must be positive, got %r" % (sample_rate,))
+    total = max(0, int(total_samples))
+    want = max(1, int(round(float(seconds) * rate)))
+    start = max(0, min(int(round(float(start_seconds or 0.0) * rate)), total))
+    stop = min(total, start + want)
+    return start, stop, want - (stop - start)

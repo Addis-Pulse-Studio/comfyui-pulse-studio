@@ -132,6 +132,10 @@ const SPECS = {
       { name: "audio_line", kind: "string" },
       { name: "duration_seconds", kind: "number" },
       { name: "continuity", kind: "string" },
+      // Appended after 3.0.0 shipped. Appending needs no schema bump: a file
+      // saved before this existed simply has no value for it and takes the
+      // default, which is what name-based loading is for.
+      { name: "ref_audio_mode", kind: "string" },
     ],
   },
   PulseRender: {
@@ -144,6 +148,7 @@ const SPECS = {
       { name: "low_memory", kind: "boolean" },
       { name: "dry_run", kind: "boolean" },
       { name: "prune_unused", kind: "boolean" },
+      { name: "use_reference_audio", kind: "boolean" },
     ],
   },
   PulseBench: {

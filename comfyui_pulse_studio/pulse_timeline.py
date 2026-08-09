@@ -305,7 +305,8 @@ def socket_slot_of(asset_id):
     return text[len(SOCKET_ID_PREFIX):] if text.startswith(SOCKET_ID_PREFIX) else None
 
 
-def ref_descriptor(ordinal, kind, alias, source, file=None, sha256=None):
+def ref_descriptor(ordinal, kind, alias, source, file=None, sha256=None,
+                   audio_role=None):
     """One entry in `refs.global` or in a shot's `local_refs`. Spec §3.
 
     `source` is `bin` for a file dragged onto the Asset Bin and `socket` for a
@@ -318,6 +319,8 @@ def ref_descriptor(ordinal, kind, alias, source, file=None, sha256=None):
              "source": source, "sha256": sha256 or ""}
     if file:
         entry["file"] = file
+    if audio_role:
+        entry["audio_role"] = audio_role
     return entry
 
 

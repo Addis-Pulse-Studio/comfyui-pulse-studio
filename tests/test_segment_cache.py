@@ -444,7 +444,14 @@ class TestAssemblySurvivesItsOwnFailure(unittest.TestCase):
         """
         render = self.source("render.py")
         block = render.split("# ── assembly (§8)", 1)[1].split("frames_out =", 1)[0]
-        message = block.split("warnings.append(", 1)[1].split(")", 1)[0]
+        # Anchored on the join's own failure log rather than on "the first append
+        # in the assembly block". The assembly may warn about other things before
+        # it gets here -- it does, about the reference-audio mux -- and this test
+        # is about one specific message: the one a user reads after losing hours
+        # of GPU time, asking whether the work is gone.
+        self.assertIn("assembly failed", block)
+        handler = block.split("assembly failed", 1)[1]
+        message = handler.split("warnings.append(", 1)[1].split(")", 1)[0]
         self.assertIn("safe", message)
         self.assertIn("Requeue", message)
 
