@@ -212,3 +212,452 @@ def empty_audio(sample_rate=44100):
 
 def empty_images(width=64, height=64):
     return torch.zeros((0, height, width, 3))
+
+
+# ── content digests (spec §7.1) ─────────────────────────────────────────────
+#
+# A reference arriving through a socket has no file to hash, so its identity is
+# the bytes of the tensor. This is what lets the segment cache tell "the same
+# picture, re-wired" from "a different picture in the same slot" -- the first must
+# reuse the cached segment and the second must not.
+
+def tensor_digest(tensor):
+    """sha256 of an IMAGE tensor's bytes, 16 hex chars. Stable across processes."""
+    import hashlib
+
+    if tensor is None:
+        return ""
+    array = tensor.detach().to("cpu").contiguous().numpy()
+    digest = hashlib.sha256()
+    # Shape rides into the hash: two tensors with identical bytes at different
+    # shapes are different pictures, and .tobytes() alone would not say so.
+    digest.update(("%s|%s|" % (array.dtype.str, array.shape)).encode("utf-8"))
+    digest.update(array.tobytes())
+    return digest.hexdigest()[:16]
+
+
+def audio_digest(audio):
+    """sha256 of an AUDIO dict, 16 hex chars."""
+    import hashlib
+
+    if audio is None:
+        return ""
+    digest = hashlib.sha256()
+    digest.update(("%d|" % int(audio.get("sample_rate") or 0)).encode("utf-8"))
+    waveform = audio.get("waveform")
+    if waveform is not None:
+        array = waveform.detach().to("cpu").contiguous().numpy()
+        digest.update(("%s|%s|" % (array.dtype.str, array.shape)).encode("utf-8"))
+        digest.update(array.tobytes())
+    return digest.hexdigest()[:16]
+
+
+def file_digest(path):
+    """sha256 of a file's contents, 16 hex chars. Empty string when unreadable."""
+    import hashlib
+
+    resolved = resolve_path(path)
+    if not resolved:
+        return ""
+    digest = hashlib.sha256()
+    try:
+        with open(resolved, "rb") as handle:
+            for chunk in iter(lambda: handle.read(1 << 20), b""):
+                digest.update(chunk)
+    except OSError:
+        return ""
+    return digest.hexdigest()[:16]
+
+
+# ── 8-bit frame accumulation (spec §8) ──────────────────────────────────────
+
+def to_uint8(images):
+    """Float IMAGE tensor -> uint8, for accumulating an assembled frame stack.
+
+    §8: a 12-window timeline held as float32 is four times the RAM of the same
+    frames held as bytes, and the frames are 0-255 data the moment they leave the
+    VAE. The conversion back happens once, at the encode boundary.
+    """
+    if images is None:
+        return None
+    return (images.detach().to("cpu").clamp(0, 1) * 255).round().to(torch.uint8)
+
+
+def from_uint8(images):
+    """uint8 frame stack -> float IMAGE tensor, at the encode boundary."""
+    if images is None:
+        return None
+    return images.to(torch.float32) / 255.0
+
+
+# ── segment IO (spec §7.2, §7.4) ────────────────────────────────────────────
+
+def _fsync_path(path):
+    """Force one file's bytes to disk.
+
+    §7.4 requires the manifest to be written only after the media files are
+    closed, so that a crash between the two cannot leave a manifest claiming a
+    file that is absent. Closing a file is not the same as its bytes reaching the
+    platter, so the promise needs this.
+    """
+    try:
+        fd = os.open(path, os.O_RDONLY)
+    except OSError:  # pragma: no cover
+        return
+    try:
+        os.fsync(fd)
+    except OSError:  # pragma: no cover - filesystems that refuse
+        pass
+    finally:
+        os.close(fd)
+
+
+def _video_api():
+    """ComfyUI's own video encoder. Raises with a readable message if too old."""
+    try:
+        from comfy_api.input_impl import VideoFromComponents, VideoFromFile
+        from comfy_api.util import VideoComponents
+    except ImportError as exc:  # pragma: no cover - old ComfyUI
+        raise RuntimeError(
+            "PulseRender writes segments through ComfyUI's own video API "
+            "(comfy_api.input_impl), which this build does not have (%s). Update "
+            "ComfyUI, or turn save_segments off to render without the cache." % (exc,))
+    return VideoFromComponents, VideoFromFile, VideoComponents
+
+
+def video_from_file(path):
+    """Wrap a file on disk as a VIDEO output."""
+    _, VideoFromFile, _ = _video_api()
+    return VideoFromFile(path)
+
+
+def write_segment_video(path, images, audio, fps=24):
+    """Encode one window to `path` as mp4, video and audio muxed together.
+
+    The muxed audio is what makes a segment independently playable -- a user
+    checking whether window 7 is worth re-rendering opens the file and watches it.
+    The lossless copy written alongside by `write_segment_audio` is what the final
+    assembly uses.
+    """
+    from fractions import Fraction
+
+    VideoFromComponents, _, VideoComponents = _video_api()
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    components = VideoComponents(images=images, audio=audio, frame_rate=Fraction(int(fps)))
+    VideoFromComponents(components).save_to(path)
+    _fsync_path(path)
+    return path
+
+
+def write_segment_audio(path, audio):
+    """Write a window's audio to `path` as FLAC. Lossless, so repeated assembly
+    of the same cached segments produces the same track every time."""
+    import av
+
+    if audio is None or audio["waveform"].shape[-1] == 0:
+        return ""
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    waveform = audio["waveform"][0].detach().to("cpu").contiguous()  # [C, N]
+    sample_rate = int(audio["sample_rate"])
+    layout = {1: "mono", 2: "stereo", 6: "5.1"}.get(waveform.shape[0], "stereo")
+
+    with av.open(path, mode="w") as container:
+        stream = container.add_stream("flac", rate=sample_rate)
+        stream.format = "s32"  # FLAC is integer-only; s32 encodes as 24-bit
+        frame = av.AudioFrame.from_ndarray(
+            waveform.numpy().astype(np.float32), format="fltp", layout=layout)
+        frame.sample_rate = sample_rate
+        for packet in stream.encode(frame):
+            container.mux(packet)
+        for packet in stream.encode(None):
+            container.mux(packet)
+    _fsync_path(path)
+    return path
+
+
+def write_png(path, image):
+    """Write a single IMAGE frame as PNG -- the `last_frame_carry` handoff (§7.4)."""
+    from PIL import Image
+
+    if image is None:
+        return ""
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    frame = image[0] if image.dim() == 4 else image
+    array = (frame.detach().to("cpu").clamp(0, 1) * 255).round().to(torch.uint8).numpy()
+    Image.fromarray(array, mode="RGB").save(path)
+    _fsync_path(path)
+    return path
+
+
+def read_png(path):
+    """Read a PNG back as an IMAGE tensor [1, H, W, 3]."""
+    from PIL import Image
+
+    if not path or not os.path.exists(path):
+        return None
+    with Image.open(path) as im:
+        array = np.array(im.convert("RGB"), dtype=np.float32) / 255.0
+    return torch.from_numpy(array).unsqueeze(0)
+
+
+def read_segment_frames(path):
+    """Decode a whole cached segment back to an IMAGE tensor.
+
+    Only called when the `frames` output is actually connected (§8). The default
+    path never does this -- the final video is assembled by remuxing the segment
+    files, so a reused window's pixels need never enter RAM at all.
+    """
+    if not path or not os.path.exists(path):
+        return None
+    return load_video(path, 0.0, None, max_frames=MAX_SEGMENT_FRAMES)
+
+
+#: Above H3's 362-frame ceiling with room to spare; a segment cannot be longer.
+MAX_SEGMENT_FRAMES = 400
+
+
+def concat_videos(paths, out_path, frame_counts=None, fps=24, audio=None):
+    """Join segment files into one video. Spec §8.
+
+    The video is stream-copied: no decode, no re-encode, no frame stack, so a
+    twelve-window assembly costs a constant, small amount of RAM regardless of how
+    long the film is. `frame_counts` places each segment exactly, and `audio` is
+    the finished track -- joined from the segments' lossless FLACs by the caller
+    and encoded once here. See `_remux_concat` for why the audio is not copied.
+
+    Every segment was encoded by `write_segment_video` with identical parameters,
+    which is what makes the video copy legal. Returns the output path, or "" if
+    there was nothing to join or the join failed.
+    """
+    paths = [p for p in (paths or []) if p and os.path.exists(p)]
+    if not paths:
+        return ""
+    if frame_counts and len(frame_counts) == len(paths):
+        # The caller knows exactly, from the manifest. Preferred: it needs no
+        # second pass over the files and cannot disagree with what was rendered.
+        frame_counts = list(frame_counts)
+    else:
+        frame_counts = [_count_frames(p) for p in paths]
+        if any(not n for n in frame_counts):
+            log.error("[PulseStudio] could not determine the frame count of every "
+                      "segment, so they cannot be placed exactly")
+            return ""
+
+    if len(paths) == 1:
+        # One window: no join to do, and nothing to gain from re-encoding its
+        # audio. Copied rather than referenced so the output is a file in its own
+        # right and deleting the cache cannot empty it.
+        import shutil
+
+        os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
+        shutil.copyfile(paths[0], out_path)
+        _fsync_path(out_path)
+        return out_path
+
+    os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
+    try:
+        _remux_concat(paths, out_path, frame_counts, fps=fps, audio=audio)
+    except Exception as exc:
+        # A muxing failure at the assembly step must never destroy a render that
+        # has already cost hours. Every segment is on disk and in the manifest, so
+        # the work survives; only the convenience file does not.
+        log.error("[PulseStudio] could not join the segments into one file (%s). "
+                  "The individual segments are intact in the run folder and can be "
+                  "joined with any tool; requeueing will reuse them and try again.",
+                  exc)
+        try:
+            if os.path.exists(out_path):
+                os.unlink(out_path)
+        except OSError:  # pragma: no cover
+            pass
+        return ""
+    _fsync_path(out_path)
+    return out_path
+
+
+def _rescale(value, source_tb, target_tb):
+    """A timestamp moved from one time base to another, or None."""
+    from fractions import Fraction
+
+    if value is None:
+        return None
+    if not source_tb or not target_tb or source_tb == target_tb:
+        return int(value)
+    return int(round(int(value) * (Fraction(source_tb) / Fraction(target_tb))))
+
+
+def _encode_audio_packets(output, audio):
+    """Encode a whole AUDIO dict into AAC packets for the assembled file.
+
+    The audio is rebuilt from the segments' lossless FLACs rather than copied out
+    of their mp4s, which is why the seam is clean: a per-segment AAC stream opens
+    on a priming delay that cannot be concatenated away, whereas the waveform can
+    simply be joined.
+
+    Audio is small -- a three-minute stereo track is tens of megabytes -- so
+    holding the encoded packets is affordable in a way that holding the frames
+    never is.
+    """
+    import av
+
+    if audio is None or audio["waveform"].shape[-1] == 0:
+        return None, []
+
+    waveform = audio["waveform"][0].detach().to("cpu").contiguous()
+    sample_rate = int(audio["sample_rate"])
+    layout = {1: "mono", 2: "stereo", 6: "5.1"}.get(waveform.shape[0], "stereo")
+
+    stream = output.add_stream("aac", rate=sample_rate, layout=layout)
+    frame = av.AudioFrame.from_ndarray(
+        waveform.numpy().astype(np.float32), format="fltp", layout=layout)
+    frame.sample_rate = sample_rate
+    frame.pts = 0
+
+    packets = list(stream.encode(frame))
+    packets.extend(stream.encode(None))
+    return stream, packets
+
+
+def _packet_seconds(packet):
+    """A packet's decode time in seconds, for interleaving. Never None."""
+    stamp = packet.dts if packet.dts is not None else packet.pts
+    if stamp is None:
+        return 0.0
+    return float(stamp) * float(packet.time_base or 0 or 1)
+
+
+def _count_frames(path):
+    """Video frames in a segment, for a caller that did not say. 0 if unknown.
+
+    The container's own count first; failing that, one demux pass counting
+    packets, which is still cheap because nothing is decoded.
+    """
+    import av
+
+    try:
+        with av.open(path) as source:
+            if not source.streams.video:
+                return 0
+            stream = source.streams.video[0]
+            if stream.frames:
+                return int(stream.frames)
+            return sum(1 for packet in source.demux(stream) if packet.dts is not None)
+    except Exception as exc:  # pragma: no cover - unreadable segment
+        log.warning("[PulseStudio] could not count frames in %s: %s", path, exc)
+        return 0
+
+
+def _remux_concat(paths, out_path, frame_counts, fps=24, audio=None):
+    """Join segments: video copied packet for packet, audio rebuilt from the FLACs.
+
+    The video is never decoded -- packets are read and written straight out with
+    their timestamps shifted -- which is what keeps assembling a twelve-window
+    film inside a constant, small amount of RAM (§8). Each segment is placed at
+    `frames-so-far / fps`, exactly, so the seams are frame-accurate.
+
+    The audio is *not* copied. Each segment's mp4 carries its own AAC stream, and
+    AAC opens on a priming delay that cannot be concatenated away: packing those
+    streams nose to tail leaves a hole at every seam, or overlaps their decode
+    timestamps and is rejected outright. The lossless per-segment FLAC exists for
+    exactly this -- joined as a waveform it has no seam at all -- so the caller
+    hands the finished track in and it is encoded once here.
+
+    See `comfyui_pulse_studio.concat` for the placement arithmetic and its tests.
+    """
+    import av
+
+    from .comfyui_pulse_studio.concat import video_is_gapless, video_shifts
+
+    if not frame_counts or len(frame_counts) != len(paths):
+        raise RuntimeError("a frame count is required per segment to place it exactly")
+
+    with av.open(out_path, mode="w") as output:
+        video_out = None
+        audio_packets = []
+        audio_index = 0
+        shifts = None
+        frame_duration = None
+
+        for index, path in enumerate(paths):
+            with av.open(path) as source:
+                if not source.streams.video:
+                    raise RuntimeError("segment %s carries no video stream" % path)
+                video_in = source.streams.video[0]
+
+                if video_out is None:
+                    video_out = output.add_stream_from_template(video_in)
+                    _, audio_packets = _encode_audio_packets(output, audio)
+                    # Force the header out before any time base is read:
+                    # libavformat may settle on a different one than the template's.
+                    try:
+                        output.start_encoding()
+                    except Exception:  # pragma: no cover - older PyAV
+                        pass
+
+                    time_base = float(video_out.time_base or video_in.time_base)
+                    shifts = video_shifts(frame_counts, fps, time_base)
+                    frame_duration = int(round((1.0 / float(fps)) / time_base))
+                    if not video_is_gapless(frame_counts, fps, time_base, shifts,
+                                            frame_duration):  # pragma: no cover
+                        raise RuntimeError(
+                            "the computed segment placement would leave a gap at a "
+                            "seam; refusing to write a stuttering assembly")
+                    audio_packets.sort(key=_packet_seconds)
+
+                source_tb = video_in.time_base
+                target_tb = video_out.time_base or source_tb
+                shift = shifts[index]
+
+                for packet in source.demux(video_in):
+                    if packet.dts is None:
+                        continue
+                    packet.dts = _rescale(packet.dts, source_tb, target_tb) + shift
+                    packet.pts = ((_rescale(packet.pts, source_tb, target_tb) + shift)
+                                  if packet.pts is not None else packet.dts)
+                    packet.duration = _rescale(packet.duration, source_tb,
+                                               target_tb) or frame_duration
+                    packet.stream = video_out
+                    try:
+                        packet.time_base = target_tb
+                    except (AttributeError, TypeError):  # pragma: no cover
+                        pass
+
+                    # Keep the two streams interleaved as they are written, rather
+                    # than handing the muxer every video packet and then every
+                    # audio packet and asking it to buffer the difference.
+                    now = _packet_seconds(packet)
+                    while (audio_index < len(audio_packets)
+                           and _packet_seconds(audio_packets[audio_index]) <= now):
+                        output.mux(audio_packets[audio_index])
+                        audio_index += 1
+                    output.mux(packet)
+
+        for packet in audio_packets[audio_index:]:
+            output.mux(packet)
+    return out_path
+
+
+# ── VRAM accounting (spec §9.6, §12.7) ──────────────────────────────────────
+
+def reset_peak_vram():
+    """Zero the peak-allocation counter before a window renders."""
+    try:
+        if torch.cuda.is_available():
+            torch.cuda.reset_peak_memory_stats()
+    except Exception:  # pragma: no cover - no CUDA in the test env
+        pass
+
+
+def peak_vram_bytes():
+    """Peak CUDA allocation since the last reset, or 0 where there is no CUDA.
+
+    Recorded per segment so §12.7's question -- which patch chain actually fits
+    and which is actually faster on *this* box -- is answered by a lookup instead
+    of by an argument.
+    """
+    try:
+        if torch.cuda.is_available():
+            return int(torch.cuda.max_memory_allocated())
+    except Exception:  # pragma: no cover - no CUDA in the test env
+        pass
+    return 0

@@ -57,6 +57,7 @@ jobs:
         run: |
           node tests/js/test_widget_guard.mjs
           node tests/js/test_widget_order.mjs
+          node tests/js/test_sockets.mjs
 
       - name: Cross-language parity, named explicitly
         # Already inside the suite above. Called out as its own step because it

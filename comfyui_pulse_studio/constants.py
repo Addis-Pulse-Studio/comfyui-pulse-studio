@@ -22,7 +22,7 @@ Verified against ComfyUI core at:
 # Bump it only alongside a new entry in WIDGET_NAMES and a CHANGELOG migration
 # note. Appending a widget does NOT require a bump; inserting, reordering,
 # removing, retyping or renaming one does -- and those are forbidden anyway.
-SCHEMA_VERSION = "2.0.0"
+SCHEMA_VERSION = "3.0.0"
 
 # The empty asset-bin document, written in schema 2 form from 1.0 onward even
 # though the cast UI ships in 1.1. An empty `cast` key costs nothing today and

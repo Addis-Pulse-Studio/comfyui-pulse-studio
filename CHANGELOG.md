@@ -2,6 +2,233 @@
 
 All notable changes to this project are documented here.
 
+## [3.0.0] — unreleased
+
+Compile and render are separate nodes now, and every window a render produces is
+cached on disk and reused. Built against `PulseSlate_v3_BUILD_INSTRUCTIONS.md`.
+
+### ⚠️ Breaking — `PulseSlate` no longer renders, and no longer outputs a model
+
+`PulseSlate` compiles a `PULSE_TIMELINE` and stops. A timeline that fits in one
+window still hands back `positive` and `latent` for your own sampler; anything
+longer blocks those two outputs and tells you to add a **Pulse Render** node.
+
+Output slot 0 changed from `MODEL` to `PULSE_TIMELINE`. Slots 1–5 (`positive`,
+`latent`, `combined_audio`, `images`, `compiled_prompt`) kept their types and
+positions, so a 2.x graph wired into an external sampler keeps working. The old
+`model` link on slot 0 is dropped by the frontend as a type mismatch — loudly,
+which is the intended half of that trade. Sigma shift is a model patch like any
+other and belongs upstream: **UNETLoader → MiniMaxH3SigmaShift → your sampler**.
+
+Widget values migrate cleanly. 3.0.0 appends exactly one widget (`continuity`)
+and changes nothing else, and `js/ps_widget_order.js` keeps the full 2.0.0 table,
+so a workflow saved by 2.0.0 loads by name with `continuity` taking its default.
+
+### Why the split
+
+2.x shipped the short path and the long path as two parallel wired groups with
+one muted and a Ctrl+M instruction in the README. They drifted, and the drift was
+silent: a 15-second timeline that split into 192 + 175 frames sampled internally,
+and the still-wired short branch re-sampled the last window alone and saved a
+7-second file as the whole film. No error anywhere — 175 frames is a perfectly
+valid latent. Nothing is muted in any shipped graph now, and a test enforces it.
+
+### New — `PulseShot`
+
+One node per shot: its text, its length, its continuity override, its own
+first/last frames and its own scene-local references. Because the frames are real
+`IMAGE` inputs, a shot's opening frame can come from an upstream generator in the
+same graph instead of only from a file dragged onto the bin.
+
+Connecting any shot socket makes the shot **text box inactive**. The two are never
+merged and neither is silently preferred; the compiled prompt says which won, at
+the top, every time.
+
+### New — `PulseRender`, and the segment cache
+
+Every window is written to `ComfyUI/output/<run_dir>/<run_id>/` as it finishes,
+and `manifest.json` is fsynced before the next window starts. The manifest is
+written **after** the media files are closed, never before, so a crash between
+the two cannot leave a manifest claiming a segment that is not on disk.
+
+- Kill a render at window 9 of 12 and requeue → 0–8 load, only 9–11 render.
+- Edit one shot → only the window holding it re-renders, at its original seed.
+- Change the base seed, `steps`, or the upstream patch chain → all windows go.
+
+The cache key is **content, never window index**. Index keying cannot tell "shot
+3 was edited" from "a shot was inserted before shot 3", and gets both wrong in
+the expensive direction.
+
+`dry_run` produces the report and nothing else — no sampling, no decode, no file
+writes. A wrong reference binding renders successfully and hands you a well-formed
+film of the wrong person; the dry run is how you catch it before the GPU starts.
+
+### New — stable per-shot seeds
+
+A window's seed is derived from the **set of shots in it**, not from its position.
+Inserting a shot at the top of a twelve-window film no longer rerolls every window
+after it — which used to turn "add an establishing shot" into a new film.
+
+`PulseShot` writes a UUID once and never changes it. Text-box shots derive an id
+from their own content.
+
+> **Deviation from §6.2, deliberate.** The spec gives the text-shot id as
+> `sha1(label + "|" + visual)`. That concatenation is ambiguous: a label of `a|b`
+> with a visual of `c` hashes identically to a label of `a` with a visual of
+> `b|c`, so two different shots would share an id, a seed **and** a cached
+> segment. The fields are joined through the canonical JSON encoder instead. No
+> ids were persisted by any earlier build, so this costs no migration.
+
+### New — `patch_fingerprint` (mandatory) and `PulseBench`
+
+Sol-Attn, Spectrum and EasyCache all change what the same prompt at the same seed
+produces. A cache that ignored them would hand back window 4 rendered dense and
+window 5 rendered at `tau=2.0` and call it a film. So every approximation on the
+incoming model is detected, canonicalised and folded into the cache key, and
+`segcache.cache_key` **refuses to run** without one.
+
+Detection is a scan over key names, module paths and callable identities rather
+than a table of literal keys: `ComfyUI-sol-attn` was not installed on the machine
+this was written on, so its key names could not be read out of its source, and a
+guessed table would have missed it silently. Nothing that reaches the descriptor
+carries a memory address — a fingerprint that differed between processes would
+re-render everything on every restart.
+
+`PulseBench` reads manifests back and prints seconds-per-frame and peak VRAM
+grouped by fingerprint. §12.7 is explicit that the right handling of "is Spectrum
+faster here" is measurement, not a recommendation baked into code.
+
+### New — continuity modes and scene-local references
+
+`continuity` on `PulseSlate`, overridable per shot: `none`, `last_frame_carry`,
+`keyframe_pairs`. The latter two need `model_fl2va` and **fail at compile time**
+without it rather than falling back silently.
+
+References now have two scopes. Global ones (the bin, plus `refs.ref_image_1..8`,
+`ref_video`, `ref_video_audio`, `ref_music`) hold the same ordinal in every shot.
+Scene-local ones on a `PulseShot` are visible only to that shot.
+
+> **Note on §10's ordinal wording.** H3 takes one flat `ref_items` list per call
+> and the tokenizer numbers by position in it, so two shots sharing a window
+> cannot both start their locals immediately after the global block. Ordinals are
+> assigned in window socket order; what §10's "within that shot only" actually
+> buys — that one shot's prose can never resolve an alias to another shot's
+> reference — is enforced by scoping the resolver instead. A shot rendered alone
+> in its window gets the literal numbering §10 describes.
+
+### New — growing socket groups
+
+`shots.shot_1..24` and `refs.ref_image_1..8` are declared in full on the Python
+side and grown one free socket at a time by `js/ps_sockets.js`. Sockets are
+ordered by numeric suffix, never by connection order, and links are restored by
+**name** across a rebuild — a link stores `target_slot` as an index, so trimming a
+socket would otherwise move every wire after it onto its neighbour.
+
+### Memory
+
+`low_memory` accumulates assembled frames as 8-bit and releases VRAM between
+windows. The finished video is assembled by stream-copying the segment files
+together, so a twelve-window film is never held in RAM at all. The `frames`
+output is only materialised when it is actually wired — answered from the prompt
+graph, since ComfyUI does not tell a node which of its outputs are used.
+
+### Fixed — from the first real run
+
+- **`PulseSlate_LongForm.json` shipped with only one of its three shot nodes
+  wired.** Three shots on the canvas, one 6-second window rendered, and no
+  warning anywhere — an unconnected shot is not a shot, it is a node sitting on a
+  canvas. All three are wired now, and a test fails if any shipped graph carries a
+  `PulseShot` connected to nothing, or any node connected to nothing at all.
+- **Joining the segments could kill a finished render** —
+  `av.error.ArgumentError: Invalid argument ... returned 22`, raised out of the
+  node after every window had already been rendered and written.
+
+  Segments do not start at zero. Video opens on a negative decode timestamp
+  because of B-frame reordering, and AAC opens earlier still because of its
+  priming delay: on a real segment both opened at `dts = -1024`, but in different
+  time bases (1/12288 and 1/32000), which is −83 ms of video against −32 ms of
+  audio. The first implementation measured each stream's length from zero rather
+  than from where it began, understating the audio by its priming delay, so the
+  next segment's audio landed on a timestamp already used and libavformat rejected
+  the non-monotonic DTS.
+
+  Measuring the extent instead — the obvious correction — is monotonic and still
+  wrong: a segment's *decode* extent is longer than its content, precisely because
+  of those negative starts, so packing nose to tail spaced the segments 84 ms
+  further apart than their duration. Two dropped frames of dead air at every seam,
+  which no timestamp assertion catches and which is obvious on playback.
+
+  So the placement is no longer derived from timestamps at all. Every segment is
+  exactly `frames` frames at a known fps, so segment *i* goes at
+  `sum(frames before it) / fps` — exact, gapless, and indifferent to what the
+  encoder did with its priming delays. **The audio is no longer copied**: the
+  lossless per-segment FLACs are joined as one waveform (no priming delay to
+  repeat, no seam to align) and encoded once into the assembled file, which also
+  makes its audio better than the re-muxed AAC would have been.
+
+  The arithmetic now lives in `comfyui_pulse_studio/concat.py` — pure, and driven
+  by timestamps read out of the real segment files with `ffprobe`. It was wrong
+  twice because nothing without PyAV could reach it.
+
+  The assembly step is also wrapped now, at both levels. It is convenience: the
+  render is already complete and durable when it starts. A failure there logs the
+  reason, says plainly that the segments are safe and that requeueing will reuse
+  them, and returns a blocker on `video` — it can no longer take the render with
+  it.
+- **The long graphs opened on an unresolved-reference warning.** They inherited
+  the starter's asset bin, which points at `example_character_*.png` files a new
+  user has not got; those assets are dropped before tags are assigned and every
+  `@Image1` in the prompt is then correctly reported as unresolved. The
+  shot-driven graphs now ship with an empty bin and a global prompt that names no
+  asset. The bin and `@`-references are what the *short* starter teaches.
+- **`PulseBench` sat in the long graphs wired to nothing**, which reads as a
+  mistake rather than as an output node. It now has its own `PreviewAny`.
+- **Scene-local references were unusable in practice.** Name lookup searched the
+  whole window's bin and applied the shot's scope *afterwards*, so two shots each
+  calling their own local image `Ref1` made the name ambiguous and neither
+  resolved — the scoping in §10 existed but could not be reached by name. The
+  scope is now applied inside the lookup, and locals get short fixed handles
+  (`@Ref1`..`@Ref4`, `@Voice`) instead of names derived from the shot's label. An
+  out-of-scope name is also reported as *belonging to another shot* rather than as
+  not existing, which sends the author somewhere different.
+- **Socket references could collide with the Asset Bin.** The bin numbers its own
+  drops `Image1`, `Image2`…, and `refs.ref_image_1` on PulseSlate was auto-named
+  `Image1` too. Two assets of the same name make `@Image1` ambiguous, and an
+  ambiguous name resolves to nothing — silently. Socket references now take the
+  next free name instead.
+
+### Fixed
+
+- A **reused** window decodes nothing, so the next window's carry-over sockets had
+  no tensors to fill. The compiler had already allocated ordinals around those
+  sockets, so leaving them empty shifted every reference tag behind the hole. The
+  executor now rebuilds the carry frame, audio and motion tail from the files the
+  cached segment left on disk, reading only what the next window asks for — and an
+  unfillable carry socket is raised rather than skipped.
+- `ff_chunk` was attributed to `sol_attn` in the patch descriptor, because feed-
+  forward chunking ships *inside* the Sol-Attn pack and its module path contains
+  `sol_attn`. The chain was reported with a patch missing. Fragment matching is
+  now most-specific-first.
+
+### Workflows
+
+Three graphs, none with a muted branch:
+
+| file | shows |
+|---|---|
+| `PulseSlate_Starter.json` | short path — `PulseSlate` → your own sampler |
+| `PulseSlate_LongForm.json` | long path — `PulseSlate` → `PulseRender`, with `PulseShot` nodes |
+| `PulseSlate_Starter_SpectrumSage.json` | the same, with the patch chain and the §12.3 ordering trap |
+
+> **The Sol-Attn nodes are documented, not pre-wired.** §12.3's order is stated
+> explicitly in the graph's `MarkdownNote`, including the trap — the Sol node
+> applied *before* the Sage patch is shadowed entirely and silently does nothing.
+> The nodes themselves are not placed, because the pack was not installed here and
+> its node **ids** could not be read from source; a workflow naming a guessed id
+> loads as a red MISSING NODE even when the pack is present, which is worse than
+> an honest gap. Insert them at the marked positions and `PulseRender` detects
+> them and folds their settings into the cache key on its own.
+
 ## [2.0.0] — unreleased
 
 First release under the Pulse Studio name, and the last one that is free to
@@ -258,9 +485,21 @@ a plain trademark search; that remains outstanding and blocks the tag.
 
 ### Pending before the tag
 
-- [ ] **Path B verification on hardware.** A >15 s render, chained and stitched,
-      with the audio seam listened to at each window boundary. Findings go here.
-      Path B has never been run; only the ≤15 s single-window path is verified.
+- [ ] **Long-path verification on hardware.** A >15 s render through
+      `PulseSlate → PulseRender`, with the audio seam listened to at each window
+      boundary. Never been run; only the ≤15 s single-window path is verified.
+- [ ] **The five §7.5 cache behaviours, observed on a real render.** Their
+      decision logic is covered by `tests/test_segment_cache.py`, which drives the
+      same two functions the executor calls, in the same order. What no test here
+      can prove is the half that touches disk and VRAM: that a killed render
+      really does resume, that a reused segment stream-copies into an assembly
+      that plays, and that the carry-over rebuilt from a cached segment's PNG and
+      FLAC produces a seam that matches one carried in memory.
+- [ ] **`PulseBench` against two real chains.** The table is only worth having if
+      the numbers in it came from this box; nothing has been measured yet.
+- [ ] **Sol-Attn node ids**, read from the installed pack, so the §12.3 chain can
+      be pre-wired in `PulseSlate_Starter_SpectrumSage.json` instead of described
+      in its note. The pack was not installed on the machine this was built on.
 - [ ] **Trademark search** for "Pulse Studio" / "Pulse Slate" in the relevant
       jurisdiction. Availability was checked (above); clearance was not.
 - [ ] `PublisherId` confirmed against the publisher created at registry.comfy.org.

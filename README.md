@@ -105,14 +105,41 @@ case that makes it worse, is in [The tag problem](#the-tag-problem-and-why-this-
 
 ## Two paths, by duration
 
-| duration | what happens | status |
-|---|---|---|
-| **≤ 15 s** — one window | Node hands back `positive` and `latent`. Your graph carries sampler → decode → mux. | **Verified on hardware.** |
-| **> 15 s** — many windows | Node samples internally, one H3 call per window, carrying the previous window's last frame and audio tail forward, and returns stitched `images` and `combined_audio`. | **Not yet verified on hardware.** The window math, the partitioning and the carry-over are covered by tests; a real multi-window render with the seams listened to has not been done. |
+Two graphs, not one graph with a muted branch. Pick the file that matches the
+length you are making.
 
-That second row is stated plainly because a stitched seam is the kind of thing
-that passes every test and still sounds wrong. Treat path B as untested at the
-render level until this line says otherwise.
+| duration | graph | what happens | status |
+|---|---|---|---|
+| **≤ 15 s** — one window | `PulseSlate_Starter.json` | `PulseSlate` hands back `positive` and `latent`. Your graph carries sampler → decode → mux. | **Verified on hardware.** |
+| **> 15 s** — many windows | `PulseSlate_LongForm.json` | `PulseSlate` hands a `PULSE_TIMELINE` to `PulseRender`, which renders one window per H3 call, caches each to disk, and stitches. | **Not yet verified on hardware.** The window math, the partitioning, the carry-over and the whole cache are covered by tests; a real multi-window render with the seams listened to has not been done. |
+
+That last column is stated plainly because a stitched seam is the kind of thing
+that passes every test and still sounds wrong. Treat the long path as untested at
+the render level until this line says otherwise.
+
+Past a single window, `PulseSlate` **blocks** `positive` and `latent` rather than
+handing back the last window alone. Until 3.0.0 it did hand them back, and a
+still-wired sampler quietly re-rendered that one window and saved it as the whole
+film: a 15-second timeline that split into 192 + 175 frames produced a 7-second
+file, with no error anywhere, because 175 frames is a perfectly valid latent.
+
+### The segment cache
+
+`PulseRender` writes every window to `ComfyUI/output/<run_dir>/<run_id>/` as it
+finishes and fsyncs the manifest before starting the next one.
+
+- **Kill it at window 9 of 12 and requeue** → 0–8 load from disk, 9–11 render.
+- **Edit one shot** → only the window holding it re-renders, at its original seed.
+- **Change the seed, the steps, or the upstream patch chain** → everything goes,
+  because all three change what comes out.
+
+Seeds are derived from the *set of shots in a window*, so inserting a shot at the
+top no longer rerolls every window after it.
+
+**Run `dry_run` first.** It produces the report and nothing else — no sampling, no
+decode, no file writes. A wrong reference binding renders successfully and hands
+you a well-formed film of the wrong person; the report's per-shot ordinal map is
+how you catch that before spending the GPU time.
 
 ## Model patches — wire them upstream
 
@@ -120,7 +147,12 @@ The pack consumes a patched `MODEL`. It does not patch anything itself and takes
 no dependency on the packs that do. The documented chain:
 
 ```
-UNETLoader → Spectrum (history_storage: system_ram) → Sage Attention → PulseSlate
+UNETLoader
+  → SpectrumApplyMiniMaxH3        (history_storage: system_ram)
+  → PathchSageAttentionKJ         (sets Sage as the fallback backend)
+  → MiniMax H3 Scheduled Sol Attention Patch
+  → MiniMax H3 Chunk FeedForward
+  → PulseSlate / PulseRender
 ```
 
 Ready to load as `example_workflows/PulseSlate_Starter_SpectrumSage.json`. It
@@ -129,10 +161,28 @@ and [ComfyUI-KJNodes](https://github.com/kijai/ComfyUI-KJNodes) installed;
 neither is required by Pulse Studio itself, and deleting the patch column leaves
 the plain starter graph.
 
-**Upstream is not a style preference.** Path B samples internally with the model
-handed *to* the node, so a patch applied to the node's `model` **output** would
-accelerate the ≤15 s path and do nothing whatsoever for a long timeline — the
-case where it matters most, and a difference you would only notice in the clock.
+**The Sol-Attn node must come after the Sage patch.** Applied after it, Sol adopts
+the Sage forward as its fallback, so ineligible steps and short sequences run
+memory-efficient Sage while eligible steps run Sol-Attn. Applied *before* it, the
+Sage patch shadows the Sol node entirely and it does nothing — and the graph still
+runs, still produces output, and gives you none of the speedup. Nothing warns you,
+which is why it is stated here and again in the workflow's own note.
+
+The two Sol-Attn nodes are **documented in that graph but not pre-wired**.
+[ComfyUI-sol-attn](https://github.com/Saganaki22/ComfyUI-sol-attn) was not
+installed on the machine this was built on, so its node *ids* could not be read
+out of its source, and a workflow naming a guessed id loads as a red MISSING NODE
+even when the pack is present. Add them at the marked positions; `PulseRender`
+detects them and folds their settings into the cache key by itself.
+
+Nothing in this pack vendors, wraps or reimplements any of those kernels. Its job
+is to detect them, fold them into the cache key, report the chain, and ship
+workflows wired in the right order.
+
+**Upstream is not a style preference.** `PulseRender` samples with the model
+handed *to* it, so a patch applied downstream of it does nothing at all — and a
+patch that changes between two runs of the same timeline would otherwise let the
+cache reuse segments across it, giving you a film whose shots do not match.
 
 **`system_ram` is not a speed setting.** On a 32 GB card, Spectrum storing its
 history in system RAM is what makes a 362-frame window *fit at all*. Set it to
@@ -329,19 +379,63 @@ either; there is a test asserting so.
 
 ### Pulse Slate · MiniMax H3
 
-Compiles a timeline into a storyboard prompt and reference set.
+Compiles a timeline into a storyboard prompt and reference set, and stops. It
+does not sample.
 
 - **One window** → hands back `positive` / `latent` for your own sampler.
-  Your graph carries sampler → decode → mux.
-- **Longer than one window** → renders internally, one real H3 call per window,
-  carrying the previous window's last frame and audio tail forward, and returns
-  the stitched `images` and `combined_audio`. Nothing is ever pushed to the
-  ComfyUI API.
+- **Longer than one window** → those two outputs are blocked; take the `timeline`
+  output to a **Pulse Render** node.
 
 Windows are partitioned `balanced` by default: 16s at a 15s ceiling becomes two
 ~8s windows, not 15s + 1s. A 1s trailing window is below H3's trained floor and
 reliably looks broken. `fill` is available when you mean windows of a literal
 length.
+
+`continuity` chooses how windows join: `none`, `last_frame_carry`, or
+`keyframe_pairs`. The latter two pin a frame, which is the fl2va checkpoint
+specifically, so they need `model_fl2va` and **fail at compile time** without it
+rather than falling back to something that looks like it worked.
+
+### Pulse Shot
+
+One node per shot. Its text, its length, its continuity override, its own
+first/last frames and its own scene-local references — and because those frames
+are real `IMAGE` inputs, a shot can open on a frame generated elsewhere in the
+same graph rather than on a file you had to export first.
+
+Connecting any shot socket makes the **shot text box inactive**. The two are never
+merged and neither is silently preferred; `compiled_prompt` says which won, at the
+top, every time.
+
+Each shot's identity is written once and never changes, which is what keeps its
+seed and its cached segment attached to it when you reorder the film.
+
+### Pulse Render
+
+Executes a `PULSE_TIMELINE`, reusing every window already on disk. See
+[the segment cache](#the-segment-cache).
+
+- `cache_mode` — `auto` reuses what is unchanged; `force_rerender` ignores the
+  cache; `reuse_only` refuses to render anything and aborts naming the first
+  missing window, for assembling a final cut without regenerating a frame.
+- `dry_run` — the report and nothing else.
+- `low_memory` — 8-bit frame accumulation and VRAM released between windows. The
+  finished video is assembled by stream-copying the segment files, so a
+  twelve-window film is never held in RAM.
+- `prune_unused` — off by default. Segments from earlier edits are what make
+  flipping back to an earlier edit free, so nothing is ever deleted automatically.
+
+Every approximation patched onto the incoming model is detected and folded into
+the cache key. Sol-Attn, Spectrum and EasyCache all change what the same prompt at
+the same seed produces, and a cache that ignored them would hand you a film whose
+shots were rendered at different sparsities without saying so.
+
+### Pulse Bench
+
+Reads `PulseRender` manifests back and prints seconds-per-frame and peak VRAM
+grouped by patch chain. Sol-Attn and Spectrum address *different* memory, and
+community reports on Spectrum's speed effect disagree — so this pack measures
+rather than recommends. Point it at a run folder after a render and compare rows.
 
 ### Pulse Retake · MiniMax H3
 
@@ -391,14 +485,27 @@ comfyui_pulse_studio/          headless core — stdlib only, no torch, no comfy
   retake.py             cut geometry, anchor legality, stitch integrity
   still.py              canvas fitting, frame_pick, branch selection
   patches.py            what the incoming model is missing — duck-typed, imports nothing
+  pulse_timeline.py     the PULSE_TIMELINE document, shot ids, window seeds, continuity
+  fingerprint.py        every approximation on the model → one canonical hash
+  segcache.py           cache key, manifest, durable writes, reuse-vs-render
+  report.py             the §9 report; packed-sequence geometry
+  bench.py              manifest timings grouped by patch chain
 media.py                torch/PIL/PyAV loading — the only tensor code
-nodes.py                ComfyUI binding; the sampling loop
+render.py               the executor: the window loop, the disk writes, the assembly
+nodes.py                ComfyUI binding — node faces only
 js/ps_widget_guard.js   the prompt-widget write trap (isolated so it is testable)
 js/ps_widget_order.js   WIDGET_NAMES[node][version] — the slot contract's name table
+js/ps_sockets.js        growing socket groups; links restored by name, not by index
 js/ps_warnings.js       paints the patch warning on the node face; owns no widget slot
 js/pulse_slate.js       the node face: prompt cards, asset bin, thumbnails
 tests/js/               Node tests for the JavaScript that can abort a load
 ```
+
+`segcache.py` is deliberately free of ComfyUI imports even though it writes files
+(spec §15.3): the entire resume behaviour — cache keys, manifest durability,
+reuse-vs-render — is exercised on a machine with no GPU. `render.py` holds the
+half that cannot be, so the boundary between "tested" and "verified on hardware"
+runs along a file rather than through one.
 
 Nothing in `comfyui_pulse_studio/` imports torch or comfy — and that is enforced by an
 AST test, not a convention, so it survives the phase where the timeline canvas
@@ -433,10 +540,11 @@ picture.
 ## Tests
 
 ```bash
-python3 run_tests.py        # 441 tests, no Python dependencies
+python3 run_tests.py        # 572 tests, no Python dependencies
 python3 run_tests.py -v
 node tests/js/test_widget_guard.mjs   # also run by the suite when node exists
 node tests/js/test_widget_order.mjs
+node tests/js/test_sockets.mjs
 ```
 
 CI runs exactly that, on Python 3.10, 3.11 and 3.12, on every push and pull
@@ -451,9 +559,23 @@ retake geometry over an exhaustive sweep of reachable cuts, canvas fitting, and
 end-to-end invariants such as *every tag cited in a prompt must correspond to a
 socket that window actually carries*.
 
-Also asserted: the shipped workflow's stored widget values stay aligned with
+Also asserted: the shipped workflows' stored widget values stay aligned with
 `INPUT_TYPES` (a widget inserted in the middle would silently shift every value
-after it), and every emitted window is at least 124 frames.
+after it), every emitted window is at least 124 frames, and no shipped graph
+carries a muted branch.
+
+The segment cache gets its own file, covering each acceptance behaviour in the
+spec's §7.5 — resume after a kill, one-shot edits invalidating one window, seed
+and `steps` changes invalidating all of them, a requeue with no changes rendering
+nothing — plus the properties underneath them: that a cache key is stable across
+processes, that a manifest entry without its file is not trusted, that a corrupt
+manifest is moved aside rather than overwritten, and that inserting a shot does
+not move the seed of any window whose shot set is unchanged.
+
+Patch detection is tested against stub patchers for each of the four packs,
+present and absent, including the one property that would quietly disable the
+whole cache: **nothing in the descriptor may carry a memory address**, or two
+runs of the same graph would key differently and re-render for ever.
 
 The JavaScript that can abort a workflow load is tested too. `protectWidget` is
 idempotent across reloads, declines a non-configurable descriptor rather than

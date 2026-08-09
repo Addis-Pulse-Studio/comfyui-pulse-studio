@@ -194,9 +194,9 @@ test("every node in the pack opens with schema_version", () => {
 });
 
 test("the spec matches the node's declared widget count", () => {
-  // 23 required widgets + control_after_generate.
-  assert.equal(NATIVE_WIDGETS.length, 24);
-  assert.equal(NATIVE_WIDGETS[NATIVE_WIDGETS.length - 1].name, "audio_ref_ceiling");
+  // 24 required widgets + control_after_generate. 3.0.0 appended `continuity`.
+  assert.equal(NATIVE_WIDGETS.length, 25);
+  assert.equal(NATIVE_WIDGETS[NATIVE_WIDGETS.length - 1].name, "continuity");
 });
 
 test("a file saved before audio_ref_ceiling existed still loads", () => {

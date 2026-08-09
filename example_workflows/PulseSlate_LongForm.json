@@ -2,7 +2,7 @@
   "id": "00000000-0000-0000-0000-000000000000",
   "revision": 0,
   "last_node_id": 92,
-  "last_link_id": 20,
+  "last_link_id": 16,
   "nodes": [
     {
       "id": 10,
@@ -23,7 +23,8 @@
           "name": "MODEL",
           "type": "MODEL",
           "links": [
-            1
+            1,
+            10
           ],
           "slot_index": 0
         }
@@ -56,7 +57,8 @@
           "name": "MODEL",
           "type": "MODEL",
           "links": [
-            3
+            5,
+            13
           ],
           "slot_index": 0
         }
@@ -89,7 +91,7 @@
           "name": "CLIP",
           "type": "CLIP",
           "links": [
-            6
+            2
           ],
           "slot_index": 0
         }
@@ -122,8 +124,8 @@
           "name": "VAE",
           "type": "VAE",
           "links": [
-            7,
-            15
+            3,
+            11
           ],
           "slot_index": 0
         }
@@ -155,8 +157,8 @@
           "name": "VAE",
           "type": "VAE",
           "links": [
-            8,
-            16
+            4,
+            12
           ],
           "slot_index": 0
         }
@@ -170,174 +172,10 @@
       "title": "audio VAE"
     },
     {
-      "id": 70,
-      "type": "SpectrumApplyMiniMaxH3",
-      "pos": [
-        500,
-        40
-      ],
-      "size": [
-        340,
-        130
-      ],
-      "flags": {},
-      "order": 5,
-      "mode": 0,
-      "inputs": [
-        {
-          "name": "model",
-          "type": "MODEL",
-          "link": 1
-        }
-      ],
-      "outputs": [
-        {
-          "name": "MODEL",
-          "type": "MODEL",
-          "links": [
-            2
-          ],
-          "slot_index": 0
-        }
-      ],
-      "properties": {
-        "Node name for S&R": "SpectrumApplyMiniMaxH3"
-      },
-      "widgets_values": [
-        "system_ram",
-        0.1,
-        2
-      ],
-      "title": "1. Spectrum (ref2va)"
-    },
-    {
-      "id": 71,
-      "type": "PathchSageAttentionKJ",
-      "pos": [
-        500,
-        200
-      ],
-      "size": [
-        340,
-        82
-      ],
-      "flags": {},
-      "order": 6,
-      "mode": 0,
-      "inputs": [
-        {
-          "name": "model",
-          "type": "MODEL",
-          "link": 2
-        }
-      ],
-      "outputs": [
-        {
-          "name": "MODEL",
-          "type": "MODEL",
-          "links": [
-            5,
-            14
-          ],
-          "slot_index": 0
-        }
-      ],
-      "properties": {
-        "Node name for S&R": "PathchSageAttentionKJ"
-      },
-      "widgets_values": [
-        "auto",
-        false
-      ],
-      "title": "2. Sage (ref2va)"
-    },
-    {
-      "id": 72,
-      "type": "SpectrumApplyMiniMaxH3",
-      "pos": [
-        500,
-        320
-      ],
-      "size": [
-        340,
-        130
-      ],
-      "flags": {},
-      "order": 7,
-      "mode": 0,
-      "inputs": [
-        {
-          "name": "model",
-          "type": "MODEL",
-          "link": 3
-        }
-      ],
-      "outputs": [
-        {
-          "name": "MODEL",
-          "type": "MODEL",
-          "links": [
-            4
-          ],
-          "slot_index": 0
-        }
-      ],
-      "properties": {
-        "Node name for S&R": "SpectrumApplyMiniMaxH3"
-      },
-      "widgets_values": [
-        "system_ram",
-        0.1,
-        2
-      ],
-      "title": "1. Spectrum (fl2va)"
-    },
-    {
-      "id": 73,
-      "type": "PathchSageAttentionKJ",
-      "pos": [
-        500,
-        480
-      ],
-      "size": [
-        340,
-        82
-      ],
-      "flags": {},
-      "order": 8,
-      "mode": 0,
-      "inputs": [
-        {
-          "name": "model",
-          "type": "MODEL",
-          "link": 4
-        }
-      ],
-      "outputs": [
-        {
-          "name": "MODEL",
-          "type": "MODEL",
-          "links": [
-            9,
-            17
-          ],
-          "slot_index": 0
-        }
-      ],
-      "properties": {
-        "Node name for S&R": "PathchSageAttentionKJ"
-      },
-      "widgets_values": [
-        "auto",
-        false
-      ],
-      "title": "2. Sage (fl2va)"
-    },
-    {
       "id": 80,
       "type": "PulseShot",
       "pos": [
-        900,
+        500,
         40
       ],
       "size": [
@@ -345,7 +183,7 @@
         320
       ],
       "flags": {},
-      "order": 9,
+      "order": 5,
       "mode": 0,
       "inputs": [
         {
@@ -378,7 +216,7 @@
           "name": "shot",
           "type": "PULSE_SHOT",
           "links": [
-            10
+            6
           ],
           "slot_index": 0
         }
@@ -401,7 +239,7 @@
       "id": 81,
       "type": "PulseShot",
       "pos": [
-        900,
+        500,
         400
       ],
       "size": [
@@ -409,7 +247,7 @@
         320
       ],
       "flags": {},
-      "order": 10,
+      "order": 6,
       "mode": 0,
       "inputs": [
         {
@@ -442,7 +280,7 @@
           "name": "shot",
           "type": "PULSE_SHOT",
           "links": [
-            11
+            7
           ],
           "slot_index": 0
         }
@@ -465,7 +303,7 @@
       "id": 82,
       "type": "PulseShot",
       "pos": [
-        900,
+        500,
         760
       ],
       "size": [
@@ -473,7 +311,7 @@
         320
       ],
       "flags": {},
-      "order": 11,
+      "order": 7,
       "mode": 0,
       "inputs": [
         {
@@ -506,7 +344,7 @@
           "name": "shot",
           "type": "PULSE_SHOT",
           "links": [
-            12
+            8
           ],
           "slot_index": 0
         }
@@ -529,7 +367,7 @@
       "id": 20,
       "type": "PulseSlate",
       "pos": [
-        1340,
+        940,
         40
       ],
       "size": [
@@ -537,33 +375,33 @@
         900
       ],
       "flags": {},
-      "order": 12,
+      "order": 8,
       "mode": 0,
       "inputs": [
         {
           "name": "model",
           "type": "MODEL",
-          "link": 5
+          "link": 1
         },
         {
           "name": "clip",
           "type": "CLIP",
-          "link": 6
+          "link": 2
         },
         {
           "name": "vae",
           "type": "VAE",
-          "link": 7
+          "link": 3
         },
         {
           "name": "audio_vae",
           "type": "VAE",
-          "link": 8
+          "link": 4
         },
         {
           "name": "model_fl2va",
           "type": "MODEL",
-          "link": 9,
+          "link": 5,
           "shape": 7
         },
         {
@@ -593,19 +431,19 @@
         {
           "name": "shots.shot_1",
           "type": "PULSE_SHOT",
-          "link": 10,
+          "link": 6,
           "shape": 7
         },
         {
           "name": "shots.shot_2",
           "type": "PULSE_SHOT",
-          "link": 11,
+          "link": 7,
           "shape": 7
         },
         {
           "name": "shots.shot_3",
           "type": "PULSE_SHOT",
-          "link": 12,
+          "link": 8,
           "shape": 7
         }
       ],
@@ -614,7 +452,7 @@
           "name": "timeline",
           "type": "PULSE_TIMELINE",
           "links": [
-            13
+            9
           ],
           "slot_index": 0
         },
@@ -685,7 +523,7 @@
       "id": 90,
       "type": "PulseRender",
       "pos": [
-        2000,
+        1600,
         40
       ],
       "size": [
@@ -693,33 +531,33 @@
         300
       ],
       "flags": {},
-      "order": 13,
+      "order": 9,
       "mode": 0,
       "inputs": [
         {
           "name": "timeline",
           "type": "PULSE_TIMELINE",
-          "link": 13
+          "link": 9
         },
         {
           "name": "model",
           "type": "MODEL",
-          "link": 14
+          "link": 10
         },
         {
           "name": "vae",
           "type": "VAE",
-          "link": 15
+          "link": 11
         },
         {
           "name": "audio_vae",
           "type": "VAE",
-          "link": 16
+          "link": 12
         },
         {
           "name": "model_fl2va",
           "type": "MODEL",
-          "link": 17,
+          "link": 13,
           "shape": 7
         }
       ],
@@ -728,7 +566,7 @@
           "name": "video",
           "type": "VIDEO",
           "links": [
-            18
+            14
           ],
           "slot_index": 0
         },
@@ -754,7 +592,7 @@
           "name": "report",
           "type": "STRING",
           "links": [
-            19
+            15
           ],
           "slot_index": 4
         }
@@ -778,7 +616,7 @@
       "id": 38,
       "type": "SaveVideo",
       "pos": [
-        2000,
+        1600,
         380
       ],
       "size": [
@@ -786,13 +624,13 @@
         340
       ],
       "flags": {},
-      "order": 14,
+      "order": 10,
       "mode": 0,
       "inputs": [
         {
           "name": "video",
           "type": "VIDEO",
-          "link": 18
+          "link": 14
         }
       ],
       "outputs": [
@@ -817,7 +655,7 @@
       "id": 60,
       "type": "PreviewAny",
       "pos": [
-        1340,
+        940,
         970
       ],
       "size": [
@@ -825,13 +663,13 @@
         460
       ],
       "flags": {},
-      "order": 15,
+      "order": 11,
       "mode": 0,
       "inputs": [
         {
           "name": "source",
           "type": "*",
-          "link": 19
+          "link": 15
         }
       ],
       "properties": {
@@ -844,7 +682,7 @@
       "id": 91,
       "type": "PulseBench",
       "pos": [
-        2000,
+        1600,
         760
       ],
       "size": [
@@ -852,14 +690,14 @@
         200
       ],
       "flags": {},
-      "order": 16,
+      "order": 12,
       "mode": 0,
       "outputs": [
         {
           "name": "table",
           "type": "STRING",
           "links": [
-            20
+            16
           ],
           "slot_index": 0
         }
@@ -877,7 +715,7 @@
       "id": 92,
       "type": "PreviewAny",
       "pos": [
-        2000,
+        1600,
         1000
       ],
       "size": [
@@ -885,13 +723,13 @@
         260
       ],
       "flags": {},
-      "order": 17,
+      "order": 13,
       "mode": 0,
       "inputs": [
         {
           "name": "source",
           "type": "*",
-          "link": 20
+          "link": 16
         }
       ],
       "properties": {
@@ -904,7 +742,7 @@
       "id": 1,
       "type": "MarkdownNote",
       "pos": [
-        2460,
+        2060,
         40
       ],
       "size": [
@@ -912,29 +750,7 @@
         1000
       ],
       "flags": {},
-      "order": 18,
-      "mode": 0,
-      "properties": {
-        "Node name for S&R": "MarkdownNote"
-      },
-      "widgets_values": [
-        "# The patch chain — order is not optional (spec §12.3)\n\n```\nUNETLoader\n  → SpectrumApplyMiniMaxH3        (history_storage: system_ram)\n  → PathchSageAttentionKJ         (sets Sage as the fallback backend)\n  → MiniMax H3 Scheduled Sol Attention Patch     ← insert here\n  → MiniMax H3 Chunk FeedForward                 ← and here\n  → Pulse Slate / Pulse Render\n```\n\n## The trap\n**The Sol-Attn H3 node must come AFTER the Sage patch.** Applied after it, Sol\nadopts the Sage forward as its fallback, so ineligible steps and short sequences\nrun memory-efficient Sage while eligible steps run Sol-Attn. Applied *before* it,\nthe Sage patch shadows the Sol node entirely and it does nothing.\n\nThis failure is completely silent. The graph runs, produces output, and gives you\nnone of the speedup. Nothing warns you.\n\n## Why the Sol nodes are not pre-wired here\n`ComfyUI-sol-attn` was not installed on the machine that authored this graph, so\nits node **ids** could not be read out of its source. A workflow referring to a\nguessed id loads as a red MISSING NODE even when the pack is present, which is\nworse than an honest gap. Add the two nodes yourself, in the positions marked\nabove, and Pulse Render will detect them and fold their settings into the cache\nkey automatically.\n\n## Recommended settings (starting points to A/B, not settled facts)\n\n| setting | value | why |\n|---|---|---|\n| Sol node | `Scheduled` | tau ramps sparse-early, dense-late |\n| `tau_start` / `tau_end` | `2.0` / `0.8` | pack defaults |\n| `dense_percent` | `0.2` | keeps the first fifth of sampling fully dense |\n| `sink_conditioning` | `exact_kv_and_rows` | **see below** |\n| `min_tokens` | `8192` | below ~4K tokens Sage is faster than Sol |\n| `int8_qk` | `false` | ~1% extra error; leave off until the baseline is validated |\n| `chunks` (FF chunking) | `2` | −37% MLP peak, output bit-identical |\n\n**On `sink_conditioning`:** `exact_kv` (~3%) keeps the packed text/reference/audio\nKV blocks exact. `exact_kv_and_rows` (~20%) additionally runs those query rows\ndense, which makes the audio stream H3 produces exact. Pulse Slate pairs each\ncharacter image with its own audio track for multi-character sync, and that\npairing lives in exactly those rows. Take the 20%. Pulse Slate warns you if you\nhave not.\n\n## Spectrum is not a Sol-Attn substitute\nSol-Attn reduces attention and MLP *activation* peak. Spectrum's `system_ram`\nhistory offload is a different mechanism, and it is what makes a 362-frame window\nfit on a 32GB card at all. Do not turn it off for speed. Community reports on its\nspeed effect disagree — **Pulse Bench** answers that from your own manifests\nrather than from an argument.\n"
-      ],
-      "title": "READ ME"
-    },
-    {
-      "id": 2,
-      "type": "MarkdownNote",
-      "pos": [
-        2460,
-        1060
-      ],
-      "size": [
-        600,
-        460
-      ],
-      "flags": {},
-      "order": 19,
+      "order": 14,
       "mode": 0,
       "properties": {
         "Node name for S&R": "MarkdownNote"
@@ -942,7 +758,7 @@
       "widgets_values": [
         "# Pulse Slate 3 · long path (many windows)\n\n`PulseSlate` compiles; **Pulse Render** executes. Nothing is muted, and there is\nno second branch to keep in sync.\n\n## The segment cache is the point\nEvery window is written to `ComfyUI/output/<run_dir>/<run_id>/` as it finishes,\nand the manifest is fsynced before the next one starts.\n\n- **Kill the render at window 9 of 12 and requeue** → 0–8 load from disk, only\n  9–11 render.\n- **Edit one shot** → only the window holding it re-renders. Every other window\n  is reused, at its original seed.\n- **Change the base seed, or steps, or the patch chain** → everything re-renders,\n  because all three change the output.\n\nThat last one is why `patch_fingerprint` exists. Sol-Attn, Spectrum and EasyCache\nall change what the same prompt and seed produce, so a cache that ignored them\nwould hand you a film whose shots were rendered at different sparsities and say\nnothing about it.\n\n## Run the dry run first\nSet **dry_run** and queue. You get the report and nothing else: no sampling, no\ndecode, no file writes. Check the per-shot ordinal map and the unresolved-alias\nlist *before* spending GPU hours — a wrong binding renders successfully and gives\nyou a well-formed film of the wrong person.\n\n## Seeds survive edits\nA window's seed is derived from the **set of shots in it**, not from its position.\nInserting a shot at the top no longer rerolls every window after it.\n\n## Pulse Shot\nEach `PulseShot` carries its own text, duration, first/last frames and\nscene-local references — so a shot's opening frame can come from an upstream\ngenerator in this same graph rather than from a file on disk. Its `shot_id` is\nwritten once and never changes, which is what keeps its cached segment attached\nto it when you reorder the film.\n\n## Patch the model upstream\nThis graph has no attention or memory patch on it, so it will say so on every\nqueue — three warnings, all accurate. On a 32GB card Spectrum's `system_ram`\nhistory offload is what makes a 362-frame window **fit at all**; it is not a\nspeed setting. Open **PulseSlate_Starter_SpectrumSage.json** for the same graph\nwith the chain wired, in the order that actually works.\n\n## Memory\nLeave **low_memory** on. The finished video is assembled by stream-copying the\nsegment files together, so a twelve-window film is never held in RAM at all. The\n`frames` output is only materialised if you actually wire it.\n"
       ],
-      "title": "THE CACHE"
+      "title": "READ ME"
     }
   ],
   "links": [
@@ -950,44 +766,12 @@
       1,
       10,
       0,
-      70,
-      0,
-      "MODEL"
-    ],
-    [
-      2,
-      70,
-      0,
-      71,
-      0,
-      "MODEL"
-    ],
-    [
-      3,
-      11,
-      0,
-      72,
-      0,
-      "MODEL"
-    ],
-    [
-      4,
-      72,
-      0,
-      73,
-      0,
-      "MODEL"
-    ],
-    [
-      5,
-      71,
-      0,
       20,
       0,
       "MODEL"
     ],
     [
-      6,
+      2,
       12,
       0,
       20,
@@ -995,7 +779,7 @@
       "CLIP"
     ],
     [
-      7,
+      3,
       13,
       0,
       20,
@@ -1003,7 +787,7 @@
       "VAE"
     ],
     [
-      8,
+      4,
       14,
       0,
       20,
@@ -1011,15 +795,15 @@
       "VAE"
     ],
     [
-      9,
-      73,
+      5,
+      11,
       0,
       20,
       4,
       "MODEL"
     ],
     [
-      10,
+      6,
       80,
       0,
       20,
@@ -1027,7 +811,7 @@
       "PULSE_SHOT"
     ],
     [
-      11,
+      7,
       81,
       0,
       20,
@@ -1035,7 +819,7 @@
       "PULSE_SHOT"
     ],
     [
-      12,
+      8,
       82,
       0,
       20,
@@ -1043,7 +827,7 @@
       "PULSE_SHOT"
     ],
     [
-      13,
+      9,
       20,
       0,
       90,
@@ -1051,15 +835,15 @@
       "PULSE_TIMELINE"
     ],
     [
-      14,
-      71,
+      10,
+      10,
       0,
       90,
       1,
       "MODEL"
     ],
     [
-      15,
+      11,
       13,
       0,
       90,
@@ -1067,7 +851,7 @@
       "VAE"
     ],
     [
-      16,
+      12,
       14,
       0,
       90,
@@ -1075,15 +859,15 @@
       "VAE"
     ],
     [
-      17,
-      73,
+      13,
+      11,
       0,
       90,
       4,
       "MODEL"
     ],
     [
-      18,
+      14,
       90,
       0,
       38,
@@ -1091,7 +875,7 @@
       "VIDEO"
     ],
     [
-      19,
+      15,
       90,
       4,
       60,
@@ -1099,7 +883,7 @@
       "STRING"
     ],
     [
-      20,
+      16,
       91,
       0,
       92,
@@ -1125,7 +909,7 @@
       "id": 752,
       "title": "SHOTS — one node per shot",
       "bounding": [
-        880,
+        480,
         10,
         440,
         1090
@@ -1138,7 +922,7 @@
       "id": 897,
       "title": "① COMPILE",
       "bounding": [
-        1320,
+        920,
         10,
         660,
         1440
@@ -1151,25 +935,12 @@
       "id": 775,
       "title": "② RENDER + CACHE",
       "bounding": [
-        1980,
+        1580,
         10,
         460,
         960
       ],
       "color": "#88A",
-      "font_size": 24,
-      "flags": {}
-    },
-    {
-      "id": 18,
-      "title": "PATCH CHAIN — order matters",
-      "bounding": [
-        480,
-        10,
-        380,
-        580
-      ],
-      "color": "#b06634",
       "font_size": 24,
       "flags": {}
     }

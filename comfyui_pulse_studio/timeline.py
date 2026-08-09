@@ -89,6 +89,15 @@ class Timeline:
         # an asset for it.
         self.identity_notes = identity_notes or ""
         self.retention_notes = retention_notes or ""
+        # §10 scene-local references: shot_id -> [Asset]. Populated by the node
+        # layer from each PulseShot's own reference sockets, and left empty for
+        # every text-box project, where all references are global by definition.
+        self.local_refs = {}
+        # §11 keyframe_pairs: shot_id -> {"first": asset_id, "last": asset_id}.
+        # Per-shot keyframe anchors, set by the node layer from each PulseShot's
+        # start_image / end_image sockets. Empty for every project that pins its
+        # anchors at the project level instead.
+        self.shot_anchors = {}
         self.limits = RefLimits(audio_ref_ceiling)
         self.assets = (assets if isinstance(assets, AssetBin)
                        else AssetBin.from_list(assets, limits=self.limits))

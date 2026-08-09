@@ -46,7 +46,7 @@
 
 /** The schema version this build writes. Must match SCHEMA_VERSION in
  *  comfyui_pulse_studio/constants.py -- tests/test_js_guard.py asserts it. */
-export const CURRENT = "2.0.0";
+export const CURRENT = "3.0.0";
 
 /**
  * Live widget layout, per node class, per schema version.
@@ -91,6 +91,66 @@ const SPECS = {
       { name: "shift_audio", kind: "number" },
       { name: "audio_ref_ceiling", kind: "number" },
     ],
+    // 3.0.0 appends `continuity` and nothing else. Every 2.0.0 name is still
+    // here, in the same order, which is what lets a workflow saved by 2.0.0 load
+    // into this build by name -- spec §13. The 2.0.0 entry above is not dead
+    // weight; deleting it is what would make those files unreadable.
+    "3.0.0": [
+      { name: "schema_version", kind: "string" },
+      { name: "timeline_data", kind: "string" },
+      { name: "global_prompt", kind: "string" },
+      { name: "shot_prompt", kind: "string" },
+      { name: "duration_seconds", kind: "number" },
+      { name: "aspect_ratio", kind: "string" },
+      { name: "width", kind: "number" },
+      { name: "height", kind: "number" },
+      { name: "steps", kind: "number" },
+      { name: "sampler_name", kind: "string" },
+      { name: "scheduler", kind: "string" },
+      { name: "cfg", kind: "number" },
+      { name: "seed", kind: "number" },
+      { name: "control_after_generate", kind: "string", optional: true },
+      { name: "partition_strategy", kind: "string" },
+      { name: "window_seconds", kind: "number" },
+      { name: "resize_method", kind: "string" },
+      { name: "carry_mode", kind: "string" },
+      { name: "carry_audio", kind: "boolean" },
+      { name: "carry_audio_seconds", kind: "number" },
+      { name: "ref_image_size", kind: "string" },
+      { name: "shift_video", kind: "number" },
+      { name: "shift_audio", kind: "number" },
+      { name: "audio_ref_ceiling", kind: "number" },
+      { name: "continuity", kind: "string" },
+    ],
+  },
+  PulseShot: {
+    "3.0.0": [
+      { name: "schema_version", kind: "string" },
+      { name: "shot_id", kind: "string" },
+      { name: "label", kind: "string" },
+      { name: "visual", kind: "string" },
+      { name: "audio_line", kind: "string" },
+      { name: "duration_seconds", kind: "number" },
+      { name: "continuity", kind: "string" },
+    ],
+  },
+  PulseRender: {
+    "3.0.0": [
+      { name: "schema_version", kind: "string" },
+      { name: "cache_mode", kind: "string" },
+      { name: "run_dir", kind: "string" },
+      { name: "run_id", kind: "string" },
+      { name: "save_segments", kind: "boolean" },
+      { name: "low_memory", kind: "boolean" },
+      { name: "dry_run", kind: "boolean" },
+      { name: "prune_unused", kind: "boolean" },
+    ],
+  },
+  PulseBench: {
+    "3.0.0": [
+      { name: "schema_version", kind: "string" },
+      { name: "run_dirs", kind: "string" },
+    ],
   },
   PulseRetake: {
     "2.0.0": [
@@ -109,9 +169,46 @@ const SPECS = {
       { name: "shift_video", kind: "number" },
       { name: "shift_audio", kind: "number" },
     ],
+    // Unchanged in 3.0.0. Listed anyway: the version key is shared across the
+    // pack so there is one number to bump, and a node with no entry at CURRENT
+    // reports as drifted rather than as untouched.
+    "3.0.0": [
+      { name: "schema_version", kind: "string" },
+      { name: "prompt", kind: "string" },
+      { name: "cut_start_seconds", kind: "number" },
+      { name: "cut_end_seconds", kind: "number" },
+      { name: "keep_base_audio", kind: "boolean" },
+      { name: "fps", kind: "number" },
+      { name: "seed", kind: "number" },
+      { name: "control_after_generate", kind: "string", optional: true },
+      { name: "steps", kind: "number" },
+      { name: "sampler_name", kind: "string" },
+      { name: "scheduler", kind: "string" },
+      { name: "cfg", kind: "number" },
+      { name: "shift_video", kind: "number" },
+      { name: "shift_audio", kind: "number" },
+    ],
   },
   PulseStill: {
     "2.0.0": [
+      { name: "schema_version", kind: "string" },
+      { name: "prompt", kind: "string" },
+      { name: "aspect_ratio", kind: "string" },
+      { name: "width", kind: "number" },
+      { name: "height", kind: "number" },
+      { name: "frame_pick", kind: "number" },
+      { name: "canvas_from_reference", kind: "boolean" },
+      { name: "seed", kind: "number" },
+      { name: "control_after_generate", kind: "string", optional: true },
+      { name: "steps", kind: "number" },
+      { name: "sampler_name", kind: "string" },
+      { name: "scheduler", kind: "string" },
+      { name: "cfg", kind: "number" },
+      { name: "shift_video", kind: "number" },
+      { name: "shift_audio", kind: "number" },
+    ],
+    // Unchanged in 3.0.0; see the note on PulseRetake.
+    "3.0.0": [
       { name: "schema_version", kind: "string" },
       { name: "prompt", kind: "string" },
       { name: "aspect_ratio", kind: "string" },

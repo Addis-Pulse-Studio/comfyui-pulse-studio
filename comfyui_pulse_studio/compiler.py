@@ -127,7 +127,7 @@ def _normalise_dialogue(text):
 
 # ── reference resolution ────────────────────────────────────────────────────
 
-def resolve_references(text, tag_map, bin_, subject_tags=None):
+def resolve_references(text, tag_map, bin_, subject_tags=None, scope_ids=None):
     """Replace {{asset_id}} / @Name / @[Name With Spaces] with live tags.
 
     An image that has been promoted to a <Subject N> definition resolves to that
@@ -135,6 +135,13 @@ def resolve_references(text, tag_map, bin_, subject_tags=None):
     format wants prose to talk about subjects, with the picture cited once inside
     the definition. Assets with no subject (videos, audio, undescribed images)
     resolve to their raw tag.
+
+    `scope_ids`, when given, is the set of asset ids this particular text may see
+    (§10). It is how a scene-local reference on one `PulseShot` stays invisible to
+    every other shot even though both shots' references occupy sockets on the same
+    H3 call. Out-of-scope hits are reported and left as literal text rather than
+    resolved to a number that would point at another scene's picture -- which is
+    the one failure this package exists to make impossible.
 
     Returns (resolved_text, diagnostics).
     """
@@ -144,10 +151,33 @@ def resolve_references(text, tag_map, bin_, subject_tags=None):
     def _sub(match):
         by_id, bracketed, bare = match.group(1), match.group(2), match.group(3)
         key = by_id or bracketed or bare
-        asset = bin_.get(key) if by_id else (bin_.get(key) or bin_.find_by_name(key))
+        # The scope is applied inside the lookup, not after it: a name that is
+        # ambiguous across the whole window may be perfectly unambiguous within
+        # the shot that wrote it, which is the entire point of scene-local
+        # references (§10).
+        asset = (bin_.get(key) if by_id
+                 else (bin_.get(key) or bin_.find_by_name(key, allowed=scope_ids)))
+        if asset is None and not by_id and scope_ids is not None:
+            # Not visible here -- but is it visible anywhere? "It belongs to
+            # another shot" is a different problem from "it does not exist", and
+            # sends the author somewhere different.
+            elsewhere = bin_.find_by_name(key)
+            if elsewhere is not None:
+                diagnostics.append(
+                    "reference %r belongs to another shot's own reference sockets and "
+                    "is not visible here. Scene-local references are scoped to the "
+                    "PulseShot that carries them; move it to the Asset Bin to share it "
+                    "across shots." % (key,))
+                return match.group(0)
         if asset is None:
             diagnostics.append(
                 "unresolved reference %r -- no asset with that id or unique name" % (key,))
+            return match.group(0)
+        if scope_ids is not None and asset.asset_id not in scope_ids:
+            diagnostics.append(
+                "reference %r belongs to another shot's own reference sockets and is not "
+                "visible here. Scene-local references are scoped to the PulseShot that "
+                "carries them; move it to the Asset Bin to share it across shots." % (key,))
             return match.group(0)
         if asset.asset_id in subject_tags:
             return subject_tags[asset.asset_id]
@@ -251,10 +281,19 @@ class CompiledWindow:
 
     __slots__ = ("index", "total", "branch", "frame_count", "start_seconds",
                  "end_seconds", "prompt", "files", "tag_map", "anchors",
-                 "diagnostics", "shot_ids", "seed_offset")
+                 "diagnostics", "shot_ids", "seed_offset",
+                 "resolved_shots", "unresolved_shots")
 
     def __init__(self, index, total, branch, frame_count, start_seconds, end_seconds,
-                 prompt, files, tag_map, anchors, diagnostics, shot_ids, seed_offset=0):
+                 prompt, files, tag_map, anchors, diagnostics, shot_ids, seed_offset=0,
+                 resolved_shots=None, unresolved_shots=None):
+        # shot_id -> the shot's own text after reference resolution, and the
+        # aliases in it that did not resolve. Both are per shot rather than per
+        # window because §7.1 hashes the resolved prompt of each shot into the
+        # cache key, and §9.3 reports an unresolved alias against the shot it was
+        # written in -- a window-level string can answer neither.
+        self.resolved_shots = dict(resolved_shots or {})
+        self.unresolved_shots = dict(unresolved_shots or {})
         self.index = index
         self.total = total
         self.branch = branch
@@ -413,13 +452,23 @@ def compile_timeline(timeline, window_frames=None, policy="balanced",
     return CompiledPlan(compiled, diagnostics, problems)
 
 
-def _window_bin(timeline, index, branch, carry):
+def _window_bin(timeline, index, branch, carry, shots=()):
     """The effective asset bin for one window, carry-over included.
 
     Carry-over references claim the *front* of their socket group, so on a
     continuation window the carried frame is <Picture 1> and every user image
     shifts up by one. That shift is the whole reason ordinals are computed here
     rather than typed by the author.
+
+    Scene-local references (§10) are appended after the global block, per shot,
+    in the window's own shot order. Their *ordinals* are necessarily assigned in
+    that flat socket order: H3 takes one `ref_items` list per call and the
+    tokenizer numbers by position in it, so two shots sharing a window cannot both
+    start their locals immediately after the global block. What §10's "within that
+    shot only" buys is enforced by `scope_ids` in `resolve_references` instead --
+    a shot's prose can never resolve an alias to another shot's local reference,
+    which is the property that actually matters. A shot rendered alone in its own
+    window gets the literal numbering §10 describes.
 
     Returns (bin, diagnostics). User assets that no longer fit after carry-over
     has taken its slots are dropped, loudly.
@@ -429,9 +478,13 @@ def _window_bin(timeline, index, branch, carry):
         # fl2va carries no references at all -- different checkpoint, disjoint inputs.
         return AssetBin(), diagnostics
 
-    user_images = timeline.assets.by_kind(KIND_IMAGE)
-    user_videos = timeline.assets.by_kind(KIND_VIDEO)
-    user_audios = timeline.assets.by_kind(KIND_AUDIO)
+    local = []
+    for shot in shots:
+        local.extend(getattr(timeline, "local_refs", {}).get(shot.shot_id) or [])
+
+    user_images = timeline.assets.by_kind(KIND_IMAGE) + [a for a in local if a.kind == KIND_IMAGE]
+    user_videos = timeline.assets.by_kind(KIND_VIDEO) + [a for a in local if a.kind == KIND_VIDEO]
+    user_audios = timeline.assets.by_kind(KIND_AUDIO) + [a for a in local if a.kind == KIND_AUDIO]
 
     images, videos, audios = [], [], []
     if index > 0:
@@ -530,18 +583,32 @@ def _presence_clause(subject_tag, shot_texts):
 
 def _compile_window(timeline, index, total, branch, frame_count, start, end, carry):
     diagnostics = []
-    bin_, bin_diags = _window_bin(timeline, index, branch, carry)
+    shots = timeline.shots_in(start, end)
+    shot_ids = [s.shot_id for s in shots]
+
+    bin_, bin_diags = _window_bin(timeline, index, branch, carry, shots)
     diagnostics.extend(bin_diags)
     tag_map = bin_.tag_map()
 
     subject_lines, subject_tag, retention_meta = _build_subjects(bin_, tag_map)
 
-    shots = timeline.shots_in(start, end)
-    shot_ids = [s.shot_id for s in shots]
+    # §10 scoping. Built only when some shot actually carries local references --
+    # with none, every asset is global and an unscoped resolve is both correct and
+    # exactly what every pre-v3 project expects.
+    local_refs = getattr(timeline, "local_refs", None) or {}
+    scope_by_shot = {}
+    if any(local_refs.get(s.shot_id) for s in shots):
+        shared = {a.asset_id for a in bin_} - {
+            a.asset_id for refs in local_refs.values() for a in refs}
+        for shot in shots:
+            scope_by_shot[shot.shot_id] = shared | {
+                a.asset_id for a in (local_refs.get(shot.shot_id) or [])}
 
     # ── shot lines, with strictly increasing timestamps ─────────────────────
     shot_lines = []
     shot_texts = []
+    resolved_shots = {}
+    unresolved_shots = {}
     previous_ts = None
     ordinal = 0
     for shot in shots:
@@ -549,9 +616,18 @@ def _compile_window(timeline, index, total, branch, frame_count, start, end, car
         if not text:
             continue
         ordinal += 1
-        resolved, ref_diags = resolve_references(text, tag_map, bin_, subject_tag)
+        resolved, ref_diags = resolve_references(
+            text, tag_map, bin_, subject_tag, scope_ids=scope_by_shot.get(shot.shot_id))
         diagnostics.extend("shot %r: %s" % (shot.shot_id, d) for d in ref_diags)
+        # Whatever still matches the reference syntax after substitution is, by
+        # definition, exactly what failed to resolve -- every hit that resolved
+        # was replaced by a tag. Cheaper and more precise than parsing the
+        # diagnostic strings back apart.
+        unresolved = [m.group(0) for m in REF_TOKEN_RE.finditer(resolved)]
+        if unresolved:
+            unresolved_shots[shot.shot_id] = unresolved
         resolved = wrap_dialogue(resolved, timeline.dialogue_language)
+        resolved_shots[shot.shot_id] = resolved
         shot_texts.append(resolved)
 
         if ordinal == 1:
@@ -594,14 +670,32 @@ def _compile_window(timeline, index, total, branch, frame_count, start, end, car
     # ── anchors (fl2va only) ───────────────────────────────────────────────
     anchors = {}
     if branch == BRANCH_FL2VA:
-        if index == 0:
+        # §11 keyframe_pairs. Per-shot anchors, when the node layer supplied them,
+        # outrank the project-level pair. H3 accepts a keyframe at index 0 or at
+        # frame_count-1 and nowhere else (constants.ANCHOR_FIRST), so "each shot's
+        # start image pairs with the next shot's start image" is realisable exactly
+        # when a window holds one shot -- which is what the mode is for. A window
+        # holding several uses its first shot's opening frame and its last shot's
+        # closing frame, which is the same statement at the window's own scale.
+        shot_anchors = getattr(timeline, "shot_anchors", None) or {}
+        explicit_first = (shot_anchors.get(shots[0].shot_id, {}).get("first")
+                          if shots else None)
+        explicit_last = (shot_anchors.get(shots[-1].shot_id, {}).get("last")
+                         if shots else None)
+
+        if explicit_first:
+            anchors["first_frame"] = explicit_first
+        elif index == 0:
             if timeline.first_frame:
                 anchors["first_frame"] = timeline.first_frame
         else:
             # Continuation on fl2va: the previous window's last decoded frame is
             # the hard lock. This is the one thing fl2va does better than ref2va.
             anchors["first_frame"] = CARRY_IMAGE_ID
-        if timeline.last_frame and index == total - 1:
+
+        if explicit_last:
+            anchors["last_frame"] = explicit_last
+        elif timeline.last_frame and index == total - 1:
             anchors["last_frame"] = timeline.last_frame
         # Both anchors are legal here and nowhere else: PackedLayout accepts
         # pixel_index 0 and frame_count-1 only.
@@ -626,7 +720,8 @@ def _compile_window(timeline, index, total, branch, frame_count, start, end, car
         extra_subject_lines, extra_retention_lines)
 
     return CompiledWindow(index, total, branch, frame_count, start, end, prompt,
-                          files, tag_map, anchors, diagnostics, shot_ids, seed_offset=index)
+                          files, tag_map, anchors, diagnostics, shot_ids, seed_offset=index,
+                          resolved_shots=resolved_shots, unresolved_shots=unresolved_shots)
 
 
 def _socket_sort_key(item):

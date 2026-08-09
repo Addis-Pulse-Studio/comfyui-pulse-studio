@@ -742,11 +742,62 @@ function restoreByName(node, nodeId, info) {
  * restores by name. Both are wrapped -- a throw in either aborts the whole
  * "Loading workflow data" step for the user's entire graph, not just this node.
  */
+const SHOT_ID_WIDGET = "shot_id";
+
+/** A fresh shot identity. Spec §6.1. */
+function newShotId() {
+  if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
+  // Older frontends. Not cryptographic, and does not need to be -- it only has
+  // to be unique among the shots of one film.
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    return (c === "x" ? r : (r & 0x3) | 0x8).toString(16);
+  });
+}
+
+/**
+ * Give a PulseShot a stable identity, and make sure it is *its own*. Spec §6.1.
+ *
+ * The id is written once and never changes afterwards: it is what keeps a shot's
+ * seed and its cached segment attached to that shot when a shot is inserted above
+ * it. But §6.1 also requires a *copy* to get a new one, and LiteGraph implements
+ * both duplication and paste by replaying a serialised node -- so a copy arrives
+ * carrying the original's id. Detecting the collision against the live graph
+ * covers duplicate, copy/paste and a hand-edited workflow alike, without needing
+ * to know which of them happened.
+ */
+function ensureShotId(node) {
+  const widget = node.widgets?.find((w) => w.name === SHOT_ID_WIDGET);
+  if (!widget) return;
+  const taken = (app.graph?._nodes ?? []).some(
+    (other) => other !== node && other.comfyClass === "PulseShot"
+      && other.widgets?.find((w) => w.name === SHOT_ID_WIDGET)?.value === widget.value);
+  if (!widget.value || taken) widget.value = newShotId();
+}
+
 app.registerExtension({
   name: "comfyui_pulse_studio.slot_contract",
   async beforeRegisterNodeDef(nodeType, nodeData) {
     if (!NODE_IDS.includes(nodeData.name)) return;
     const nodeId = nodeData.name;
+
+    // Every node in the pack opens with schema_version, and none of them shows
+    // it: it is written by the node and read by the loader, and a text box
+    // inviting someone to edit it is an invitation to make a file unreadable.
+    const onCreatedContract = nodeType.prototype.onNodeCreated;
+    nodeType.prototype.onNodeCreated = function () {
+      const result = onCreatedContract?.apply(this, arguments);
+      try {
+        hideWidget(this, SCHEMA_WIDGET);
+        if (nodeId === "PulseShot") {
+          hideWidget(this, SHOT_ID_WIDGET);
+          ensureShotId(this);
+        }
+      } catch (err) {
+        console.warn(`[PulseStudio] ${nodeId}: slot contract setup failed:`, err);
+      }
+      return result;
+    };
 
     const onSerialize = nodeType.prototype.onSerialize;
     nodeType.prototype.onSerialize = function (info) {
@@ -770,6 +821,13 @@ app.registerExtension({
       const result = onConfigureContract?.apply(this, arguments);
       try {
         restoreByName(this, nodeId, info);
+        hideWidget(this, SCHEMA_WIDGET);
+        if (nodeId === "PulseShot") {
+          hideWidget(this, SHOT_ID_WIDGET);
+          // After the restore, so a genuine load keeps the id it saved with and
+          // only a duplicate is re-minted.
+          ensureShotId(this);
+        }
       } catch (err) {
         console.warn(`[PulseStudio] ${nodeId}: name-based restore failed:`, err);
       }

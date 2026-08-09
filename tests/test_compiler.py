@@ -537,3 +537,89 @@ class TestPlanShape(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestSceneLocalReferenceScoping(unittest.TestCase):
+    """§10 -- two shots may each carry their own @Ref1.
+
+    Name lookup used to search the whole window bin and *then* apply the scope,
+    so two shots both calling their local image `Ref1` made the name ambiguous
+    and neither resolved. Scoped lookup is what lets a scene-local reference have
+    a handle short enough to actually type.
+    """
+
+    def build(self, local_names=("Ref1", "Ref1")):
+        from comfyui_pulse_studio.assets import Asset, KIND_IMAGE
+        from comfyui_pulse_studio.timeline import Timeline
+
+        timeline = Timeline(
+            assets=[{"id": "mimi", "kind": KIND_IMAGE, "name": "Mimi", "file": "m.png",
+                     "description": "the woman in the red scarf"}],
+            shots=[{"id": "s1", "start": 0.0, "duration": 5.0,
+                    "prompt": "@Mimi holds up @%s." % local_names[0]},
+                   {"id": "s2", "start": 5.0, "duration": 5.0,
+                    "prompt": "she sets down @%s." % local_names[1]}],
+            duration_seconds=10.0)
+        timeline.local_refs = {
+            "s1": [Asset("__socket__:shot.s1.ref_image_1", KIND_IMAGE,
+                         name=local_names[0], file="")],
+            "s2": [Asset("__socket__:shot.s2.ref_image_1", KIND_IMAGE,
+                         name=local_names[1], file="")],
+        }
+        return timeline
+
+    def test_each_shot_resolves_its_own_ref_of_the_same_name(self):
+        plan = compile_timeline(self.build())
+        window = plan.windows[0]
+        self.assertEqual(window.unresolved_shots, {},
+                         "a scoped name resolved as ambiguous: %r" % window.unresolved_shots)
+
+    def test_the_two_shots_get_different_ordinals(self):
+        """They are different pictures occupying different sockets, even though
+        the author called both of them Ref1."""
+        plan = compile_timeline(self.build())
+        window = plan.windows[0]
+        first = window.resolved_shots["s1"]
+        second = window.resolved_shots["s2"]
+        self.assertNotEqual(_picture_in(first), _picture_in(second))
+
+    def test_a_global_reference_still_resolves_identically_in_both(self):
+        plan = compile_timeline(self.build())
+        window = plan.windows[0]
+        self.assertIn("<Subject 1>", window.resolved_shots["s1"])
+
+    def test_one_shot_cannot_reach_another_shots_local_reference(self):
+        timeline = self.build(local_names=("Prop", "Other"))
+        timeline.shots[1].prompt = "she reaches for @Prop."   # belongs to shot 1
+        plan = compile_timeline(timeline)
+        window = plan.windows[0]
+        self.assertIn("@Prop", window.unresolved_shots.get("s2", []))
+        self.assertTrue(any("another shot" in d for d in window.diagnostics))
+
+
+def _picture_in(text):
+    import re
+    match = re.search(r"<Picture (\d+)>", text)
+    return match.group(1) if match else None
+
+
+class TestSocketNamesDoNotCollideWithTheBin(unittest.TestCase):
+    """The bin numbers its drops Image1, Image2...; so did the socket refs."""
+
+    def test_unique_name_steps_past_a_taken_one(self):
+        from comfyui_pulse_studio.assets import AssetBin, KIND_IMAGE
+
+        bin_ = AssetBin.from_list([
+            {"id": "a", "kind": KIND_IMAGE, "name": "Image1", "file": "a.png"},
+            {"id": "b", "kind": KIND_IMAGE, "name": "Image2", "file": "b.png"}])
+        self.assertEqual(bin_.unique_name("Image1", KIND_IMAGE), "Image3")
+        self.assertEqual(bin_.unique_name("Music", KIND_IMAGE), "Music")
+
+    def test_an_ambiguous_name_resolves_to_nothing(self):
+        """Why the collision matters: it is silent."""
+        from comfyui_pulse_studio.assets import AssetBin, KIND_IMAGE
+
+        bin_ = AssetBin.from_list([
+            {"id": "a", "kind": KIND_IMAGE, "name": "Image1", "file": "a.png"},
+            {"id": "b", "kind": KIND_IMAGE, "name": "Image1", "file": "b.png"}])
+        self.assertIsNone(bin_.find_by_name("Image1"))

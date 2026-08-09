@@ -19,10 +19,13 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).parent.parent
 WORKFLOW_DIR = PROJECT_ROOT / "example_workflows"
 WORKFLOW = WORKFLOW_DIR / "PulseSlate_Starter.json"
-# §15 ships two starter graphs. The second is the first with the documented
-# patch chain wired in, so every structural check runs over both -- a graph that
+# §15.4 and §15.9 ship three graphs: the short path (this node's own sampler),
+# the long path (PulseSlate -> PulseRender), and the long path with the patch
+# chain wired in. Every structural check runs over all three -- a graph that
 # loads as a silently disconnected mess is worse than one that fails to load.
-SHIPPED_GRAPHS = (WORKFLOW, WORKFLOW_DIR / "PulseSlate_Starter_SpectrumSage.json")
+LONG_FORM = WORKFLOW_DIR / "PulseSlate_LongForm.json"
+SHIPPED_GRAPHS = (WORKFLOW, LONG_FORM,
+                  WORKFLOW_DIR / "PulseSlate_Starter_SpectrumSage.json")
 NODES_PY = PROJECT_ROOT / "nodes.py"
 
 # Widget order is the order of keys in the "required" dict, minus the ones that
@@ -162,6 +165,111 @@ class TestWorkflowShipsAndParses(unittest.TestCase):
                 types = {n["type"] for n in d["nodes"]}
                 self.assertIn("PulseSlate", types)
 
+    def test_no_shipped_graph_carries_a_muted_branch(self):
+        """§14.6, and the reason the node was split at all.
+
+        2.x shipped the short path and the long path as two parallel wired
+        groups with one muted and a Ctrl+M instruction in the README. The two
+        drifted, and a 15s timeline that split into two windows re-sampled its
+        last window through the still-wired short branch and saved 7 seconds of
+        video as the whole film. Mode 2 is 'never', mode 4 is 'bypass'.
+        """
+        for path in SHIPPED_GRAPHS:
+            with self.subTest(workflow=path.name):
+                d = json.loads(path.read_text(encoding="utf-8"))
+                muted = [n["type"] for n in d["nodes"] if n.get("mode") in (2, 4)]
+                self.assertEqual(muted, [],
+                                 "%s ships muted nodes: %r" % (path.name, muted))
+                titles = " ".join(g.get("title", "") for g in d.get("groups") or [])
+                self.assertNotIn("muted", titles.lower())
+
+    def test_the_long_graphs_wire_the_timeline_into_a_render_node(self):
+        """§2.3. The short graph hands conditioning to the graph's own sampler;
+        the long ones hand the timeline to PulseRender. Neither does both."""
+        for path in (LONG_FORM, WORKFLOW_DIR / "PulseSlate_Starter_SpectrumSage.json"):
+            with self.subTest(workflow=path.name):
+                d = json.loads(path.read_text(encoding="utf-8"))
+                by_id = {n["id"]: n for n in d["nodes"]}
+                slate = next(n for n in d["nodes"] if n["type"] == "PulseSlate")
+                render = next(n for n in d["nodes"] if n["type"] == "PulseRender")
+                timeline_links = [l for l in d["links"]
+                                  if l[1] == slate["id"] and l[2] == 0]
+                self.assertTrue(timeline_links, "the timeline output is not wired")
+                self.assertEqual(by_id[timeline_links[0][3]]["type"], "PulseRender")
+                # ...and the blocked conditioning outputs are wired to nothing.
+                for slot in (1, 2):
+                    self.assertEqual(
+                        [l for l in d["links"] if l[1] == slate["id"] and l[2] == slot], [],
+                        "a long graph must not wire positive/latent -- they are "
+                        "blocked on that path and would stop the render")
+                self.assertTrue(render["inputs"][0]["link"] is not None)
+
+    def test_every_shot_node_is_actually_wired(self):
+        """A shipped graph with a floating PulseShot renders a fraction of the
+        film it appears to describe, and says nothing about it.
+
+        This shipped with only shot 1 connected: three shot nodes on the canvas,
+        one 6-second window rendered, no warning anywhere -- because a shot that
+        is not connected is not a shot, it is a node sitting on a canvas.
+        """
+        for path in (LONG_FORM, WORKFLOW_DIR / "PulseSlate_Starter_SpectrumSage.json"):
+            with self.subTest(workflow=path.name):
+                d = json.loads(path.read_text(encoding="utf-8"))
+                shots = [n for n in d["nodes"] if n["type"] == "PulseShot"]
+                self.assertTrue(shots, "a long-form example needs shot nodes")
+                wired = {l[1] for l in d["links"] if l[5] == "PULSE_SHOT"}
+                for node in shots:
+                    self.assertIn(node["id"], wired,
+                                  "%s: PulseShot %s is on the canvas but wired to "
+                                  "nothing" % (path.name, node.get("title", node["id"])))
+
+    def test_no_shipped_graph_has_a_node_wired_to_nothing(self):
+        """Notes aside, a node with no links at all reads as a mistake."""
+        for path in SHIPPED_GRAPHS:
+            with self.subTest(workflow=path.name):
+                d = json.loads(path.read_text(encoding="utf-8"))
+                linked = {l[1] for l in d["links"]} | {l[3] for l in d["links"]}
+                floating = [n.get("title") or n["type"] for n in d["nodes"]
+                            if n["type"] != "MarkdownNote" and n["id"] not in linked]
+                self.assertEqual(floating, [], "%s: %r" % (path.name, floating))
+
+    def test_the_shot_driven_graphs_reference_no_asset_they_do_not_ship(self):
+        """The long graphs carry an empty bin on purpose.
+
+        The starter's bin points at example_character_*.png, which a new user has
+        not got. Those assets are dropped before tags are assigned, and every
+        `@Image1` in the prompt is then correctly reported as unresolved -- which
+        is right, but is not what a graph demonstrating the render loop should
+        open on.
+        """
+        for path in (LONG_FORM, WORKFLOW_DIR / "PulseSlate_Starter_SpectrumSage.json"):
+            with self.subTest(workflow=path.name):
+                d = json.loads(path.read_text(encoding="utf-8"))
+                slate = next(n for n in d["nodes"] if n["type"] == "PulseSlate")
+                widgets = _required_widgets("PulseSlate")
+                index = {name: n for n, name in enumerate(widgets)}
+                document = json.loads(slate["widgets_values"][index["timeline_data"]])
+                self.assertEqual(document["assets"], [])
+                self.assertNotIn("@", slate["widgets_values"][index["global_prompt"]],
+                                 "an empty bin cannot resolve an @reference")
+
+    def test_the_short_graph_has_no_render_node(self):
+        d = json.loads(WORKFLOW.read_text(encoding="utf-8"))
+        types = {n["type"] for n in d["nodes"]}
+        self.assertNotIn("PulseRender", types)
+        self.assertIn("SamplerCustomAdvanced", types)
+
+    def test_sigma_shift_is_upstream_of_the_sampler_not_the_director(self):
+        """§1.1: model patches stay upstream. PulseSlate no longer returns a
+        model, so the shift has to reach the sampler through its own node."""
+        d = json.loads(WORKFLOW.read_text(encoding="utf-8"))
+        by_id = {n["id"]: n for n in d["nodes"]}
+        shift = next(n for n in d["nodes"] if n["type"] == "MiniMaxH3SigmaShift")
+        targets = {by_id[l[3]]["type"] for l in d["links"] if l[1] == shift["id"]}
+        self.assertEqual(targets, {"BasicScheduler", "BasicGuider"})
+        upstream = next(l for l in d["links"] if l[3] == shift["id"])
+        self.assertEqual(by_id[upstream[1]]["type"], "UNETLoader")
+
 
 class TestThePatchChainVariant(unittest.TestCase):
     """§15's second graph exists to teach §10: patch *upstream* of the director.
@@ -216,11 +324,17 @@ class TestThePatchChainVariant(unittest.TestCase):
             self.assertIn("system_ram", node["widgets_values"],
                           "%s must store history in system_ram" % node.get("title"))
 
-    def test_the_variant_is_otherwise_the_starter_graph(self):
-        """Same director, same widget values. The two graphs teach one thing
-        each; a drifted copy would teach two."""
-        starter = json.loads(WORKFLOW.read_text(encoding="utf-8"))
-        a = next(n for n in starter["nodes"] if n["type"] == "PulseSlate")
+    def test_the_variant_is_otherwise_the_long_form_graph(self):
+        """Same director, same widget values. The variant is the long-form graph
+        plus the patch chain and nothing else; the two teach one thing each, and
+        a drifted copy would teach two.
+
+        Compared against the LONG graph, not the short starter: the short one is
+        bin-and-text-box driven and the long ones are shot-node driven, so their
+        directors legitimately carry different prompts.
+        """
+        long_form = json.loads(LONG_FORM.read_text(encoding="utf-8"))
+        a = next(n for n in long_form["nodes"] if n["type"] == "PulseSlate")
         b = next(n for n in self.d["nodes"] if n["type"] == "PulseSlate")
         self.assertEqual(a["widgets_values"], b["widgets_values"])
 
@@ -257,7 +371,7 @@ class TestWidgetOrderMatchesTheNode(unittest.TestCase):
 
     def test_the_workflow_declares_the_current_schema(self):
         stored = self._director()["widgets_values"]
-        self.assertEqual(stored[0], "2.0.0",
+        self.assertEqual(stored[0], "3.0.0",
                          "slot 0 must carry the schema version the file was saved in")
 
     def test_stored_values_land_on_the_right_widgets(self):

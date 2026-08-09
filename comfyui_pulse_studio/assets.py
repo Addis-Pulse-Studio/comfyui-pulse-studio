@@ -289,11 +289,38 @@ class AssetBin:
         """Assets of one kind, in bin order. This order is the socket order."""
         return [a for a in self._assets if a.kind == kind]
 
-    def find_by_name(self, name):
-        """Case-insensitive name lookup. Returns None if absent or ambiguous."""
+    def find_by_name(self, name, allowed=None):
+        """Case-insensitive name lookup. Returns None if absent or ambiguous.
+
+        `allowed` restricts the search to a set of asset ids -- the scope of the
+        shot doing the asking (§10). It has to be applied *before* the ambiguity
+        check, not after: two shots may each carry their own `@Ref1`, and those
+        are not ambiguous, they are scoped. Filtering afterwards would see two
+        assets called Ref1, call it ambiguous, and refuse to resolve either --
+        which is the same as the feature not existing.
+        """
         needle = (name or "").strip().casefold()
-        hits = [a for a in self._assets if a.name.strip().casefold() == needle]
+        pool = (self._assets if allowed is None
+                else [a for a in self._assets if a.asset_id in allowed])
+        hits = [a for a in pool if a.name.strip().casefold() == needle]
         return hits[0] if len(hits) == 1 else None
+
+    def unique_name(self, preferred, kind=None):
+        """`preferred` if nothing else has it, else the next free numbered form.
+
+        Auto-named assets arriving from sockets must not collide with what the
+        user dropped in the bin: two assets called `Image1` make `@Image1`
+        ambiguous, and an ambiguous name resolves to nothing at all.
+        """
+        taken = {a.name.strip().casefold() for a in self._assets}
+        preferred = (preferred or "Asset").strip() or "Asset"
+        if preferred.casefold() not in taken:
+            return preferred
+        stem = preferred.rstrip("0123456789") or preferred
+        n = 2
+        while ("%s%d" % (stem, n)).casefold() in taken:
+            n += 1
+        return "%s%d" % (stem, n)
 
     def index_of(self, asset_id):
         for i, a in enumerate(self._assets):
