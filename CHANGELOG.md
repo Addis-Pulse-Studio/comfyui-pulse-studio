@@ -542,8 +542,11 @@ and commit it; a verification nobody wrote down has to be done again.
 - [ ] **Sol-Attn node ids**, read from the installed pack, so the §12.3 chain can
       be pre-wired in `PulseSlate_Starter_SpectrumSage.json` instead of described
       in its note. The pack was not installed on the machine this was built on.
-- [ ] **Trademark search** for "Pulse Studio" / "Pulse Slate" in the relevant
-      jurisdiction. Availability was checked (above); clearance was not.
+- [x] **Trademark search — cleared, 2026-08-09.** Zero results for
+      `ComfyUI-PulseStudio` on the ComfyUI Registry and PyPI, zero on **USPTO**
+      in Classes 009 and 042, and zero in the **WIPO Global Brand Database**.
+      This is the clearance the availability check above could not establish;
+      the two were tracked as separate questions and both are now answered.
 - [x] **`PublisherId` confirmed** — 2026-08-09, against the publisher at
       `registry.comfy.org/publishers/addis-pulse`. `pyproject.toml` carried
       `behailu-ai` from the pre-fork manifest; it is `addis-pulse` now, pinned by
