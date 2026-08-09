@@ -26,7 +26,7 @@ requires-python = ">=3.10"
 dependencies = []
 
 [project.urls]
-Repository = "https://github.com/Addis-Pulse-Studio/comfyui-addis-pulse"
+Repository = "https://github.com/Addis-Pulse-Studio/comfyui-pulse-studio"
 
 [tool.setuptools]
 # Spelled out rather than discovered, for the reason in [build-system] above.

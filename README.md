@@ -41,7 +41,7 @@ Or by hand:
 
 ```bash
 cd ComfyUI/custom_nodes
-git clone https://github.com/Addis-Pulse-Studio/comfyui-addis-pulse
+git clone https://github.com/Addis-Pulse-Studio/comfyui-pulse-studio
 ```
 
 Restart ComfyUI either way. There is nothing to `pip install`: the pack has no

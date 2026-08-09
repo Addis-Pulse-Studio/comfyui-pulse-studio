@@ -59,13 +59,23 @@ grep -rn "NODE_CLASS_MAPPINGS" -A 20 \
 
 Write down the **mapping keys** (the class ids), not the display names:
 
-| what the README calls it | display name | class id (from source) |
-|---|---|---|
-| Sol-Attn H3 patch | MiniMax H3 Scheduled Sol Attention Patch | `________________` |
-| chunked feed-forward | MiniMax H3 Chunk FeedForward | `________________` |
+**Done, 2026-08-09** — the pack is installed and the ids were read from the
+running server's `/object_info`, not from source:
 
-Paste those two ids back to me and I will pre-wire the §12.3 chain into the
-graph, in the order below, with a test pinning that order.
+| display name | class id | outputs |
+|---|---|---|
+| MiniMax H3 Scheduled Sol Attention Patch | `MiniMaxH3ScheduledSolAttentionPatch` | **`MODEL`, `IMAGE`** |
+| MiniMax H3 Chunk FeedForward | `MiniMaxH3ChunkFeedForward` | `MODEL` |
+
+Three more ship in the same pack: `SolAttentionPatch`,
+`MiniMaxH3MemoryEfficientSolAttentionPatch`, `MiniMaxH3FusedModulation`.
+
+**The scheduled patch has two outputs** — `model` on slot 0 and `tau_graph` on
+slot 1. Every other node in the chain is single-output, so anything wiring by
+assumption gets it wrong.
+
+Pre-wiring is still pending step 5's numbers, per the standing instruction: the
+chain goes in only if the benchmark justifies it.
 
 ```
 UNETLoader → SpectrumApplyMiniMaxH3 → PathchSageAttentionKJ
@@ -115,8 +125,8 @@ skipping until this directory existed and is now live:
 - **under 4 MB** — it is a README illustration, not a render;
 - **not named after a client asset.** `docs/` is the one place in this repo an
   image may live, and the exemption is exactly wide enough for README
-  screenshots. A frame dropped there is a client asset in a public repo, same as
-  anywhere else, and the private-name scan still applies.
+  screenshots. A frame dropped there is a client asset in a repo you intend to
+  publish, same as anywhere else, and the private-name scan still applies.
 
 ---
 
@@ -125,9 +135,15 @@ skipping until this directory existed and is now live:
 This is the headline item. The >15 s multi-window path has **never been run**;
 only the ≤15 s single-window path is verified.
 
-Use `PulseSlate_LongForm.json`, or `PulseSlate_LongForm_18s_VOICEFIX.json` from
-your Downloads — the latter is a real 18 s / 2-window timeline whose references
-all resolve, which makes it the better first render.
+**Partly done, 2026-08-09.** Nine complete 2-window renders exist under
+`output/pulseslate/`, every one assembled: 452 frames and 18.85 s against the
+18.83 s the compiler predicted, so no frames are dropped or duplicated at the
+seam. What is still outstanding from this step is **3c — listening to the
+seams**, which no measurement substitutes for.
+
+Use `PulseSlate_LongForm_18s_LIPSYNC.json` from your Downloads for the next run:
+an 18 s / 2-window timeline whose references all resolve, now on the lip-sync
+path, so one render exercises the seam and the voice work together.
 
 ### 3a. Dry run first, always
 
@@ -283,14 +299,9 @@ history in system RAM is what makes a 362-frame window fit at all. Set it to
 
 ## Not on this list
 
-Two blockers are neither hardware nor mine:
-
-- **Trademark search** for "Pulse Studio" / "Pulse Slate" in your jurisdiction.
-  Registry and PyPI 404s establish *availability*; they are not *clearance*, and
-  the two are different questions. This blocks the tag.
-- **The repo/package name split** — the repository is `comfyui-addis-pulse`, the
-  package is `comfyui-pulse-studio`. Legal, since the registry keys on the
-  pyproject `name`, but decide it deliberately before the first publish.
+Both are settled as of 2026-08-09: the trademark search cleared, and the
+repository was renamed to `comfyui-pulse-studio` so that the repo name, the
+package name and the registry entry are one word.
 
 ---
 

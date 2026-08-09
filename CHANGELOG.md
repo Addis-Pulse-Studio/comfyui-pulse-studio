@@ -225,7 +225,7 @@ where the only audio reference sat on the one shot that never speaks.
 - **`PublisherId` and the repository URL were unverified placeholders** carried
   over from the pre-fork manifest. Confirmed 2026-08-09 against the publisher at
   `registry.comfy.org/publishers/addis-pulse` and the repository at
-  `github.com/Addis-Pulse-Studio/comfyui-addis-pulse`; both are pinned by test,
+  `github.com/Addis-Pulse-Studio/comfyui-pulse-studio`; both are pinned by test,
   so a stale value cannot publish under someone else's namespace.
 
 ### Fixed — from the first real run
@@ -618,7 +618,8 @@ and commit it; a verification nobody wrote down has to be done again.
       the patch chain's direction — but "no red nodes" is a claim about the host
       install, and only loading them proves it.
 - [x] **CI observed green on GitHub** — run `31318598402`, 2026-08-09, the first
-      push to `Addis-Pulse-Studio/comfyui-addis-pulse`. All five jobs: `test`
+      push to that remote (then named `comfyui-addis-pulse`, renamed to
+      `comfyui-pulse-studio` later the same day). All five jobs: `test`
       on 3.10, 3.11 and 3.12, `import-purity`, and `distribution`.
 
       The `distribution` job is the one that mattered, because it could not be

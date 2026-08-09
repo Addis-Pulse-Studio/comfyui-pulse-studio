@@ -6,8 +6,8 @@ opening a pull request.
 ## Development setup
 
 ```bash
-git clone https://github.com/Addis-Pulse-Studio/comfyui-addis-pulse
-cd comfyui-addis-pulse
+git clone https://github.com/Addis-Pulse-Studio/comfyui-pulse-studio
+cd comfyui-pulse-studio
 pip install -r requirements.txt
 pytest
 node --test tests/js

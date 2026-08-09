@@ -76,7 +76,7 @@ class TestPyproject(unittest.TestCase):
         # publishing under someone else's namespace.
         self.assertEqual(self.cfg["tool"]["comfy"]["PublisherId"], "addis-pulse")
         self.assertEqual(self.project["urls"]["Repository"],
-                         "https://github.com/Addis-Pulse-Studio/comfyui-addis-pulse")
+                         "https://github.com/Addis-Pulse-Studio/comfyui-pulse-studio")
 
 
 if __name__ == "__main__":
