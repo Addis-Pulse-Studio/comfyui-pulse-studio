@@ -117,6 +117,11 @@ That last column is stated plainly because a stitched seam is the kind of thing
 that passes every test and still sounds wrong. Treat the long path as untested at
 the render level until this line says otherwise.
 
+Clearing it is a specific, ordered piece of work rather than a vague "try it":
+[`docs/HARDWARE_VERIFICATION.md`](docs/HARDWARE_VERIFICATION.md) walks the long
+render, every seam, the five cache behaviours and the `PulseBench` numbers in
+one sitting, and has blanks to record what actually happened.
+
 Past a single window, `PulseSlate` **blocks** `positive` and `latent` rather than
 handing back the last window alone. Until 3.0.0 it did hand them back, and a
 still-wired sampler quietly re-rendered that one window and saved it as the whole

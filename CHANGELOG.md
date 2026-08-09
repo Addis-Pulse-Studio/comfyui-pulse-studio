@@ -522,6 +522,11 @@ a plain trademark search; that remains outstanding and blocks the tag.
 
 ### Pending before the tag
 
+Everything below that needs a GPU is sequenced into one sitting in
+[`docs/HARDWARE_VERIFICATION.md`](docs/HARDWARE_VERIFICATION.md) — what to do,
+what you should see, and a place to write down what you actually saw. Fill it in
+and commit it; a verification nobody wrote down has to be done again.
+
 - [ ] **Long-path verification on hardware.** A >15 s render through
       `PulseSlate → PulseRender`, with the audio seam listened to at each window
       boundary. Never been run; only the ≤15 s single-window path is verified.
