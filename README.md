@@ -634,7 +634,6 @@ record.
 Model weights are **not** redistributed here and carry the MiniMax H3 Community
 License, which is a separate agreement governing the weights and their use.
 
-**No code from `seesee75-commits/ComfyUI-MiniMaxH3-Director` (GPL-3.0) is present
-here.** That project was reviewed for feature ideas only. Copying from it would
-relicense this entire project under GPL-3.0. Contributors must not introduce code
-derived from it.
+Source provenance rules for contributors — what may be read, what may not be
+copied, and the named GPL-3.0 projects that rule covers — are in
+[CONTRIBUTING.md](CONTRIBUTING.md).
