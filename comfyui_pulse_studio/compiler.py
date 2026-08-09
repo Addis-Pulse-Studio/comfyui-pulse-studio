@@ -634,6 +634,23 @@ def _compile_window(timeline, index, total, branch, frame_count, start, end, car
         resolved_shots[shot.shot_id] = resolved
         shot_texts.append(resolved)
 
+        # A lip-sync reference and a quoted line are two different answers to
+        # "what is this character saying": the <d> block instructs the model to
+        # speak those words, and the recording says whatever it says. The model
+        # will pick one, and nothing about the output reveals which. Reported
+        # rather than resolved -- a quote that *is* the transcript of the
+        # recording is legitimate and even helpful, and only the author knows.
+        if "<d>" in resolved:
+            lip_sync = [a for a in (local_refs.get(shot.shot_id) or [])
+                        if a.kind == KIND_AUDIO and a.audio_role == AUDIO_ROLE_LIP_SYNC]
+            if lip_sync:
+                diagnostics.append(
+                    "shot %r: has quoted dialogue and a lip_sync reference (%s). The "
+                    "quote tells the model what to say and the recording says what it "
+                    "says; unless the quote is that recording's transcript, drop it and "
+                    "let the audio carry the words."
+                    % (shot.shot_id, ", ".join("@" + a.name for a in lip_sync)))
+
         if ordinal == 1:
             # H3's format leaves the opening shot unstamped -- it is the window's
             # zero by definition, and stamping it invites the model to wait.

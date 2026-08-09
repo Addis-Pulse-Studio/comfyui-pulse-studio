@@ -175,6 +175,12 @@ recording produced a clean render, no error, and a mouth tracking nothing.
   Off by default, and the generated track still goes to every segment's `.flac`,
   so it is reversible without re-rendering.
 
+- **A quoted line beside a `lip_sync` reference is now reported.** The `<d>`
+  block tells the model to speak those words while the recording says what it
+  says, and nothing in the output reveals which one it followed. Named in the
+  report rather than refused: a quote that is the recording's own transcript is
+  legitimate, and only the author knows whether it is.
+
 **Behaviour change:** a shot with a connected `ref_audio` and no explicit mode
 loads as `lip_sync` and its segments re-render once. That is the intended
 correction — the previous behaviour was a timbre reference the prompt asked

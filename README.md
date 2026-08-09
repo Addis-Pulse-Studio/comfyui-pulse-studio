@@ -444,6 +444,14 @@ re-rendering anything.
 and nothing warns you: there is no speech to match. Put the recording on the shot
 that speaks.
 
+The inverse is reported. A shot carrying both a quoted line and a `lip_sync`
+reference gives the model two answers to "what is she saying" — the `<d>` block
+instructs it to speak those words, and the recording says whatever it says. The
+compiler names it in the report rather than refusing, because a quote that *is*
+the recording's transcript is legitimate and only you know that. Otherwise drop
+the quote and let the audio carry the words; keep the `@Voice` tag in the line,
+which is what tells the model whose shot the recording belongs to.
+
 ### Pulse Render
 
 Executes a `PULSE_TIMELINE`, reusing every window already on disk. See

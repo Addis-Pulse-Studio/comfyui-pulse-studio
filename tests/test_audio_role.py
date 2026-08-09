@@ -89,6 +89,40 @@ class TestTheDirectiveReachesTheModel(unittest.TestCase):
                     self.assertIsNone(ref.audio_role)
 
 
+class TestQuotedDialogueAgainstALipSyncReference(unittest.TestCase):
+    """Two answers to "what is she saying", and no way to see which the model took.
+
+    The <d> block instructs the model to speak those words; the recording says
+    whatever it says. Reported rather than resolved, because a quote that IS the
+    recording's transcript is legitimate and only the author knows.
+    """
+
+    def _diags(self, line, role=AUDIO_ROLE_LIP_SYNC):
+        plan = _compile(_timeline(role, shot_text=line))
+        return [d for d in plan.windows[0].diagnostics if "lip_sync reference" in d]
+
+    def test_a_quote_beside_a_lip_sync_reference_is_reported(self):
+        self.assertTrue(self._diags('She says "I love the rain" @Voice.'))
+
+    def test_the_diagnostic_names_the_reference(self):
+        """"Some audio somewhere conflicts" is not actionable on a shot with two."""
+        self.assertIn("@Voice", self._diags('She says "hello" @Voice.')[0])
+
+    def test_no_quote_no_complaint(self):
+        self.assertEqual(self._diags("She speaks to camera @Voice."), [])
+
+    def test_a_timbre_reference_may_have_all_the_dialogue_it_likes(self):
+        """That is the mode where the model *should* speak the written words."""
+        self.assertEqual(
+            self._diags('She says "I love the rain" @Voice.', AUDIO_ROLE_TIMBRE), [])
+
+    def test_the_compile_still_succeeds(self):
+        """A warning, not a refusal -- the author may know the quote matches."""
+        plan = _compile(_timeline(AUDIO_ROLE_LIP_SYNC,
+                                  shot_text='She says "hello" @Voice.'))
+        self.assertTrue(plan.ok, plan.problems)
+
+
 class TestAssetCarriesTheRole(unittest.TestCase):
     def test_round_trips_through_a_dict(self):
         asset = Asset("a", KIND_AUDIO, name="Voice", audio_role=AUDIO_ROLE_LIP_SYNC)
