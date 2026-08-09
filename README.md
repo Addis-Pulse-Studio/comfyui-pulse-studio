@@ -592,6 +592,16 @@ data"*.
 
 ---
 
+## Maintainers
+
+- Behailu Weldeyohannes — [@Behailu-Weldeyohannes](https://github.com/Behailu-Weldeyohannes), [@behailuaisolutions](https://github.com/behailuaisolutions)
+
+## Acknowledgements
+
+Developed with assistance from Claude, Anthropic's AI assistant.
+
+---
+
 ## Credits
 
 Pulse Studio is a fork of
