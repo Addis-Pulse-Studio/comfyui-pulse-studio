@@ -74,8 +74,11 @@ Three more ship in the same pack: `SolAttentionPatch`,
 slot 1. Every other node in the chain is single-output, so anything wiring by
 assumption gets it wrong.
 
-Pre-wiring is still pending step 5's numbers, per the standing instruction: the
-chain goes in only if the benchmark justifies it.
+**Wired, 2026-08-10.** The chain is now in the graph on both model paths. This
+went in on the confirmation that the pack is installed and locally tested, ahead
+of step 5's numbers rather than because of them — so it ships as the recommended
+order, not as a measured win. If the benchmark below comes back against it,
+deleting the two nodes and wiring Sage straight through is the whole reversal.
 
 ```
 UNETLoader → SpectrumApplyMiniMaxH3 → PathchSageAttentionKJ
@@ -110,14 +113,11 @@ not in your `get_filename_list()`, or a real bug. Model paths in the shipped
 graphs use the Windows separator (`minimax\name`) deliberately — see the
 CHANGELOG entry, and note it is pinned by test so a portability "fix" fails CI.
 
-While `PulseSlate_LongForm.json` is open, also take the **node-face screenshot**
-for `docs/node_face.png` — §15 puts it at the top of the README and the slot is
-marked there in a comment. From a real graph with the weights on it, not a
-mock-up.
+**The node-face screenshot was dropped on 2026-08-10**, at the user's call. The
+README ships without one. If you ever want to add it, the constraints below still
+apply and nothing else has to change.
 
-- [ ] `docs/node_face.png` captured
-
-Three constraints on that file, all enforced by
+Three constraints on any image in `docs/`, all enforced by
 `tests/test_shipped_assets.py::test_the_docs_exemption_stays_narrow` — which was
 skipping until this directory existed and is now live:
 

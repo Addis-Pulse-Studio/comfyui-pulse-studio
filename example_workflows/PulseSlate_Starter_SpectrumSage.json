@@ -2,7 +2,7 @@
   "id": "00000000-0000-0000-0000-000000000000",
   "revision": 0,
   "last_node_id": 92,
-  "last_link_id": 20,
+  "last_link_id": 24,
   "nodes": [
     {
       "id": 10,
@@ -236,8 +236,7 @@
           "name": "MODEL",
           "type": "MODEL",
           "links": [
-            5,
-            14
+            21
           ],
           "slot_index": 0
         }
@@ -256,14 +255,14 @@
       "type": "SpectrumApplyMiniMaxH3",
       "pos": [
         500,
-        320
+        810
       ],
       "size": [
         340,
         130
       ],
       "flags": {},
-      "order": 7,
+      "order": 9,
       "mode": 0,
       "inputs": [
         {
@@ -297,14 +296,14 @@
       "type": "PathchSageAttentionKJ",
       "pos": [
         500,
-        480
+        970
       ],
       "size": [
         340,
         82
       ],
       "flags": {},
-      "order": 8,
+      "order": 10,
       "mode": 0,
       "inputs": [
         {
@@ -318,8 +317,7 @@
           "name": "MODEL",
           "type": "MODEL",
           "links": [
-            9,
-            17
+            23
           ],
           "slot_index": 0
         }
@@ -345,7 +343,7 @@
         320
       ],
       "flags": {},
-      "order": 9,
+      "order": 13,
       "mode": 0,
       "inputs": [
         {
@@ -410,7 +408,7 @@
         320
       ],
       "flags": {},
-      "order": 10,
+      "order": 14,
       "mode": 0,
       "inputs": [
         {
@@ -475,7 +473,7 @@
         320
       ],
       "flags": {},
-      "order": 11,
+      "order": 15,
       "mode": 0,
       "inputs": [
         {
@@ -540,7 +538,7 @@
         900
       ],
       "flags": {},
-      "order": 12,
+      "order": 16,
       "mode": 0,
       "inputs": [
         {
@@ -696,7 +694,7 @@
         300
       ],
       "flags": {},
-      "order": 13,
+      "order": 17,
       "mode": 0,
       "inputs": [
         {
@@ -790,7 +788,7 @@
         340
       ],
       "flags": {},
-      "order": 14,
+      "order": 18,
       "mode": 0,
       "inputs": [
         {
@@ -829,7 +827,7 @@
         460
       ],
       "flags": {},
-      "order": 15,
+      "order": 19,
       "mode": 0,
       "inputs": [
         {
@@ -856,7 +854,7 @@
         200
       ],
       "flags": {},
-      "order": 16,
+      "order": 20,
       "mode": 0,
       "outputs": [
         {
@@ -889,7 +887,7 @@
         260
       ],
       "flags": {},
-      "order": 17,
+      "order": 21,
       "mode": 0,
       "inputs": [
         {
@@ -916,13 +914,13 @@
         1000
       ],
       "flags": {},
-      "order": 18,
+      "order": 22,
       "mode": 0,
       "properties": {
         "Node name for S&R": "MarkdownNote"
       },
       "widgets_values": [
-        "# The patch chain — order is not optional (spec §12.3)\n\n```\nUNETLoader\n  → SpectrumApplyMiniMaxH3        (history_storage: system_ram)\n  → PathchSageAttentionKJ         (sets Sage as the fallback backend)\n  → MiniMax H3 Scheduled Sol Attention Patch     ← insert here\n  → MiniMax H3 Chunk FeedForward                 ← and here\n  → Pulse Slate / Pulse Render\n```\n\n## The trap\n**The Sol-Attn H3 node must come AFTER the Sage patch.** Applied after it, Sol\nadopts the Sage forward as its fallback, so ineligible steps and short sequences\nrun memory-efficient Sage while eligible steps run Sol-Attn. Applied *before* it,\nthe Sage patch shadows the Sol node entirely and it does nothing.\n\nThis failure is completely silent. The graph runs, produces output, and gives you\nnone of the speedup. Nothing warns you.\n\n## Why the Sol nodes are not pre-wired here\n`ComfyUI-sol-attn` was not installed on the machine that authored this graph, so\nits node **ids** could not be read out of its source. A workflow referring to a\nguessed id loads as a red MISSING NODE even when the pack is present, which is\nworse than an honest gap. Add the two nodes yourself, in the positions marked\nabove, and Pulse Render will detect them and fold their settings into the cache\nkey automatically.\n\n## Recommended settings (starting points to A/B, not settled facts)\n\n| setting | value | why |\n|---|---|---|\n| Sol node | `Scheduled` | tau ramps sparse-early, dense-late |\n| `tau_start` / `tau_end` | `2.0` / `0.8` | pack defaults |\n| `dense_percent` | `0.2` | keeps the first fifth of sampling fully dense |\n| `sink_conditioning` | `exact_kv_and_rows` | **see below** |\n| `min_tokens` | `8192` | below ~4K tokens Sage is faster than Sol |\n| `int8_qk` | `false` | ~1% extra error; leave off until the baseline is validated |\n| `chunks` (FF chunking) | `2` | −37% MLP peak, output bit-identical |\n\n**On `sink_conditioning`:** `exact_kv` (~3%) keeps the packed text/reference/audio\nKV blocks exact. `exact_kv_and_rows` (~20%) additionally runs those query rows\ndense, which makes the audio stream H3 produces exact. Pulse Slate pairs each\ncharacter image with its own audio track for multi-character sync, and that\npairing lives in exactly those rows. Take the 20%. Pulse Slate warns you if you\nhave not.\n\n## Spectrum is not a Sol-Attn substitute\nSol-Attn reduces attention and MLP *activation* peak. Spectrum's `system_ram`\nhistory offload is a different mechanism, and it is what makes a 362-frame window\nfit on a 32GB card at all. Do not turn it off for speed. Community reports on its\nspeed effect disagree — **Pulse Bench** answers that from your own manifests\nrather than from an argument.\n"
+        "# The patch chain — order is not optional (spec §12.3)\n\n```\nUNETLoader\n  → SpectrumApplyMiniMaxH3        (history_storage: system_ram)\n  → PathchSageAttentionKJ         (sets Sage as the fallback backend)\n  → MiniMax H3 Scheduled Sol Attention Patch\n  → MiniMax H3 Chunk FeedForward\n  → Pulse Slate / Pulse Render\n```\n\n**This graph is wired in that order already**, on both model chains — the\nref2va one that carries your references and the fl2va one that carries the\nfirst/last anchors. You do not have to add anything.\n\n## The trap\n**The Sol-Attn H3 node must come AFTER the Sage patch.** Applied after it, Sol\nadopts the Sage forward as its fallback, so ineligible steps and short sequences\nrun memory-efficient Sage while eligible steps run Sol-Attn. Applied *before* it,\nthe Sage patch shadows the Sol node entirely and it does nothing.\n\nThis failure is completely silent. The graph runs, produces output, and gives you\nnone of the speedup. Nothing warns you.\n\n## If the two Sol nodes load red\nThey are the only nodes in this graph from a pack that is not a dependency. Red\nmeans `ComfyUI-sol-attn` is not installed — install it, or delete the two nodes\nand wire Sage straight into Pulse Slate and Pulse Render. The rest of the graph\ndoes not depend on them.\n\nTheir settings do not have to be managed by hand: Pulse Render detects whatever\npatches are on the incoming model and folds them into the cache key, so changing\n`tau_start` here re-renders the affected segments rather than silently reusing\nsegments rendered at the old sparsity.\n\n## Recommended settings (starting points to A/B, not settled facts)\n\n| setting | value | why |\n|---|---|---|\n| Sol node | `Scheduled` | tau ramps sparse-early, dense-late |\n| `tau_start` / `tau_end` | `2.0` / `0.8` | pack defaults |\n| `dense_percent` | `0.2` | keeps the first fifth of sampling fully dense |\n| `sink_conditioning` | `exact_kv_and_rows` | **see below** |\n| `min_tokens` | `8192` | below ~4K tokens Sage is faster than Sol |\n| `int8_qk` | `false` | ~1% extra error; leave off until the baseline is validated |\n| `chunks` (FF chunking) | `2` | −37% MLP peak, output bit-identical |\n\n**On `sink_conditioning`:** `exact_kv` (~3%) keeps the packed text/reference/audio\nKV blocks exact. `exact_kv_and_rows` (~20%) additionally runs those query rows\ndense, which makes the audio stream H3 produces exact. Pulse Slate pairs each\ncharacter image with its own audio track for multi-character sync, and that\npairing lives in exactly those rows. Take the 20%. Pulse Slate warns you if you\nhave not.\n\n## Spectrum is not a Sol-Attn substitute\nSol-Attn reduces attention and MLP *activation* peak. Spectrum's `system_ram`\nhistory offload is a different mechanism, and it is what makes a 362-frame window\nfit on a 32GB card at all. Do not turn it off for speed. Community reports on its\nspeed effect disagree — **Pulse Bench** answers that from your own manifests\nrather than from an argument.\n"
       ],
       "title": "READ ME"
     },
@@ -938,7 +936,7 @@
         460
       ],
       "flags": {},
-      "order": 19,
+      "order": 23,
       "mode": 0,
       "properties": {
         "Node name for S&R": "MarkdownNote"
@@ -947,6 +945,202 @@
         "# Pulse Slate 3 · long path (many windows)\n\n`PulseSlate` compiles; **Pulse Render** executes. Nothing is muted, and there is\nno second branch to keep in sync.\n\n## The segment cache is the point\nEvery window is written to `ComfyUI/output/<run_dir>/<run_id>/` as it finishes,\nand the manifest is fsynced before the next one starts.\n\n- **Kill the render at window 9 of 12 and requeue** → 0–8 load from disk, only\n  9–11 render.\n- **Edit one shot** → only the window holding it re-renders. Every other window\n  is reused, at its original seed.\n- **Change the base seed, or steps, or the patch chain** → everything re-renders,\n  because all three change the output.\n\nThat last one is why `patch_fingerprint` exists. Sol-Attn, Spectrum and EasyCache\nall change what the same prompt and seed produce, so a cache that ignored them\nwould hand you a film whose shots were rendered at different sparsities and say\nnothing about it.\n\n## Run the dry run first\nSet **dry_run** and queue. You get the report and nothing else: no sampling, no\ndecode, no file writes. Check the per-shot ordinal map and the unresolved-alias\nlist *before* spending GPU hours — a wrong binding renders successfully and gives\nyou a well-formed film of the wrong person.\n\n## Seeds survive edits\nA window's seed is derived from the **set of shots in it**, not from its position.\nInserting a shot at the top no longer rerolls every window after it.\n\n## Pulse Shot\nEach `PulseShot` carries its own text, duration, first/last frames and\nscene-local references — so a shot's opening frame can come from an upstream\ngenerator in this same graph rather than from a file on disk. Its `shot_id` is\nwritten once and never changes, which is what keeps its cached segment attached\nto it when you reorder the film.\n\n## Patch the model upstream\nThis graph has no attention or memory patch on it, so it will say so on every\nqueue — three warnings, all accurate. On a 32GB card Spectrum's `system_ram`\nhistory offload is what makes a 362-frame window **fit at all**; it is not a\nspeed setting. Open **PulseSlate_Starter_SpectrumSage.json** for the same graph\nwith the chain wired, in the order that actually works.\n\n## Memory\nLeave **low_memory** on. The finished video is assembled by stream-copying the\nsegment files together, so a twelve-window film is never held in RAM at all. The\n`frames` output is only materialised if you actually wire it.\n"
       ],
       "title": "THE CACHE"
+    },
+    {
+      "id": 74,
+      "type": "MiniMaxH3ScheduledSolAttentionPatch",
+      "pos": [
+        500,
+        310
+      ],
+      "size": [
+        340,
+        330
+      ],
+      "flags": {},
+      "order": 7,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "link": 21
+        }
+      ],
+      "outputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "links": [
+            22
+          ],
+          "slot_index": 0
+        },
+        {
+          "name": "tau_graph",
+          "type": "IMAGE",
+          "links": [],
+          "slot_index": 1
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "MiniMaxH3ScheduledSolAttentionPatch"
+      },
+      "widgets_values": [
+        true,
+        2.0,
+        0.8,
+        "linear",
+        8192,
+        false,
+        0.2,
+        "diag",
+        false,
+        false,
+        "exact_kv_and_rows",
+        ""
+      ],
+      "title": "3. Sol-Attn scheduled (ref2va)"
+    },
+    {
+      "id": 75,
+      "type": "MiniMaxH3ChunkFeedForward",
+      "pos": [
+        500,
+        670
+      ],
+      "size": [
+        340,
+        106
+      ],
+      "flags": {},
+      "order": 8,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "link": 22
+        }
+      ],
+      "outputs": [
+        {
+          "name": "MODEL",
+          "type": "MODEL",
+          "links": [
+            5,
+            14
+          ],
+          "slot_index": 0
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "MiniMaxH3ChunkFeedForward"
+      },
+      "widgets_values": [
+        true,
+        2,
+        8192
+      ],
+      "title": "4. Chunk FeedForward (ref2va)"
+    },
+    {
+      "id": 76,
+      "type": "MiniMaxH3ScheduledSolAttentionPatch",
+      "pos": [
+        500,
+        1080
+      ],
+      "size": [
+        340,
+        330
+      ],
+      "flags": {},
+      "order": 11,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "link": 23
+        }
+      ],
+      "outputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "links": [
+            24
+          ],
+          "slot_index": 0
+        },
+        {
+          "name": "tau_graph",
+          "type": "IMAGE",
+          "links": [],
+          "slot_index": 1
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "MiniMaxH3ScheduledSolAttentionPatch"
+      },
+      "widgets_values": [
+        true,
+        2.0,
+        0.8,
+        "linear",
+        8192,
+        false,
+        0.2,
+        "diag",
+        false,
+        false,
+        "exact_kv_and_rows",
+        ""
+      ],
+      "title": "3. Sol-Attn scheduled (fl2va)"
+    },
+    {
+      "id": 77,
+      "type": "MiniMaxH3ChunkFeedForward",
+      "pos": [
+        500,
+        1440
+      ],
+      "size": [
+        340,
+        106
+      ],
+      "flags": {},
+      "order": 12,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "link": 24
+        }
+      ],
+      "outputs": [
+        {
+          "name": "MODEL",
+          "type": "MODEL",
+          "links": [
+            9,
+            17
+          ],
+          "slot_index": 0
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "MiniMaxH3ChunkFeedForward"
+      },
+      "widgets_values": [
+        true,
+        2,
+        8192
+      ],
+      "title": "4. Chunk FeedForward (fl2va)"
     }
   ],
   "links": [
@@ -984,7 +1178,7 @@
     ],
     [
       5,
-      71,
+      75,
       0,
       20,
       0,
@@ -1016,7 +1210,7 @@
     ],
     [
       9,
-      73,
+      77,
       0,
       20,
       4,
@@ -1056,7 +1250,7 @@
     ],
     [
       14,
-      71,
+      75,
       0,
       90,
       1,
@@ -1080,7 +1274,7 @@
     ],
     [
       17,
-      73,
+      77,
       0,
       90,
       4,
@@ -1109,6 +1303,38 @@
       92,
       0,
       "STRING"
+    ],
+    [
+      21,
+      71,
+      0,
+      74,
+      0,
+      "MODEL"
+    ],
+    [
+      22,
+      74,
+      0,
+      75,
+      0,
+      "MODEL"
+    ],
+    [
+      23,
+      73,
+      0,
+      76,
+      0,
+      "MODEL"
+    ],
+    [
+      24,
+      76,
+      0,
+      77,
+      0,
+      "MODEL"
     ]
   ],
   "groups": [
@@ -1171,7 +1397,7 @@
         480,
         10,
         380,
-        580
+        1580
       ],
       "color": "#b06634",
       "font_size": 24,

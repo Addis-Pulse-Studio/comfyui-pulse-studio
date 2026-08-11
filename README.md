@@ -4,11 +4,6 @@ Direct a [MiniMax H3](https://huggingface.co/MiniMaxAI/MiniMax-H3) render from a
 shot timeline and an asset bin, on one node, without ever typing a reference tag
 number.
 
-<!-- Screenshot of the node face goes here, as docs/node_face.png. Captured from
-     a real graph rather than mocked up, so it still has to be taken on the box
-     with the weights on it. Outstanding — tracked in CHANGELOG.md under
-     "Pending before the tag". -->
-
 Three things it does that the existing directors don't:
 
 - **An Asset Bin that cannot misnumber a reference tag.** You never type
@@ -162,9 +157,10 @@ UNETLoader
 ```
 
 Ready to load as `example_workflows/PulseSlate_Starter_SpectrumSage.json`. It
-needs [ComfyUI-Spectrum-MiniMax-H3](https://github.com/xmarre/ComfyUI-Spectrum-MiniMax-H3)
-and [ComfyUI-KJNodes](https://github.com/kijai/ComfyUI-KJNodes) installed;
-neither is required by Pulse Studio itself, and deleting the patch column leaves
+needs [ComfyUI-Spectrum-MiniMax-H3](https://github.com/xmarre/ComfyUI-Spectrum-MiniMax-H3),
+[ComfyUI-KJNodes](https://github.com/kijai/ComfyUI-KJNodes) and
+[ComfyUI-sol-attn](https://github.com/Saganaki22/ComfyUI-sol-attn) installed;
+none is required by Pulse Studio itself, and deleting the patch column leaves
 the plain starter graph.
 
 **The Sol-Attn node must come after the Sage patch.** Applied after it, Sol adopts
@@ -174,12 +170,16 @@ Sage patch shadows the Sol node entirely and it does nothing — and the graph s
 runs, still produces output, and gives you none of the speedup. Nothing warns you,
 which is why it is stated here and again in the workflow's own note.
 
-The two Sol-Attn nodes are **documented in that graph but not pre-wired**.
-[ComfyUI-sol-attn](https://github.com/Saganaki22/ComfyUI-sol-attn) was not
-installed on the machine this was built on, so its node *ids* could not be read
-out of its source, and a workflow naming a guessed id loads as a red MISSING NODE
-even when the pack is present. Add them at the marked positions; `PulseRender`
-detects them and folds their settings into the cache key by itself.
+That graph ships with the chain **already wired in that order**, on both model
+paths — the ref2va one carrying your references and the fl2va one carrying the
+first/last anchors. The two Sol nodes come from
+[ComfyUI-sol-attn](https://github.com/Saganaki22/ComfyUI-sol-attn), which is the
+only pack in the graph that Pulse Studio does not otherwise need: if it is not
+installed they load red, and deleting them and wiring Sage straight into
+`PulseSlate` and `PulseRender` leaves the rest of the graph working. Their
+settings need no hand-management — `PulseRender` detects them and folds them into
+the cache key by itself, so changing `tau_start` re-renders the affected segments
+instead of silently reusing segments rendered at the old sparsity.
 
 Nothing in this pack vendors, wraps or reimplements any of those kernels. Its job
 is to detect them, fold them into the cache key, report the chain, and ship

@@ -280,7 +280,9 @@ class TestThePatchChainVariant(unittest.TestCase):
     who opens it, so the direction is asserted rather than eyeballed.
     """
 
-    PATCH_TYPES = ("SpectrumApplyMiniMaxH3", "PathchSageAttentionKJ")
+    PATCH_TYPES = ("SpectrumApplyMiniMaxH3", "PathchSageAttentionKJ",
+                   "MiniMaxH3ScheduledSolAttentionPatch",
+                   "MiniMaxH3ChunkFeedForward")
 
     def setUp(self):
         path = WORKFLOW_DIR / "PulseSlate_Starter_SpectrumSage.json"
@@ -305,8 +307,47 @@ class TestThePatchChainVariant(unittest.TestCase):
             with self.subTest(input=slot):
                 self.assertEqual(
                     self._source_chain(slot),
-                    ["PathchSageAttentionKJ", "SpectrumApplyMiniMaxH3", "UNETLoader"],
-                    "spec §10's chain is UNETLoader -> Spectrum -> Sage -> PulseSlate")
+                    ["MiniMaxH3ChunkFeedForward",
+                     "MiniMaxH3ScheduledSolAttentionPatch",
+                     "PathchSageAttentionKJ", "SpectrumApplyMiniMaxH3", "UNETLoader"],
+                    "spec §12.3's chain is UNETLoader -> Spectrum -> Sage -> Sol "
+                    "-> Chunk FeedForward -> PulseSlate")
+
+    def test_sol_attn_is_applied_after_the_sage_patch(self):
+        """§12.3's ordering trap, asserted on its own because it is silent.
+
+        Sol adopts whatever forward it finds as its fallback, so applied *after*
+        Sage it gets a memory-efficient fallback for the steps it declines. The
+        other way round, the Sage patch shadows the Sol node entirely: the graph
+        still runs, still produces output, and delivers none of the speedup.
+        Nothing in the UI says so, which is why a shipped graph must not be the
+        thing that teaches the wrong order.
+        """
+        for slot in ("model", "model_fl2va"):
+            with self.subTest(input=slot):
+                # The walk runs director-first, so upstream nodes come last.
+                chain = self._source_chain(slot)
+                self.assertGreater(
+                    chain.index("PathchSageAttentionKJ"),
+                    chain.index("MiniMaxH3ScheduledSolAttentionPatch"),
+                    "the Sage patch sits upstream of Sol, so walking back from "
+                    "the director it must appear after it")
+
+    def test_the_sol_node_keeps_the_conditioning_rows_exact(self):
+        """§12.3's recommended `exact_kv_and_rows`, and §5's reason for it.
+
+        Pulse Slate pairs each character image with its own audio track, and
+        that pairing lives in the packed conditioning rows. `exact_kv` alone
+        keeps those KV blocks exact but still approximates the query rows, which
+        is where multi-character audio sync is decided.
+        """
+        found = [n for n in self.d["nodes"]
+                 if n["type"] == "MiniMaxH3ScheduledSolAttentionPatch"]
+        self.assertTrue(found, "the variant must actually contain a Sol node")
+        for node in found:
+            self.assertIn("exact_kv_and_rows", node["widgets_values"],
+                          "%s must keep the conditioning rows dense"
+                          % node.get("title"))
 
     def test_no_patch_node_sits_downstream_of_the_director(self):
         director = next(n for n in self.d["nodes"] if n["type"] == "PulseSlate")

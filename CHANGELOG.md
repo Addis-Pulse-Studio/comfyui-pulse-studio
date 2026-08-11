@@ -316,14 +316,14 @@ Three graphs, none with a muted branch:
 | `PulseSlate_LongForm.json` | long path — `PulseSlate` → `PulseRender`, with `PulseShot` nodes |
 | `PulseSlate_Starter_SpectrumSage.json` | the same, with the patch chain and the §12.3 ordering trap |
 
-> **The Sol-Attn nodes are documented, not pre-wired.** §12.3's order is stated
-> explicitly in the graph's `MarkdownNote`, including the trap — the Sol node
-> applied *before* the Sage patch is shadowed entirely and silently does nothing.
-> The nodes themselves are not placed, because the pack was not installed here and
-> its node **ids** could not be read from source; a workflow naming a guessed id
-> loads as a red MISSING NODE even when the pack is present, which is worse than
-> an honest gap. Insert them at the marked positions and `PulseRender` detects
-> them and folds their settings into the cache key on its own.
+> **The Sol-Attn nodes are pre-wired.** §12.3's order is wired on both model
+> paths and stated in the graph's `MarkdownNote`, including the trap — the Sol
+> node applied *before* the Sage patch is shadowed entirely and silently does
+> nothing. Class ids and widget order come from the installed pack's
+> `INPUT_TYPES`, never guessed: a workflow naming a guessed id loads as a red
+> MISSING NODE even when the pack is present. They are the only nodes here from a
+> pack Pulse Studio does not otherwise need, so if `ComfyUI-sol-attn` is absent
+> they load red and can be deleted, with Sage wired straight through.
 
 ## [2.0.0] — unreleased
 
@@ -598,9 +598,19 @@ and commit it; a verification nobody wrote down has to be done again.
       FLAC produces a seam that matches one carried in memory.
 - [ ] **`PulseBench` against two real chains.** The table is only worth having if
       the numbers in it came from this box; nothing has been measured yet.
-- [ ] **Sol-Attn node ids**, read from the installed pack, so the §12.3 chain can
-      be pre-wired in `PulseSlate_Starter_SpectrumSage.json` instead of described
-      in its note. The pack was not installed on the machine this was built on.
+- [x] **Sol-Attn node ids — read and wired, 2026-08-10.** The ids were read on
+      2026-08-09 from the installed pack's `/object_info`, and the §12.3 chain is
+      now pre-wired in `PulseSlate_Starter_SpectrumSage.json` on both model paths
+      rather than described in its note. `MiniMaxH3ScheduledSolAttentionPatch`
+      and `MiniMaxH3ChunkFeedForward`, with widget order taken from the pack's
+      `INPUT_TYPES` rather than guessed. Pinned by
+      `tests/test_workflow.py::TestThePatchChainVariant`, which asserts the whole
+      five-node chain and, separately, that Sol sits downstream of Sage.
+
+      Wired on the user's confirmation that the pack is installed and locally
+      tested, not on benchmark numbers — the `PulseBench` item below is still
+      open, so the chain is shipped as the recommended order rather than as a
+      measured win.
 - [x] **Trademark search — cleared, 2026-08-09.** Zero results for
       `ComfyUI-PulseStudio` on the ComfyUI Registry and PyPI, zero on **USPTO**
       in Classes 009 and 042, and zero in the **WIPO Global Brand Database**.
@@ -610,9 +620,10 @@ and commit it; a verification nobody wrote down has to be done again.
       `registry.comfy.org/publishers/addis-pulse`. `pyproject.toml` carried
       `behailu-ai` from the pre-fork manifest; it is `addis-pulse` now, pinned by
       `tests/test_packaging.py`.
-- [ ] **Node-face screenshot** at `docs/node_face.png`, from a real graph rather
-      than a mock-up. §15 puts it at the top of the README; the slot is marked
-      there in a comment. Needs the box with the weights on it.
+- [~] **Node-face screenshot — dropped, 2026-08-10**, at the user's call. §15
+      asked for one at the top of the README; the README ships without it and the
+      placeholder comment is gone. `docs/` keeps its image exemption and the
+      narrowness test around it, so adding one later needs no other change.
 - [ ] **Both example workflows opened on a fresh ComfyUI** with no red nodes.
       Their structure is asserted by test — ids, slots, link backfill both ways,
       the patch chain's direction — but "no red nodes" is a claim about the host
