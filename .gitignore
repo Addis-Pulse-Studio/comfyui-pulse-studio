@@ -8,6 +8,9 @@ venv/
 dist/
 build/
 
+# `comfy node pack` / `comfy node publish` drop this in the repo root
+node.zip
+
 # node
 node_modules/
 
