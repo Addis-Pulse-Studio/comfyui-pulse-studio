@@ -2,6 +2,39 @@
 
 All notable changes to this project are documented here.
 
+## [Unreleased]
+
+### Removed — two of the three example workflows
+
+`PulseSlate_Starter.json` and `PulseSlate_Starter_SpectrumSage.json` are gone.
+`PulseSlate_LongForm.json` is the only graph that ships.
+
+It is the one that shows what 3.0.0 is for — `PulseSlate` → `PulseRender`,
+`PulseShot` nodes, the segment cache — and the only one that needs no third-party
+pack to load clean. The Spectrum+Sage variant needed three of them installed or it
+opened to a screen of red nodes, which is a poor thing for a sole example to do.
+
+**3.0.0 shipped with all three; its entry below is left as it was.** That release
+is on the registry and its record should describe what was actually in it.
+
+What went with them, stated plainly because none of it is free:
+
+- **§1.1's upstream rule and §12.3's Sol-after-Sage ordering are no longer
+  asserted by any test.** `TestThePatchChainVariant` walked the shipped chain and
+  proved Sol sat downstream of Sage; the sigma-shift test proved a model patch
+  reached the sampler without going through the director. Both graphs are gone, so
+  both tests are gone. The rules still hold and are still documented — in the
+  README and in the long-form graph's own note — but nothing checks them now.
+- **The short path has no example.** `PulseSlate` still hands back `positive` and
+  `latent` for a ≤15 s timeline; you now wire your own sampler from the README's
+  description rather than from a graph.
+- **The patch chain is wired by hand.** The order, the both-inputs detail and the
+  `exact_kv_and_rows` setting moved into `PulseSlate_LongForm.json`'s note so the
+  §12.3 knowledge survives its graph.
+
+Restoring any of it is `git revert` plus a one-line change to `SHIPPED_GRAPHS` in
+`tests/test_workflow.py`, which still loops over a tuple for exactly that reason.
+
 ## [3.0.0] — 2026-08-10
 
 Compile and render are separate nodes now, and every window a render produces is

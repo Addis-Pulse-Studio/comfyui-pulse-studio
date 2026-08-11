@@ -18,14 +18,17 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).parent.parent
 WORKFLOW_DIR = PROJECT_ROOT / "example_workflows"
-WORKFLOW = WORKFLOW_DIR / "PulseSlate_Starter.json"
-# §15.4 and §15.9 ship three graphs: the short path (this node's own sampler),
-# the long path (PulseSlate -> PulseRender), and the long path with the patch
-# chain wired in. Every structural check runs over all three -- a graph that
-# loads as a silently disconnected mess is worse than one that fails to load.
+# One graph ships, as of 2026-08-11. §15.4 and §15.9 asked for three -- the short
+# path on this node's own sampler, the long path, and the long path with the patch
+# chain -- and 3.0.0 released with all three. The short-path and Spectrum+Sage
+# graphs were dropped afterwards; the long path is the one that shows what 3.0.0
+# is for and the only one that needs no third-party pack to load clean.
+#
+# Every structural check still runs over the tuple rather than the single path, so
+# putting a graph back is a one-line change here. A graph that loads as a silently
+# disconnected mess is worse than one that fails to load.
 LONG_FORM = WORKFLOW_DIR / "PulseSlate_LongForm.json"
-SHIPPED_GRAPHS = (WORKFLOW, LONG_FORM,
-                  WORKFLOW_DIR / "PulseSlate_Starter_SpectrumSage.json")
+SHIPPED_GRAPHS = (LONG_FORM,)
 NODES_PY = PROJECT_ROOT / "nodes.py"
 
 # Widget order is the order of keys in the "required" dict, minus the ones that
@@ -186,7 +189,7 @@ class TestWorkflowShipsAndParses(unittest.TestCase):
     def test_the_long_graphs_wire_the_timeline_into_a_render_node(self):
         """§2.3. The short graph hands conditioning to the graph's own sampler;
         the long ones hand the timeline to PulseRender. Neither does both."""
-        for path in (LONG_FORM, WORKFLOW_DIR / "PulseSlate_Starter_SpectrumSage.json"):
+        for path in (LONG_FORM,):
             with self.subTest(workflow=path.name):
                 d = json.loads(path.read_text(encoding="utf-8"))
                 by_id = {n["id"]: n for n in d["nodes"]}
@@ -212,7 +215,7 @@ class TestWorkflowShipsAndParses(unittest.TestCase):
         one 6-second window rendered, no warning anywhere -- because a shot that
         is not connected is not a shot, it is a node sitting on a canvas.
         """
-        for path in (LONG_FORM, WORKFLOW_DIR / "PulseSlate_Starter_SpectrumSage.json"):
+        for path in (LONG_FORM,):
             with self.subTest(workflow=path.name):
                 d = json.loads(path.read_text(encoding="utf-8"))
                 shots = [n for n in d["nodes"] if n["type"] == "PulseShot"]
@@ -242,7 +245,7 @@ class TestWorkflowShipsAndParses(unittest.TestCase):
         is right, but is not what a graph demonstrating the render loop should
         open on.
         """
-        for path in (LONG_FORM, WORKFLOW_DIR / "PulseSlate_Starter_SpectrumSage.json"):
+        for path in (LONG_FORM,):
             with self.subTest(workflow=path.name):
                 d = json.loads(path.read_text(encoding="utf-8"))
                 slate = next(n for n in d["nodes"] if n["type"] == "PulseSlate")
@@ -253,136 +256,28 @@ class TestWorkflowShipsAndParses(unittest.TestCase):
                 self.assertNotIn("@", slate["widgets_values"][index["global_prompt"]],
                                  "an empty bin cannot resolve an @reference")
 
-    def test_the_short_graph_has_no_render_node(self):
-        d = json.loads(WORKFLOW.read_text(encoding="utf-8"))
-        types = {n["type"] for n in d["nodes"]}
-        self.assertNotIn("PulseRender", types)
-        self.assertIn("SamplerCustomAdvanced", types)
-
-    def test_sigma_shift_is_upstream_of_the_sampler_not_the_director(self):
-        """§1.1: model patches stay upstream. PulseSlate no longer returns a
-        model, so the shift has to reach the sampler through its own node."""
-        d = json.loads(WORKFLOW.read_text(encoding="utf-8"))
-        by_id = {n["id"]: n for n in d["nodes"]}
-        shift = next(n for n in d["nodes"] if n["type"] == "MiniMaxH3SigmaShift")
-        targets = {by_id[l[3]]["type"] for l in d["links"] if l[1] == shift["id"]}
-        self.assertEqual(targets, {"BasicScheduler", "BasicGuider"})
-        upstream = next(l for l in d["links"] if l[3] == shift["id"])
-        self.assertEqual(by_id[upstream[1]]["type"], "UNETLoader")
-
-
-class TestThePatchChainVariant(unittest.TestCase):
-    """§15's second graph exists to teach §10: patch *upstream* of the director.
-
-    Path B samples internally with the model handed to the node, so a patch on
-    the node's output accelerates the short path and does nothing for a long
-    timeline. A graph that demonstrates the wrong wiring teaches it to everyone
-    who opens it, so the direction is asserted rather than eyeballed.
-    """
-
-    PATCH_TYPES = ("SpectrumApplyMiniMaxH3", "PathchSageAttentionKJ",
-                   "MiniMaxH3ScheduledSolAttentionPatch",
-                   "MiniMaxH3ChunkFeedForward")
-
-    def setUp(self):
-        path = WORKFLOW_DIR / "PulseSlate_Starter_SpectrumSage.json"
-        self.d = json.loads(path.read_text(encoding="utf-8"))
-        self.by_id = {n["id"]: n for n in self.d["nodes"]}
-
-    def _source_chain(self, dst_slot_name):
-        """Walk backwards from a director input, returning the node types."""
-        director = next(n for n in self.d["nodes"] if n["type"] == "PulseSlate")
-        slot = next(i for i in director["inputs"] if i["name"] == dst_slot_name)
-        by_link = {l[0]: l for l in self.d["links"]}
-        chain, link_id = [], slot["link"]
-        while link_id is not None:
-            src = self.by_id[by_link[link_id][1]]
-            chain.append(src["type"])
-            upstream = src.get("inputs") or []
-            link_id = upstream[0]["link"] if upstream else None
-        return chain
-
-    def test_both_model_inputs_arrive_through_the_documented_chain(self):
-        for slot in ("model", "model_fl2va"):
-            with self.subTest(input=slot):
-                self.assertEqual(
-                    self._source_chain(slot),
-                    ["MiniMaxH3ChunkFeedForward",
-                     "MiniMaxH3ScheduledSolAttentionPatch",
-                     "PathchSageAttentionKJ", "SpectrumApplyMiniMaxH3", "UNETLoader"],
-                    "spec §12.3's chain is UNETLoader -> Spectrum -> Sage -> Sol "
-                    "-> Chunk FeedForward -> PulseSlate")
-
-    def test_sol_attn_is_applied_after_the_sage_patch(self):
-        """§12.3's ordering trap, asserted on its own because it is silent.
-
-        Sol adopts whatever forward it finds as its fallback, so applied *after*
-        Sage it gets a memory-efficient fallback for the steps it declines. The
-        other way round, the Sage patch shadows the Sol node entirely: the graph
-        still runs, still produces output, and delivers none of the speedup.
-        Nothing in the UI says so, which is why a shipped graph must not be the
-        thing that teaches the wrong order.
-        """
-        for slot in ("model", "model_fl2va"):
-            with self.subTest(input=slot):
-                # The walk runs director-first, so upstream nodes come last.
-                chain = self._source_chain(slot)
-                self.assertGreater(
-                    chain.index("PathchSageAttentionKJ"),
-                    chain.index("MiniMaxH3ScheduledSolAttentionPatch"),
-                    "the Sage patch sits upstream of Sol, so walking back from "
-                    "the director it must appear after it")
-
-    def test_the_sol_node_keeps_the_conditioning_rows_exact(self):
-        """§12.3's recommended `exact_kv_and_rows`, and §5's reason for it.
-
-        Pulse Slate pairs each character image with its own audio track, and
-        that pairing lives in the packed conditioning rows. `exact_kv` alone
-        keeps those KV blocks exact but still approximates the query rows, which
-        is where multi-character audio sync is decided.
-        """
-        found = [n for n in self.d["nodes"]
-                 if n["type"] == "MiniMaxH3ScheduledSolAttentionPatch"]
-        self.assertTrue(found, "the variant must actually contain a Sol node")
-        for node in found:
-            self.assertIn("exact_kv_and_rows", node["widgets_values"],
-                          "%s must keep the conditioning rows dense"
-                          % node.get("title"))
-
-    def test_no_patch_node_sits_downstream_of_the_director(self):
-        director = next(n for n in self.d["nodes"] if n["type"] == "PulseSlate")
-        downstream = {l[3] for l in self.d["links"] if l[1] == director["id"]}
-        for node_id in downstream:
-            self.assertNotIn(self.by_id[node_id]["type"], self.PATCH_TYPES,
-                             "a patch downstream of the director does nothing for path B")
-
-    def test_spectrum_keeps_its_history_in_system_ram(self):
-        """§18.1: this is what makes a 362-frame window fit on a 32GB card. It
-        is not a speed knob, and an example shipping `vram` would say it is."""
-        found = [n for n in self.d["nodes"] if n["type"] == "SpectrumApplyMiniMaxH3"]
-        self.assertTrue(found, "the variant must actually contain a Spectrum node")
-        for node in found:
-            self.assertIn("system_ram", node["widgets_values"],
-                          "%s must store history in system_ram" % node.get("title"))
-
-    def test_the_variant_is_otherwise_the_long_form_graph(self):
-        """Same director, same widget values. The variant is the long-form graph
-        plus the patch chain and nothing else; the two teach one thing each, and
-        a drifted copy would teach two.
-
-        Compared against the LONG graph, not the short starter: the short one is
-        bin-and-text-box driven and the long ones are shot-node driven, so their
-        directors legitimately carry different prompts.
-        """
-        long_form = json.loads(LONG_FORM.read_text(encoding="utf-8"))
-        a = next(n for n in long_form["nodes"] if n["type"] == "PulseSlate")
-        b = next(n for n in self.d["nodes"] if n["type"] == "PulseSlate")
-        self.assertEqual(a["widgets_values"], b["widgets_values"])
+    # Dropped with PulseSlate_Starter.json on 2026-08-11:
+    # test_the_short_graph_has_no_render_node and
+    # test_sigma_shift_is_upstream_of_the_sampler_not_the_director. Both asserted
+    # things about the short path -- no PulseRender in the graph, and §1.1's
+    # "model patches stay upstream" reaching the sampler through MiniMaxH3SigmaShift
+    # rather than through the director. No shipped graph carries a sampler now, so
+    # neither has a subject.
+    #
+    # Nothing replaces them. Together with TestThePatchChainVariant, dropped the
+    # same day with the Spectrum+Sage graph, this leaves §1.1's upstream rule and
+    # §12.3's Sol-after-Sage ordering trap unasserted by any test -- the only two
+    # graphs that carried a model patch are both gone. The rules still hold; they
+    # are just documented now rather than enforced. Restore the tests with the
+    # graphs.
 
 
 class TestWidgetOrderMatchesTheNode(unittest.TestCase):
     def _director(self):
-        d = json.loads(WORKFLOW.read_text(encoding="utf-8"))
+        # Read from the long-form graph since 2026-08-11; it was the short
+        # starter until that graph was dropped. Either works -- the check is on
+        # the director's widget *array*, which is the same shape in every graph.
+        d = json.loads(LONG_FORM.read_text(encoding="utf-8"))
         return next(n for n in d["nodes"] if n["type"] == "PulseSlate")
 
     def test_widget_count_matches_input_types(self):
@@ -445,7 +340,15 @@ class TestWidgetOrderMatchesTheNode(unittest.TestCase):
         self.assertIn("cast", document)
 
     def test_the_shipped_prompts_actually_compile(self):
-        """The starter text must produce a real plan, not just look plausible."""
+        """The shipped text must produce a real plan, not just look plausible.
+
+        Asserted on the director's own widgets only. The shipped graph is
+        shot-node driven -- its per-shot text lives in `PulseShot` nodes that
+        reach the director as `PULSE_SHOT` links at queue time, not in the
+        `shot_prompt` box -- so the `[Shot N]` markers the short starter used to
+        carry here legitimately are not in this array. Their presence in the
+        compiled prompt is covered by the compiler's own tests.
+        """
         from comfyui_pulse_studio.compiler import compile_timeline
         from comfyui_pulse_studio.widget_state import build_timeline
         widgets = _required_widgets("PulseSlate")
@@ -458,21 +361,46 @@ class TestWidgetOrderMatchesTheNode(unittest.TestCase):
             duration_seconds=stored[index["duration_seconds"]])
         plan = compile_timeline(timeline)
         self.assertTrue(plan.ok, plan.problems)
-        prompt = plan.windows[0].prompt
-        for n in (1, 2, 3):
-            self.assertIn("[Shot %d]" % n, prompt)
-        self.assertIn("overall_soundscape:", prompt)
+        self.assertIn("overall_soundscape:", plan.windows[0].prompt)
 
-    def test_starter_prompts_reference_assets_by_name_not_number(self):
-        """The graph ships as an example, so it must not teach the wrong habit."""
-        stored = self._director()["widgets_values"]
-        widgets = _required_widgets("PulseSlate")
-        index = {name: n for n, name in enumerate(widgets)}
-        for key in ("global_prompt", "shot_prompt"):
-            text = stored[index[key]]
-            for bad in ("<Picture ", "<Video ", "<Audio "):
-                self.assertNotIn(bad, text, "%s hand-types a tag ordinal" % key)
-            self.assertIn("@", text)
+    def test_no_shipped_text_hand_types_a_reference_ordinal(self):
+        """The graph ships as an example, so it must not teach the wrong habit.
+
+        `<Picture 3>` typed by hand is exactly what the asset bin exists to stop
+        being necessary: the ordinal is computed from live bin order at compile
+        time, so a hand-typed one goes stale the moment a reference is added or
+        reordered. Checked across the director *and* every `PulseShot`, because
+        the shot nodes are where the per-shot text lives in this graph.
+
+        This does not assert that an `@name` is present. The shipped graph's bin
+        is empty on purpose, so there is nothing for one to resolve to -- that
+        half of the old assertion belonged to the short starter, which shipped a
+        populated bin, and it went with it.
+        """
+        d = json.loads(LONG_FORM.read_text(encoding="utf-8"))
+        by_type = {}
+        for node in d["nodes"]:
+            by_type.setdefault(node["type"], []).append(node)
+
+        checked = 0
+        for node_type, keys in (("PulseSlate", ("global_prompt", "shot_prompt")),
+                                ("PulseShot", ("label", "visual", "audio_line"))):
+            index = {name: n for n, name
+                     in enumerate(_required_widgets(node_type))}
+            for node in by_type.get(node_type, []):
+                for key in keys:
+                    text = node["widgets_values"][index[key]]
+                    for bad in ("<Picture ", "<Video ", "<Audio "):
+                        self.assertNotIn(
+                            bad, text,
+                            "%s %s hand-types a tag ordinal"
+                            % (node_type, key))
+                    checked += 1
+
+        # Guards the loop above: a renamed node type would silently check nothing.
+        self.assertGreaterEqual(checked, 11, "expected the director's two text "
+                                             "boxes plus three fields on each of "
+                                             "three PulseShot nodes")
 
 
 if __name__ == "__main__":

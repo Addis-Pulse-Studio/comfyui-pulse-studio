@@ -57,11 +57,11 @@ class TestTheScanHasInput(unittest.TestCase):
         found = workflows()
         self.assertTrue(found, "no example workflows found to scan")
         names = {p.name for p in found}
-        # §15 names both. The scan is only worth anything if what it is meant to
-        # cover is actually on disk.
-        for required in ("PulseSlate_Starter.json",
-                         "PulseSlate_Starter_SpectrumSage.json"):
-            self.assertIn(required, names)
+        # One graph ships since 2026-08-11. §15 named three and 3.0.0 released
+        # with three; the short starter and the Spectrum+Sage variant were
+        # dropped afterwards. The scan is only worth anything if what it is meant
+        # to cover is actually on disk.
+        self.assertIn("PulseSlate_LongForm.json", names)
 
 
 class TestNoPrivateAssetsShip(unittest.TestCase):

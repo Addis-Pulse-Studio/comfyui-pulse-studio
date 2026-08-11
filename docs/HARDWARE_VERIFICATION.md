@@ -43,12 +43,11 @@ Total GPU time is roughly **two long renders plus four short requeues**. Steps
 This one unblocks a change I can make for you, so it comes before anything
 expensive.
 
-`example_workflows/PulseSlate_Starter_SpectrumSage.json` documents the two
-Sol-Attn nodes in a `MarkdownNote` instead of pre-wiring them, because
-[ComfyUI-sol-attn](https://github.com/Saganaki22/ComfyUI-sol-attn) was not
-installed on the machine the graph was built on. A workflow naming a guessed
-node id loads as a red MISSING NODE even when the pack *is* present, so guessing
-was worse than describing.
+`example_workflows/PulseSlate_Starter_SpectrumSage.json` was the graph that
+carried this chain. It shipped in 3.0.0 pre-wired and was **dropped on
+2026-08-11**, leaving the long-form graph as the only example — so the chain is
+now documented in that graph's `MarkdownNote` and in the README, and wired by
+hand. The node ids below are still what you type; keep them.
 
 With the pack installed, read the ids out of its source:
 
@@ -103,13 +102,13 @@ the canvas:
 
 | workflow | loads clean? | notes |
 |---|---|---|
-| `PulseSlate_Starter.json` | ☐ | |
-| `PulseSlate_LongForm.json` | ☐ | |
-| `PulseSlate_Starter_SpectrumSage.json` | ☐ | needs Spectrum + KJNodes |
+| `PulseSlate_LongForm.json` | ☐ | the only graph that ships since 2026-08-11 |
 
-A red node here is one of three things: a missing third-party pack (expected for
-the SpectrumSage graph if you have not installed both), a model value that is
-not in your `get_filename_list()`, or a real bug. Model paths in the shipped
+A red node here is one of two things now: a model value that is not in your
+`get_filename_list()`, or a real bug. The third cause — a missing third-party
+pack — went away with the Spectrum+Sage graph; this one uses nothing outside
+Pulse Studio, so a red node in it has no innocent explanation. Model paths in the
+shipped
 graphs use the Windows separator (`minimax\name`) deliberately — see the
 CHANGELOG entry, and note it is pinned by test so a portability "fix" fails CI.
 

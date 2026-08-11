@@ -50,7 +50,7 @@ against. It has to be a build carrying `comfy_extras/nodes_minimax_h3.py` and
 is no mechanism for a custom node to enforce a host version, so this is
 documentation rather than a check.
 
-Then load `example_workflows/PulseSlate_Starter.json`.
+Then load `example_workflows/PulseSlate_LongForm.json`.
 
 ## Models
 
@@ -106,12 +106,12 @@ length you are making.
 
 | duration | graph | what happens | status |
 |---|---|---|---|
-| **≤ 15 s** — one window | `PulseSlate_Starter.json` | `PulseSlate` hands back `positive` and `latent`. Your graph carries sampler → decode → mux. | **Verified on hardware.** |
-| **> 15 s** — many windows | `PulseSlate_LongForm.json` | `PulseSlate` hands a `PULSE_TIMELINE` to `PulseRender`, which renders one window per H3 call, caches each to disk, and stitches. | **Not yet verified on hardware.** The window math, the partitioning, the carry-over and the whole cache are covered by tests; a real multi-window render with the seams listened to has not been done. |
+| **≤ 15 s** — one window | *(no graph ships)* | `PulseSlate` hands back `positive` and `latent`. Your graph carries sampler → decode → mux. | **Verified on hardware.** |
+| **> 15 s** — many windows | `PulseSlate_LongForm.json` | `PulseSlate` hands a `PULSE_TIMELINE` to `PulseRender`, which renders one window per H3 call, caches each to disk, and stitches. | **Runs on hardware** — a >15 s multi-window render completed 2026-08-10. The seam-by-seam listening pass is still not written down, so treat seam quality as unconfirmed. |
 
 That last column is stated plainly because a stitched seam is the kind of thing
-that passes every test and still sounds wrong. Treat the long path as untested at
-the render level until this line says otherwise.
+that passes every test and still sounds wrong. The path runs end to end; what
+nobody has written down is whether the seams hold up to listening.
 
 Clearing it is a specific, ordered piece of work rather than a vague "try it":
 [`docs/HARDWARE_VERIFICATION.md`](docs/HARDWARE_VERIFICATION.md) walks the long
@@ -156,12 +156,14 @@ UNETLoader
   → PulseSlate / PulseRender
 ```
 
-Ready to load as `example_workflows/PulseSlate_Starter_SpectrumSage.json`. It
-needs [ComfyUI-Spectrum-MiniMax-H3](https://github.com/xmarre/ComfyUI-Spectrum-MiniMax-H3),
+You wire this yourself — **no graph ships with it pre-wired.** A variant that did,
+`PulseSlate_Starter_SpectrumSage.json`, shipped in 3.0.0 and was dropped
+afterwards so that the one example left needs no third-party pack to load clean.
+The chain needs [ComfyUI-Spectrum-MiniMax-H3](https://github.com/xmarre/ComfyUI-Spectrum-MiniMax-H3),
 [ComfyUI-KJNodes](https://github.com/kijai/ComfyUI-KJNodes) and
-[ComfyUI-sol-attn](https://github.com/Saganaki22/ComfyUI-sol-attn) installed;
-none is required by Pulse Studio itself, and deleting the patch column leaves
-the plain starter graph.
+[ComfyUI-sol-attn](https://github.com/Saganaki22/ComfyUI-sol-attn); none is
+required by Pulse Studio itself. `PulseSlate_LongForm.json`'s own note carries
+the same chain and the same warning.
 
 **The Sol-Attn node must come after the Sage patch.** Applied after it, Sol adopts
 the Sage forward as its fallback, so ineligible steps and short sequences run
@@ -170,16 +172,18 @@ Sage patch shadows the Sol node entirely and it does nothing — and the graph s
 runs, still produces output, and gives you none of the speedup. Nothing warns you,
 which is why it is stated here and again in the workflow's own note.
 
-That graph ships with the chain **already wired in that order**, on both model
-paths — the ref2va one carrying your references and the fl2va one carrying the
-first/last anchors. The two Sol nodes come from
-[ComfyUI-sol-attn](https://github.com/Saganaki22/ComfyUI-sol-attn), which is the
-only pack in the graph that Pulse Studio does not otherwise need: if it is not
-installed they load red, and deleting them and wiring Sage straight into
-`PulseSlate` and `PulseRender` leaves the rest of the graph working. Their
-settings need no hand-management — `PulseRender` detects them and folds them into
-the cache key by itself, so changing `tau_start` re-renders the affected segments
-instead of silently reusing segments rendered at the old sparsity.
+Wire it into **both** model inputs: `model` carries your references and
+`model_fl2va` carries the first/last anchors. Set the Sol node's
+`sink_conditioning` to `exact_kv_and_rows` — Pulse Slate pairs each character
+image with its own audio track, and that pairing lives in exactly the query rows
+that setting keeps dense. Nothing else needs hand-management: `PulseRender`
+detects whatever patches it is handed and folds them into the cache key by
+itself, so changing `tau_start` re-renders the affected segments instead of
+silently reusing segments rendered at the old sparsity.
+
+This order is documented rather than enforced. Until 2026-08-11 a test asserted
+it against the shipped variant; that graph is gone, and nothing checks the
+ordering for you now.
 
 Nothing in this pack vendors, wraps or reimplements any of those kernels. Its job
 is to detect them, fold them into the cache key, report the chain, and ship
@@ -232,9 +236,10 @@ Everything you drop in the bin stays on your machine.
   version in slot 0 is refused by name rather than guessed at. There is no
   migration and there will not be one — the values in those files are already
   shifted, so a "successful" load would render something wrong instead of
-  failing. Rebuild from `example_workflows/PulseSlate_Starter.json`. The full
+  failing. Rebuild from `example_workflows/PulseSlate_LongForm.json`. The full
   reasoning is in [CHANGELOG.md](CHANGELOG.md).
-- **Path B is unverified on hardware** — see the duration table above.
+- **Path B's seams are unconfirmed** — the render runs; nobody has written down
+  how the window boundaries sound. See the duration table above.
 - Per-character voice binding is specified but not shipped; it lands in 1.1.
 
 ---
