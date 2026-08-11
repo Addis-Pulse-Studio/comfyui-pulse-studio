@@ -2,7 +2,7 @@
 
 All notable changes to this project are documented here.
 
-## [3.0.0] — unreleased
+## [3.0.0] — 2026-08-10
 
 Compile and render are separate nodes now, and every window a render produces is
 cached on disk and reused. Built against `PulseSlate_v3_BUILD_INSTRUCTIONS.md`.
