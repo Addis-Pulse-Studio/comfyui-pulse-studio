@@ -586,9 +586,15 @@ Everything below that needs a GPU is sequenced into one sitting in
 what you should see, and a place to write down what you actually saw. Fill it in
 and commit it; a verification nobody wrote down has to be done again.
 
-- [ ] **Long-path verification on hardware.** A >15 s render through
-      `PulseSlate → PulseRender`, with the audio seam listened to at each window
-      boundary. Never been run; only the ≤15 s single-window path is verified.
+- [x] **Long-path verification on hardware — 2026-08-10.** A >15 s render through
+      `PulseSlate → PulseRender` completed on the user's box. This closes the item
+      that had never been run at all; before today only the ≤15 s single-window
+      path was verified.
+
+      Recorded on the user's confirmation, not from a filled-in
+      `docs/HARDWARE_VERIFICATION.md` — the per-seam observations that document
+      asks for are still blank. So: the multi-window path is known to run end to
+      end, and the seam-by-seam listening pass is not written down anywhere.
 - [ ] **The five §7.5 cache behaviours, observed on a real render.** Their
       decision logic is covered by `tests/test_segment_cache.py`, which drives the
       same two functions the executor calls, in the same order. What no test here
