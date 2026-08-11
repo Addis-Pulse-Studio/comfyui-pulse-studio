@@ -579,9 +579,27 @@ product name; `PulseStudio` and `PulseSlate` are not.
 availability, not clearance, and the two are not the same question. §1 calls for
 a plain trademark search; that remains outstanding and blocks the tag.
 
-### Pending before the tag
+### Released to the registry — 2026-08-11
 
-Everything below that needs a GPU is sequenced into one sitting in
+`3.0.0` is published, as `comfyui-pulse-studio` under publisher `addis-pulse`:
+
+    id          comfyui-pulse-studio      status  NodeStatusActive
+    version     3.0.0                     status  NodeVersionStatusPending
+    licence     Apache-2.0
+    download    cdn.comfy.org/addis-pulse/comfyui-pulse-studio/3.0.0/node.zip
+
+The **version** status is `Pending`, not `Active` — that is the registry's own
+scan of the uploaded archive, and it flips on its own once the scan clears. Until
+it does, the listing exists but the version is not installable. Nothing to do
+about it but check back.
+
+The GitHub repository went public the same day, so the `repository` URL in the
+listing resolves rather than 404ing.
+
+### Still unverified in the shipped release
+
+These did not block the release and are not closed by it. Everything here needs a
+GPU and is sequenced into one sitting in
 [`docs/HARDWARE_VERIFICATION.md`](docs/HARDWARE_VERIFICATION.md) — what to do,
 what you should see, and a place to write down what you actually saw. Fill it in
 and commit it; a verification nobody wrote down has to be done again.
