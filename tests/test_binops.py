@@ -10,7 +10,12 @@ from comfyui_pulse_studio.binops import (
     preview_change,
     suggest_name,
 )
-from comfyui_pulse_studio.constants import MAX_REF_IMAGES
+from comfyui_pulse_studio.constants import (
+    MAX_REF_IMAGES,
+    RETENTION_DEFAULT,
+    RETENTION_FULL,
+    RETENTION_PARTIAL,
+)
 
 
 def img(i, name=None):
@@ -36,6 +41,144 @@ class TestBinState(unittest.TestCase):
     def test_state_is_json_serialisable(self):
         import json
         json.dumps(bin_state(AssetBin([img(1), Asset("a", KIND_AUDIO, name="A")])))
+
+
+class TestDescriptionAndRetention(unittest.TestCase):
+    """The two fields that make a bin asset a <Subject N>.
+
+    Both existed on the model and in the document from the start, and neither had
+    an operation, so nothing the panel could do produced a subject definition. The
+    compiler's promotion rule (`_build_subjects`) is the reason these exist: no
+    description, no <Subject N>, and the reference is cited as a bare <Picture i>
+    if it is cited at all.
+    """
+
+    def test_a_description_promotes_the_asset_to_a_subject(self):
+        from comfyui_pulse_studio.compiler import _build_subjects
+
+        bin_ = AssetBin([img(1, name="Mimi")])
+        apply_operation(bin_, "set_description",
+                        asset_id="i1", description="a woman in a red scarf")
+        lines, tags, meta = _build_subjects(bin_, bin_.tag_map())
+        self.assertEqual(tags["i1"], "<Subject 1>")
+        self.assertIn("a woman in a red scarf", lines[0])
+        self.assertEqual(meta, [(1, "<Picture 1>", RETENTION_DEFAULT)])
+
+    def test_no_description_means_no_subject(self):
+        from comfyui_pulse_studio.compiler import _build_subjects
+
+        bin_ = AssetBin([img(1, name="Mimi")])
+        lines, tags, meta = _build_subjects(bin_, bin_.tag_map())
+        self.assertEqual((lines, tags, meta), ([], {}, []))
+
+    def test_clearing_a_description_demotes_the_asset(self):
+        """Accepted, not refused -- it is a legitimate edit."""
+        from comfyui_pulse_studio.compiler import _build_subjects
+
+        bin_ = AssetBin([img(1, name="Mimi")])
+        apply_operation(bin_, "set_description", asset_id="i1", description="a woman")
+        apply_operation(bin_, "set_description", asset_id="i1", description="")
+        self.assertEqual(bin_.get("i1").description, "")
+        self.assertEqual(_build_subjects(bin_, bin_.tag_map())[1], {})
+
+    def test_a_description_is_trimmed(self):
+        bin_ = AssetBin([img(1)])
+        apply_operation(bin_, "set_description", asset_id="i1", description="  a woman \n")
+        self.assertEqual(bin_.get("i1").description, "a woman")
+
+    def test_retention_round_trips(self):
+        bin_ = AssetBin([img(1)])
+        apply_operation(bin_, "set_retention", asset_id="i1", retention=RETENTION_PARTIAL)
+        self.assertEqual(bin_.get("i1").retention, RETENTION_PARTIAL)
+        apply_operation(bin_, "set_retention", asset_id="i1", retention=RETENTION_FULL)
+        self.assertEqual(bin_.get("i1").retention, RETENTION_FULL)
+
+    def test_retention_reaches_the_prompt_verbatim(self):
+        """The value is content the model reads, which is why it is validated."""
+        from comfyui_pulse_studio.compiler import _build_subjects
+
+        bin_ = AssetBin([img(1, name="Mimi")])
+        apply_operation(bin_, "set_description", asset_id="i1", description="a woman")
+        apply_operation(bin_, "set_retention", asset_id="i1", retention=RETENTION_PARTIAL)
+        self.assertEqual(_build_subjects(bin_, bin_.tag_map())[2],
+                         [(1, "<Picture 1>", RETENTION_PARTIAL)])
+
+    def test_an_unknown_retention_is_refused_and_changes_nothing(self):
+        bin_ = AssetBin([img(1)])
+        apply_operation(bin_, "set_retention", asset_id="i1", retention=RETENTION_PARTIAL)
+        with self.assertRaises(ValueError):
+            apply_operation(bin_, "set_retention", asset_id="i1", retention="mostly_ish")
+        self.assertEqual(bin_.get("i1").retention, RETENTION_PARTIAL)
+
+    def test_audio_takes_neither(self):
+        """Audio has an audio_role; it has no <Subject N> form to describe."""
+        bin_ = AssetBin([Asset("a", KIND_AUDIO, name="Voice")])
+        with self.assertRaises(ValueError):
+            apply_operation(bin_, "set_description", asset_id="a", description="a voice")
+        with self.assertRaises(ValueError):
+            apply_operation(bin_, "set_retention", asset_id="a", retention=RETENTION_FULL)
+
+    def test_an_unknown_asset_id_raises(self):
+        bin_ = AssetBin([img(1)])
+        for op, kwargs in (("set_description", {"description": "x"}),
+                           ("set_retention", {"retention": RETENTION_FULL})):
+            with self.subTest(operation=op):
+                with self.assertRaises(KeyError):
+                    apply_operation(bin_, op, asset_id="nope", **kwargs)
+
+    def test_neither_renumbers_anything(self):
+        """Correct, and it looks like a bug: the panel redraws and no tag moves.
+
+        Asserted so that a future change which *does* renumber on a description
+        edit has to be deliberate.
+        """
+        bin_ = AssetBin([img(1), img(2), Asset("v", KIND_VIDEO, name="V")])
+        for op, kwargs in (("set_description", {"description": "a woman"}),
+                           ("set_retention", {"retention": RETENTION_PARTIAL})):
+            with self.subTest(operation=op):
+                deltas, err = preview_change(bin_, op, asset_id="i1", **kwargs)
+                self.assertIsNone(err)
+                self.assertEqual(deltas, [])
+
+    def test_preview_does_not_touch_the_live_bin(self):
+        bin_ = AssetBin([img(1)])
+        preview_change(bin_, "set_description", asset_id="i1", description="a woman")
+        self.assertEqual(bin_.get("i1").description, "")
+
+    def test_the_panel_is_told_the_vocabulary(self):
+        state = bin_state(AssetBin([img(1)]))
+        self.assertEqual(state["retention_values"], [RETENTION_FULL, RETENTION_PARTIAL])
+        self.assertEqual(state["retention_default"], RETENTION_DEFAULT)
+
+    def test_both_survive_a_document_round_trip(self):
+        """The panel edits a JSON string, not a bin, so this is the real path."""
+        import json
+
+        from comfyui_pulse_studio.widget_state import apply_bin_operation
+
+        raw = json.dumps({"schema": 2, "assets": [
+            {"id": "i1", "kind": KIND_IMAGE, "name": "Mimi", "file": "i1.png"}], "cast": []})
+        raw, err = apply_bin_operation(raw, "set_description",
+                                       asset_id="i1", description="a woman in a red scarf")
+        self.assertIsNone(err)
+        raw, err = apply_bin_operation(raw, "set_retention",
+                                       asset_id="i1", retention=RETENTION_PARTIAL)
+        self.assertIsNone(err)
+        asset = json.loads(raw)["assets"][0]
+        self.assertEqual(asset["description"], "a woman in a red scarf")
+        self.assertEqual(asset["retention"], RETENTION_PARTIAL)
+
+    def test_a_refused_edit_leaves_the_document_byte_identical(self):
+        import json
+
+        from comfyui_pulse_studio.widget_state import apply_bin_operation
+
+        raw = json.dumps({"schema": 2, "assets": [
+            {"id": "i1", "kind": KIND_IMAGE, "name": "Mimi", "file": "i1.png"}], "cast": []})
+        after, err = apply_bin_operation(raw, "set_retention",
+                                         asset_id="i1", retention="mostly_ish")
+        self.assertIsNotNone(err)
+        self.assertEqual(after, raw)
 
 
 class TestRenumberPreview(unittest.TestCase):

@@ -17,6 +17,7 @@ from .assets import (
     AssetBin,
     BudgetError,
 )
+from .constants import RETENTION_DEFAULT, RETENTION_VALUES
 
 __all__ = [
     "bin_state",
@@ -25,6 +26,8 @@ __all__ = [
     "suggest_name",
     "apply_operation",
     "RenumberDelta",
+    "RETENTION_DEFAULT",
+    "RETENTION_VALUES",
 ]
 
 
@@ -59,6 +62,10 @@ def bin_state(bin_, limits=None):
         "assets": rows,
         "budget": report.to_dict(),
         "name_problems": name_problems(bin_),
+        # Sent rather than hard-coded in the panel so the vocabulary has one
+        # home. The panel renders whatever options it is given.
+        "retention_values": list(RETENTION_VALUES),
+        "retention_default": RETENTION_DEFAULT,
     }
 
 
@@ -144,7 +151,55 @@ def apply_operation(bin_, operation, limits=None, **kwargs):
         return bin_.set_include_audio(kwargs["asset_id"], kwargs["include"])
     if operation == "rename":
         return _rename(bin_, kwargs["asset_id"], kwargs["name"])
+    if operation == "set_description":
+        return _set_description(bin_, kwargs["asset_id"], kwargs["description"])
+    if operation == "set_retention":
+        return _set_retention(bin_, kwargs["asset_id"], kwargs["retention"])
     raise ValueError("unknown bin operation %r" % (operation,))
+
+
+def _set_description(bin_, asset_id, description):
+    """Set the one-line description that promotes an asset to a <Subject N>.
+
+    This is what the panel was missing. `compiler._build_subjects` promotes an
+    image or video to `<Subject N>` only if it carries a description, and until
+    2026-08-17 nothing in the panel could write one -- so MiniMax's own reference
+    format was unreachable without hand-editing timeline_data.
+
+    An empty description is accepted rather than refused. Clearing one demotes the
+    asset back to a plain `<Picture i>` citation, which is a legitimate edit; the
+    asset keeps its socket and its ordinal either way.
+    """
+    asset = bin_.get(asset_id)
+    if asset is None:
+        raise KeyError(asset_id)
+    if asset.kind == KIND_AUDIO:
+        raise ValueError("audio references have no <Subject N> form, so a description "
+                         "on one would never reach the prompt")
+    asset.description = (description or "").strip()
+    return asset
+
+
+def _set_retention(bin_, asset_id, retention):
+    """Set how much of the reference the model is told to preserve.
+
+    Free text in the document schema, but not free text here: the value is written
+    verbatim into `retention_analysis`, which the model reads literally, and a typo
+    there is a silent failure of exactly the kind this pack exists to catch. The
+    vocabulary is the one the compiler already emits for carry-over anchors.
+    """
+    asset = bin_.get(asset_id)
+    if asset is None:
+        raise KeyError(asset_id)
+    if asset.kind == KIND_AUDIO:
+        raise ValueError("retention describes a visual subject; audio references "
+                         "carry an audio_role instead")
+    value = (retention or "").strip()
+    if value not in RETENTION_VALUES:
+        raise ValueError("retention must be one of %s, got %r"
+                         % (", ".join(sorted(RETENTION_VALUES)), retention))
+    asset.retention = value
+    return asset
 
 
 def _rename(bin_, asset_id, name):

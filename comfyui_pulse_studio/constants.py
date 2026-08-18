@@ -199,6 +199,22 @@ AUDIO_ROLE_LIP_SYNC = "lip_sync"
 AUDIO_ROLE_TIMBRE = "voice_timbre"
 AUDIO_ROLES = (AUDIO_ROLE_LIP_SYNC, AUDIO_ROLE_TIMBRE)
 
+# ── How much of a visual reference to hold on to ────────────────────────────
+# These strings are written *verbatim* into the prompt's retention_analysis
+# section, which the model reads literally -- they are content, not an enum the
+# code branches on. The document schema says "retention": "string" and that stays
+# true, because a project that has a better phrase for MiniMax should be able to
+# use it by editing timeline_data.
+#
+# The panel's selector is closed over these two anyway. Free text in a dropdown
+# invites a typo into a sentence nothing validates, and a misspelled retention
+# instruction is not an error -- it is a slightly worse render, which is the
+# hardest kind of failure to notice.
+RETENTION_FULL = "fully_preserved"
+RETENTION_PARTIAL = "partially_copy"
+RETENTION_VALUES = (RETENTION_FULL, RETENTION_PARTIAL)
+RETENTION_DEFAULT = RETENTION_FULL
+
 # ── What to do where two windows meet ───────────────────────────────────────
 # The container-level seam is solved: segment placement is computed from frame
 # counts, not measured from timestamps, so the picture is gapless by

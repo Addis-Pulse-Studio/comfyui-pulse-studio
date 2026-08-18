@@ -44,6 +44,9 @@ from .constants import (
     DEFAULT_AUDIO_CARRY_SECONDS,
     MAX_WINDOW_FRAMES,
     MIN_TRAINED_FRAMES,
+    RETENTION_DEFAULT,
+    RETENTION_FULL,
+    RETENTION_PARTIAL,
 )
 from .frames import (
     align_frame_count,
@@ -495,13 +498,13 @@ def _window_bin(timeline, index, branch, carry, shots=()):
     if index > 0:
         if carry.wants_image:
             images.append(Asset(CARRY_IMAGE_ID, KIND_IMAGE, name="Previous window, last frame",
-                                description="", retention="fully_preserved", synthetic=True))
+                                description="", retention=RETENTION_FULL, synthetic=True))
         if carry.wants_video:
             videos.append(Asset(CARRY_VIDEO_ID, KIND_VIDEO, name="Previous window, tail clip",
-                                retention="fully_preserved", synthetic=True))
+                                retention=RETENTION_FULL, synthetic=True))
         if carry.audio:
             audios.append(Asset(CARRY_AUDIO_ID, KIND_AUDIO, name="Previous window, audio tail",
-                                retention="partially_copy", synthetic=True))
+                                retention=RETENTION_PARTIAL, synthetic=True))
 
     def _take(dst, src, limit, label):
         for a in src:
@@ -546,7 +549,7 @@ def _build_subjects(bin_, tag_map):
         tag = tag_map.by_id[asset.asset_id]
         subject_lines.append("<Subject %d> is %s (from `%s`)." % (n, asset.description.rstrip("."), tag))
         subject_tag[asset.asset_id] = "<Subject %d>" % n
-        retention_meta.append((n, tag, asset.retention or "fully_preserved"))
+        retention_meta.append((n, tag, asset.retention or RETENTION_DEFAULT))
 
     return subject_lines, subject_tag, retention_meta
 

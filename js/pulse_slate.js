@@ -92,6 +92,14 @@ const CSS = `
   white-space:nowrap; }
 .ps-sub { grid-column:1/5; font-size:9px; color:#8a8a8a; display:flex;
   align-items:center; gap:4px; padding-left:2px; }
+/* description + retention: what promotes a reference to a <Subject N>. */
+.ps-subject { gap:5px; }
+.ps-desc { flex:1 1 auto; min-width:0; font-size:10px; padding:2px 5px; }
+.ps-desc::placeholder { color:#5f5f5f; font-style:italic; }
+.ps-retention { flex:0 0 auto; background:#111; border:1px solid #3a3a3a; color:#bdbdbd;
+  font:inherit; font-size:9px; padding:2px 3px; border-radius:3px; cursor:pointer; }
+.ps-retention:focus { border-color:#6ab0ff; outline:none; }
+.ps-retention:disabled { color:#5a5a5a; border-color:#2c2c2c; cursor:not-allowed; }
 .ps-btn { background:#2e2e2e; border:1px solid #444; color:#ccc; border-radius:3px;
   cursor:pointer; padding:3px 7px; font-size:10px; }
 .ps-btn:hover { background:#3c3c3c; color:#fff; border-color:#666; }
@@ -274,6 +282,10 @@ class AssetBinPanel {
     this.dragId = null;
     this.pendingDiff = null;
     this.busy = false;
+    // The retention vocabulary is served by bin_state so it has one home. These
+    // are the fallback for the first paint, before any response has arrived.
+    this.retentionValues = ["fully_preserved", "partially_copy"];
+    this.retentionDefault = "fully_preserved";
     this.render();
   }
 
@@ -343,6 +355,10 @@ class AssetBinPanel {
     }
 
     const state = result.state;
+    if (Array.isArray(state.retention_values) && state.retention_values.length) {
+      this.retentionValues = state.retention_values;
+    }
+    if (state.retention_default) this.retentionDefault = state.retention_default;
     this.root.appendChild(this.buildMeter(state.budget));
     for (const problem of state.name_problems) {
       const warn = document.createElement("div");
@@ -525,8 +541,70 @@ class AssetBinPanel {
       el.appendChild(sub);
     }
 
+    // Images and videos only. Audio carries an audio_role instead, and has no
+    // <Subject N> form for a description or a retention note to appear in.
+    if (row.kind !== "audio") el.appendChild(this.buildSubjectRow(row));
+
     this.wireReorder(el, row.id);
     return el;
+  }
+
+  /** Description + retention: what turns a bare reference into a <Subject N>.
+   *
+   * Both fields have been on the asset model and in the saved document from the
+   * start, and neither had a control until 2026-08-17 -- so an asset added
+   * through this panel could never satisfy the compiler's promotion rule, and
+   * MiniMax's own reference format was unreachable without hand-editing
+   * timeline_data.
+   */
+  buildSubjectRow(row) {
+    const sub = document.createElement("div");
+    sub.className = "ps-sub ps-subject";
+
+    const description = document.createElement("input");
+    description.className = "ps-name ps-desc";
+    description.value = row.description || "";
+    description.placeholder = `describe ${row.name} → <Subject N>`;
+    description.title =
+      "One line, in the model's own voice: \"a woman in her thirties in a red " +
+      "scarf\". Written, this reference becomes a <Subject N> and every @mention " +
+      "of it resolves to that subject. Left blank, it is cited as a bare " +
+      `${row.tag || "<Picture i>"} -- or not at all.`;
+    description.addEventListener("change", () =>
+      this.apply("set_description", { asset_id: row.id, description: description.value }));
+
+    const retention = document.createElement("select");
+    retention.className = "ps-retention";
+    retention.title =
+      "How much of this reference the model is told to hold on to. Written " +
+      "verbatim into the prompt's retention_analysis section.";
+    for (const value of this.retentionValues) {
+      const option = document.createElement("option");
+      option.value = value;
+      option.textContent = value;
+      retention.appendChild(option);
+    }
+    retention.value = row.retention || this.retentionDefault;
+    // Retention only reaches the prompt through a <Subject N>, and only a
+    // described asset becomes one. Disabled rather than silently inert.
+    retention.disabled = !description.value;
+    if (retention.disabled) {
+      retention.title = "Retention appears in the prompt only for a described " +
+                        "subject. Write a description first.";
+    }
+    retention.addEventListener("change", () =>
+      this.apply("set_retention", { asset_id: row.id, retention: retention.value }));
+
+    // The row is draggable, so anything typed or clicked inside it has to stop
+    // the event reaching the drag handler -- same treatment as the name field.
+    for (const el of [description, retention]) {
+      for (const ev of ["mousedown", "pointerdown", "keydown"]) {
+        el.addEventListener(ev, (e) => e.stopPropagation());
+      }
+    }
+
+    sub.append(description, retention);
+    return sub;
   }
 
   // ── reorder, with a live renumber preview ─────────────────────────────────
