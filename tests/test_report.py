@@ -249,3 +249,126 @@ class TestBench(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestShotsAcrossASeam(unittest.TestCase):
+    """A shot compiled into two windows renders twice, and nothing said so.
+
+    `Timeline.shots_in` is an overlap test, so a shot crossing a seam is compiled
+    into both windows on purpose -- dropping it from the second would leave that
+    window with no direction and render as a stall. But in the second window its
+    timestamp is clamped to 0, so it reads as starting again, and its shot_id
+    hashes into both window seeds. All of that was invisible.
+
+    It is also close to unavoidable by hand: windows are 17k+5 frames each, and N
+    of them sum to a grid total only when N is 1 mod 17, so with equal shot
+    durations something almost always straddles.
+    """
+
+    def _document(self, window_shots):
+        shots = sorted({sid for ids in window_shots for sid in ids})
+        return document(
+            shots=[shot_block(sid, i, label=sid.upper(), visual="x",
+                              duration_seconds=5.0) for i, sid in enumerate(shots)],
+            windows=[window_block(i, ids, 328) for i, ids in enumerate(window_shots)])
+
+    def test_a_shot_in_two_windows_is_reported(self):
+        text = build_report(self._document([["s1", "s2"], ["s2", "s3"]]))
+        self.assertIn("SHOTS ACROSS A SEAM", text)
+        self.assertIn("S2", text)
+        self.assertIn("compiled into windows 0, 1", text)
+
+    def test_shots_that_do_not_straddle_are_not_reported(self):
+        text = build_report(self._document([["s1"], ["s2"]]))
+        self.assertNotIn("SHOTS ACROSS A SEAM", text)
+
+    def test_a_single_window_never_straddles(self):
+        self.assertNotIn("SHOTS ACROSS A SEAM", build_report(document()))
+
+    def test_every_straddler_is_listed_and_nothing_else_is(self):
+        from comfyui_pulse_studio.report import straddling_shots
+
+        lines = straddling_shots(self._document(
+            [["s1", "s2"], ["s2", "s3"], ["s3", "s4"]]))
+        listed = "\n".join(lines)
+        self.assertIn("S2", listed)
+        self.assertIn("S3", listed)
+        # s1 and s4 appear in one window each and must not be accused.
+        self.assertNotIn("S1", listed)
+        self.assertNotIn("S4", listed)
+
+    def test_the_note_says_it_is_not_an_error(self):
+        """It is deliberate behaviour with a cost, not a bug to be fixed."""
+        text = build_report(self._document([["s1", "s2"], ["s2", "s3"]]))
+        self.assertIn("not an error", text)
+
+    def test_a_shot_id_with_no_shot_block_still_reports(self):
+        """Windows are the source of truth here; a missing block must not crash."""
+        text = build_report(document(
+            shots=[shot_block("s1", 0, label="Only", visual="x", duration_seconds=5.0)],
+            windows=[window_block(0, ["s1", "ghost"], 328),
+                     window_block(1, ["ghost"], 328)]))
+        self.assertIn("SHOTS ACROSS A SEAM", text)
+
+
+class TestPerWindowReferenceBudget(unittest.TestCase):
+    """The project-wide meter is a peak, and the peak is not what constrains anyone.
+
+    Continuation windows prepend synthetic carry-over references -- the previous
+    window's last frame, its tail clip, its audio tail -- ahead of everything the
+    user chose. A project sitting at 9/9 images renders window 1 and silently
+    drops a reference from window 2. The document cannot express this: nodes.py
+    collapses the per-window bins before building it, and adding the numbers to
+    window_block would change the hashed document and therefore every cache key.
+    """
+
+    def _plan(self, shot_count=4, seconds_each=10.0):
+        from comfyui_pulse_studio.assets import KIND_IMAGE, Asset, AssetBin
+        from comfyui_pulse_studio.compiler import compile_timeline
+        from comfyui_pulse_studio.timeline import Shot, Timeline
+
+        timeline = Timeline()
+        timeline.shots = [Shot("s%d" % i, seconds_each * i, seconds_each, "shot %d" % i)
+                          for i in range(shot_count)]
+        timeline.duration_seconds = seconds_each * shot_count
+        timeline.assets = AssetBin([Asset("i1", KIND_IMAGE, name="Mimi", file="m.png",
+                                          description="a woman in a red scarf")])
+        return compile_timeline(timeline)
+
+    def _document_for(self, plan):
+        return document(
+            shots=[shot_block("s%d" % i, i, label="Shot %d" % i, visual="x",
+                              duration_seconds=10.0) for i in range(4)],
+            windows=[window_block(w.index, w.shot_ids, w.frame_count)
+                     for w in plan.windows],
+            budget={"images": 1, "max_images": 9, "videos": 0, "max_videos": 3,
+                    "audio": 0, "max_audio": 3, "total": 1, "max_total": 12})
+
+    def test_carried_slots_are_shown_per_window(self):
+        plan = self._plan()
+        self.assertGreater(len(plan.windows), 1, "needed a continuation window")
+        text = build_report(self._document_for(plan), plan=plan)
+        self.assertIn("PER WINDOW, AFTER CARRY-OVER", text)
+        self.assertIn("carried", text)
+
+    def test_the_first_window_carries_nothing(self):
+        plan = self._plan()
+        text = build_report(self._document_for(plan), plan=plan)
+        rows = [line for line in text.splitlines() if line.strip().startswith("0 ")]
+        self.assertTrue(rows, text)
+        self.assertNotIn("carried", rows[0])
+
+    def test_a_single_window_plan_shows_no_table(self):
+        """Nothing is carried, so the per-window view says nothing new."""
+        plan = self._plan(shot_count=1, seconds_each=6.0)
+        self.assertEqual(len(plan.windows), 1)
+        self.assertNotIn("PER WINDOW, AFTER CARRY-OVER",
+                         build_report(self._document_for(plan), plan=plan))
+
+    def test_omitting_the_plan_drops_the_block_rather_than_guessing(self):
+        self.assertNotIn("PER WINDOW, AFTER CARRY-OVER", build_report(document()))
+
+    def test_the_block_explains_what_carried_means(self):
+        plan = self._plan()
+        text = build_report(self._document_for(plan), plan=plan)
+        self.assertIn("claimed before any reference you chose", text)

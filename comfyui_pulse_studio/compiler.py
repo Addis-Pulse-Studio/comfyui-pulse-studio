@@ -745,6 +745,7 @@ def _compile_window(timeline, index, total, branch, frame_count, start, end, car
         retention_meta, shot_lines, shot_texts, anchors, frame_count, carry,
         extra_subject_lines, extra_retention_lines)
 
+    diagnostics.extend(_uncited_references(bin_, tag_map, prompt))
 
     return CompiledWindow(index, total, branch, frame_count, start, end, prompt,
                           files, tag_map, anchors, diagnostics, shot_ids, seed_offset=index,
@@ -778,6 +779,57 @@ def _shot_boundaries(timeline):
         if position > 0 and position not in cuts:
             cuts.append(position)
     return cuts
+
+
+def _uncited_references(bin_, tag_map, prompt):
+    """Every reference that occupies a socket without being named in the prompt.
+
+    THE MOST EXPENSIVE SILENT FAILURE IN THE PACK
+
+    A reference the prompt never cites is not ignored -- it is packed into the
+    conditioning and attended to on every sampling step of every frame, for the
+    whole window. It costs its share of VRAM, it costs a slot out of the 9/3/3/12
+    budget, and it can only push the render around at random, because nothing in
+    the text tells the model what it is or what to do with it. The tokenizer sees
+    the marker "<Picture 2>: " and nothing else; the image itself carries no
+    instruction.
+
+    Nothing reported this. The bin showed the asset, the budget meter counted it,
+    and the render was quietly worse.
+
+    WHICH REFERENCES CAN ACTUALLY REACH THIS STATE
+
+    Fewer than you would expect, and the check is written against the finished
+    prompt rather than against a rule so that it stays true as the assembler
+    changes. As it stands:
+
+    - a described image or video is cited by its own `<Subject N>` definition;
+    - a video with `include_audio` is cited by the soundtrack line, which names
+      the video's tag as well as the soundtrack's;
+    - every audio asset is cited by the audio-role prose, which is the mechanism
+      lip-sync depends on;
+    - synthetic carry-over assets are cited by their own retention lines, and a
+      caller cannot remove one anyway.
+
+    What is left, and what this catches: an image or a video carrying no
+    description, dropped into the bin and never named in any shot's prose. That
+    is the whole failure -- somebody added a reference and forgot to use it.
+
+    Substring matching is exact rather than approximate: a tag includes its
+    closing bracket, so "<Picture 1>" cannot match inside "<Picture 10>".
+    """
+    notes = []
+    for asset in bin_:
+        if asset.synthetic:
+            continue
+        tag = tag_map.by_id.get(asset.asset_id)
+        if tag and tag not in prompt:
+            notes.append(
+                "reference %r is loaded as `%s` but is never mentioned in this "
+                "window's prompt. It still occupies a reference slot and is attended "
+                "to on every sampling step -- cite it as @%s in a shot, describe it "
+                "in the bin, or remove it." % (asset.name, tag, asset.name))
+    return notes
 
 
 def _socket_sort_key(item):

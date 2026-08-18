@@ -551,7 +551,7 @@ def run(timeline_dict, side, model, vae, audio_vae, model_fl2va=None,
             patch_fingerprint=patch_fp, model_fingerprint=model_fp,
             seconds_per_frame=manifest.seconds_per_frame(),
             vram_by_signature=vram_by_signature, run_directory=directory,
-            warnings=warnings, dry_run=dry)
+            warnings=warnings, dry_run=dry, plan=side.plan)
 
     # ── dry run (§9) ────────────────────────────────────────────────────────
     if options.dry_run:

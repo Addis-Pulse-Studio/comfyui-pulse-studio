@@ -625,6 +625,110 @@ class TestSocketNamesDoNotCollideWithTheBin(unittest.TestCase):
         self.assertIsNone(bin_.find_by_name("Image1"))
 
 
+class TestUncitedReferences(unittest.TestCase):
+    """A reference nobody mentions still rides every sampling step.
+
+    It is not skipped for being unmentioned. It is packed into the conditioning,
+    attended to on every step of every frame, and costs a slot out of the 9/3/3/12
+    budget -- while telling the model nothing, because the tokenizer only ever
+    sees the marker, never the picture. Before this diagnostic existed the bin
+    showed it, the meter counted it, and the render was quietly worse.
+    """
+
+    def _diagnostics(self, timeline):
+        plan = compile_timeline(timeline)
+        return [d for w in plan.windows for d in w.diagnostics]
+
+    def test_an_uncited_image_is_reported(self):
+        timeline = make_timeline(
+            assets=[{"id": "bg", "kind": KIND_IMAGE, "name": "Backdrop", "file": "bg.png"}],
+            shots=[{"id": "s1", "start": 0.0, "duration": 6.0,
+                    "prompt": "she walks into the cafe"}],
+            duration_seconds=6.0)
+        notes = self._diagnostics(timeline)
+        self.assertTrue(any("Backdrop" in n and "never mentioned" in n for n in notes), notes)
+
+    def test_a_cited_image_is_not_reported(self):
+        timeline = make_timeline(
+            assets=[{"id": "bg", "kind": KIND_IMAGE, "name": "Backdrop", "file": "bg.png"}],
+            shots=[{"id": "s1", "start": 0.0, "duration": 6.0,
+                    "prompt": "she walks into @Backdrop"}],
+            duration_seconds=6.0)
+        self.assertEqual([n for n in self._diagnostics(timeline) if "never mentioned" in n], [])
+
+    def test_a_described_asset_is_cited_by_its_subject_definition(self):
+        """A description puts the tag in subject_definitions, so it is cited."""
+        timeline = make_timeline(
+            assets=[{"id": "mimi", "kind": KIND_IMAGE, "name": "Mimi", "file": "m.png",
+                     "description": "a woman in a red scarf"}],
+            shots=[{"id": "s1", "start": 0.0, "duration": 6.0, "prompt": "she walks in"}],
+            duration_seconds=6.0)
+        self.assertEqual([n for n in self._diagnostics(timeline) if "never mentioned" in n], [])
+
+    def test_the_default_fixture_is_clean(self):
+        """Both its assets are described and cited; the check must not cry wolf."""
+        self.assertEqual(
+            [n for n in self._diagnostics(make_timeline()) if "never mentioned" in n], [])
+
+    def test_a_carry_over_anchor_is_never_reported(self):
+        """Synthetic assets are cited by the assembler itself, in every window."""
+        timeline = make_timeline(
+            assets=[{"id": "mimi", "kind": KIND_IMAGE, "name": "Mimi", "file": "m.png",
+                     "description": "a woman"}],
+            shots=[{"id": "s%d" % i, "start": 8.0 * i, "duration": 8.0,
+                    "prompt": "@Mimi keeps walking"} for i in range(4)],
+            duration_seconds=32.0)
+        plan = compile_timeline(timeline)
+        self.assertGreater(len(plan.windows), 1, "needed a continuation window")
+        self.assertEqual([n for n in self._diagnostics(timeline) if "never mentioned" in n], [])
+
+    def test_an_undescribed_video_with_no_soundtrack_is_reported(self):
+        timeline = make_timeline(
+            assets=[{"id": "clip", "kind": KIND_VIDEO, "name": "Plate", "file": "p.mp4"}],
+            shots=[{"id": "s1", "start": 0.0, "duration": 6.0, "prompt": "she walks in"}],
+            duration_seconds=6.0)
+        notes = self._diagnostics(timeline)
+        self.assertTrue(any("Plate" in n and "never mentioned" in n for n in notes), notes)
+
+    def test_a_video_whose_soundtrack_is_used_is_cited_by_that_line(self):
+        """`<Audio 1> is the soundtrack of <Video 1>` names the video too.
+
+        Asserted because it is the reason the check has no separate soundtrack
+        branch: an included soundtrack cites both tags, so neither can be
+        orphaned while the other is used.
+        """
+        timeline = make_timeline(
+            assets=[{"id": "clip", "kind": KIND_VIDEO, "name": "Plate", "file": "p.mp4",
+                     "include_audio": True}],
+            shots=[{"id": "s1", "start": 0.0, "duration": 6.0, "prompt": "she walks in"}],
+            duration_seconds=6.0)
+        self.assertEqual([n for n in self._diagnostics(timeline) if "never mentioned" in n], [])
+
+    def test_an_audio_reference_is_always_cited(self):
+        """The audio-role prose is the lip-sync mechanism; it always names the tag."""
+        timeline = make_timeline(
+            assets=[{"id": "vo", "kind": KIND_AUDIO, "name": "Voice",
+                     "file": "v.wav", "audio_role": "lip_sync"}],
+            shots=[{"id": "s1", "start": 0.0, "duration": 6.0, "prompt": "she walks in"}],
+            duration_seconds=6.0)
+        self.assertEqual([n for n in self._diagnostics(timeline) if "never mentioned" in n], [])
+
+    def test_ordinal_ten_does_not_match_ordinal_one(self):
+        """The closing bracket is what makes the substring test exact."""
+        from comfyui_pulse_studio.compiler import _uncited_references
+
+        class _Bin(list):
+            pass
+
+        bin_ = _Bin([Asset("a", KIND_IMAGE, name="A", file="a.png")])
+
+        class _Map:
+            by_id = {"a": "<Picture 1>"}
+
+        self.assertTrue(_uncited_references(bin_, _Map(), "see <Picture 10> there"))
+        self.assertFalse(_uncited_references(bin_, _Map(), "see <Picture 1> there"))
+
+
 class TestShotAlignedWindowsEndToEnd(unittest.TestCase):
     """The invariant the policy exists for: no shot compiled into two windows.
 

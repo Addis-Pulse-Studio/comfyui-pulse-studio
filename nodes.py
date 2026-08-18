@@ -926,7 +926,7 @@ def _compiled_prompt(document, plan, descriptor, notes):
 
     head = build_report(document, patch_descriptor=descriptor,
                         patch_fingerprint=patch_fingerprint(descriptor),
-                        title="Pulse Slate (compile only)")
+                        title="Pulse Slate (compile only)", plan=plan)
     if banner:
         head = "!! " + banner[0] + "\n   The two are never merged. Clear the box, or " \
                "disconnect the shot nodes.\n\n" + head

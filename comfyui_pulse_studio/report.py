@@ -132,6 +132,91 @@ def window_table(timeline, decisions=None):
     return lines
 
 
+def straddling_shots(timeline):
+    """Shots that fall across a window seam, and are therefore compiled twice.
+
+    `Timeline.shots_in` is an overlap test, so a shot whose span crosses a seam is
+    compiled into the window either side of it -- deliberately, because dropping
+    it from the second would leave that window with no direction at all, which
+    renders as a stall. But it is not free, and nothing said it was happening:
+
+      * the shot's prose appears in both prompts, and in the second window its
+        timestamp is clamped to 0, so it reads as starting again;
+      * its shot_id hashes into both window seeds, so editing it rerolls both.
+
+    Windows are all 17k+5 frames, and N of them sum to a grid total only when
+    N is 1 mod 17 -- so with equal shot durations some shot almost always
+    straddles. This is the section that says which one.
+    """
+    seen = {}
+    for window in timeline.get("windows") or []:
+        for sid in window.get("shot_ids") or []:
+            seen.setdefault(sid, []).append(window.get("window_index"))
+
+    by_id = {s["shot_id"]: s for s in timeline.get("shots") or []}
+    lines = []
+    for sid, indices in seen.items():
+        if len(indices) < 2:
+            continue
+        shot = by_id.get(sid) or {}
+        label = shot.get("label") or (shot.get("visual") or "")[:28].strip() or sid[:8]
+        lines.append("    %-34s compiled into windows %s"
+                     % (label, ", ".join(str(i) for i in indices)))
+    if lines:
+        lines.append("    Each of these renders twice and is described from the start "
+                     "in both windows. Adjust a shot duration to move the seam, or "
+                     "accept it -- it is not an error.")
+    return lines
+
+
+def carry_over_budget(timeline, plan):
+    """Section 4b: what is left of each per-type budget after carry-over takes its slots.
+
+    The document carries one project-wide peak (`nodes.py` collapses the
+    per-window bins before building it), and that peak is not the number that
+    constrains anyone. Continuation windows prepend synthetic carry-over
+    references -- the previous window's last frame, its tail clip, its audio tail
+    -- and those occupy real sockets and real ordinals ahead of everything the
+    user chose. A project sitting on 9/9 images renders window 1 fine and silently
+    drops a reference from window 2.
+
+    Needs the compiled plan: this cannot be recovered from the document, and
+    adding it to `window_block` would change the hashed document and therefore
+    every cache key.
+    """
+    if plan is None or not getattr(plan, "windows", None):
+        return []
+
+    budget = timeline.get("budget") or {}
+    limits = (("image", "max_images", MAX_REF_IMAGES),
+              ("video", "max_videos", MAX_REF_VIDEOS),
+              ("audio", "max_audio", MAX_REF_AUDIOS))
+
+    lines = ["    %-5s %-22s %-22s %s" % ("win", "images", "videos", "audio")]
+    interesting = False
+    for window in plan.windows:
+        cells = []
+        for kind, key, fallback in limits:
+            cap = int(budget.get(key, fallback))
+            used = sum(1 for f in window.files if f.kind == kind)
+            carried = sum(1 for f in window.files if f.kind == kind and f.synthetic)
+            if carried:
+                interesting = True
+                cells.append("%d/%d (%d carried)" % (used, cap, carried))
+            else:
+                cells.append("%d/%d" % (used, cap))
+        lines.append("    %-5s %-22s %-22s %s" % (window.index, cells[0], cells[1], cells[2]))
+
+    if not interesting:
+        # No window carries anything, so the per-window table says nothing the
+        # project-wide meter above did not.
+        return []
+    lines.append("    'carried' slots are the previous window's frame, clip and audio "
+                 "tail. They are claimed before any reference you chose, so the room "
+                 "left for those is the cap minus that number.")
+    return lines
+
+
 def _ordinal_map(timeline):
     """Section 2: which alias resolved to which tag, per shot.
 
@@ -273,13 +358,19 @@ def _packed(timeline):
 
 def build_report(timeline, decisions=None, patch_descriptor=None, patch_fingerprint="",
                  model_fingerprint="", seconds_per_frame=None, vram_by_signature=None,
-                 run_directory="", warnings=(), dry_run=False, title="Pulse Render"):
+                 run_directory="", warnings=(), dry_run=False, title="Pulse Render",
+                 plan=None):
     """The full §9 report as plain text, readable in PreviewAny.
 
     `decisions` is `{window_index: SegmentDecision}`. Passing none renders the
     table without a cache column, which is what `PulseSlate` does -- it cannot
     know cache status, because the cache key needs the model fingerprint and
     `PulseSlate` does not hold the model that will do the sampling.
+
+    `plan` is the `CompiledPlan`, optional. It is the only source for the
+    per-window reference budget: the document holds a project-wide peak, and the
+    number that actually constrains a continuation window is smaller. Omitting it
+    drops that block rather than guessing.
     """
     windows = timeline.get("windows") or []
     total_frames = sum(w.get("frames") or 0 for w in windows)
@@ -297,6 +388,11 @@ def build_report(timeline, decisions=None, patch_descriptor=None, patch_fingerpr
     out.append("")
     out.append("1. WINDOWS")
     out.extend(window_table(timeline, decisions))
+    straddling = straddling_shots(timeline)
+    if straddling:
+        out.append("")
+        out.append("    SHOTS ACROSS A SEAM (compiled into two windows)")
+        out.extend(straddling)
 
     out.append("")
     out.append("2. ORDINAL MAP")
@@ -315,6 +411,11 @@ def build_report(timeline, decisions=None, patch_descriptor=None, patch_fingerpr
     out.append("")
     out.append("4. REFERENCE BUDGET")
     out.extend(_budget(timeline))
+    per_window = carry_over_budget(timeline, plan)
+    if per_window:
+        out.append("")
+        out.append("    PER WINDOW, AFTER CARRY-OVER")
+        out.extend(per_window)
 
     out.append("")
     out.append("5. UPSTREAM PATCH CHAIN")
