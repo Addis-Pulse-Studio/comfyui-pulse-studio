@@ -33,9 +33,15 @@ On a 32 GB card, Spectrum's `system_ram` history storage is what makes a
 the user to turn it off for speed and then meet an out-of-memory error they have
 no reason to connect to it. The warning below says so in those terms.
 
-Every finding here is a WARNING and never blocks execution. The user may be
-running deliberately unpatched -- on a bigger card, on CPU, or while measuring
-what the patches actually buy them.
+No finding here ever blocks execution. The user may be running deliberately
+unpatched -- on a bigger card, on CPU, or while measuring what the patches
+actually buy them.
+
+Almost everything here is a WARNING. The one exception is
+`check_single_checkpoint`, which returns `(warnings, notes)`: a checkpoint wired
+but never sampled with is a real cost on a 32 GB box and used to be reported
+nowhere, but it is not a mistake, and giving it the same voice as a mid-render
+evict-and-reload would devalue both.
 
 Pure stdlib. No torch, no comfy, no folder_paths -- so the whole thing is
 testable against a stub model with an empty `model_options`.
@@ -187,22 +193,42 @@ def check_model_patches(model, sage_attention_global=False):
 
 
 def check_single_checkpoint(branches_used, fl2va_connected):
-    """§18.1: warn when one graph would sample through both DiT checkpoints.
+    """§18.1: the cost of having both DiT checkpoints in one graph.
 
-    ref2va and fl2va are ~21 GB each and the text encoder is large. Wiring both
-    is harmless -- ComfyUI loads lazily -- but *using* both inside one execution
-    on a 32 GB card forces an evict-and-reload mid-render, which costs more than
-    the render itself.
+    Returns (warnings, notes) -- the module's only two-tier finding, and the
+    reason the tier exists at all. Everything else here is a warning; these two
+    cases are genuinely different in severity and collapsing them would either
+    hide the cheap one or cry wolf about it.
 
-    `branches_used` is the set of branch names the compiled plan actually uses.
-    Connecting model_fl2va without any window needing it is not a warning; that
-    is just a graph ready for either path.
+    ref2va and fl2va are ~21 GB each and the text encoder is large.
+
+    WARNING -- *sampling* through both inside one execution forces an
+    evict-and-reload mid-render on a 32 GB card, which costs more than the render
+    itself.
+
+    NOTE -- connecting model_fl2va without any window needing it was silent until
+    2026-08-17, on the reasoning that it is "just a graph ready for either path".
+    That reasoning assumed a checkpoint nobody samples with is free. It is not:
+    with Spectrum offloading to system RAM on a 32 GB box, a 20 GB checkpoint
+    nobody samples with is still 20 GB of system RAM, and the room it takes is the
+    room the render wanted. Not an error -- keeping the socket wired is a
+    perfectly reasonable way to work -- so it is a note, and it says what it
+    costs rather than telling anyone to change anything.
     """
     used = {b for b in (branches_used or ()) if b}
-    if not fl2va_connected or len(used) < 2:
-        return []
+    if not fl2va_connected:
+        return [], []
+    if len(used) < 2:
+        return [], [
+            "model_fl2va is connected but no window uses it -- every window on "
+            "this timeline renders through %s. The checkpoint is still resident: "
+            "~20 GB, and on a 32 GB box with Spectrum offloading to system RAM "
+            "that is 20 GB the render cannot have. Disconnect it if this timeline "
+            "is not going to need an anchored window."
+            % (", ".join(sorted(used)) or "the reference branch")
+        ]
     return [
         "Both DiT checkpoints are live in this render: %s. They are ~21 GB each, "
         "so on a 32 GB card this forces an evict-and-reload mid-render. Split the "
         "timeline so one graph uses one checkpoint." % ", ".join(sorted(used))
-    ]
+    ], []

@@ -63,6 +63,7 @@ from .comfyui_pulse_studio.fingerprint import (
     patch_fingerprint,
     patch_warnings,
 )
+from .comfyui_pulse_studio.patches import check_single_checkpoint
 from .comfyui_pulse_studio.pulse_timeline import socket_slot_of
 from .comfyui_pulse_studio.report import build_report
 from .comfyui_pulse_studio.segcache import (
@@ -511,6 +512,15 @@ def run(timeline_dict, side, model, vae, audio_vae, model_fl2va=None,
         model, sage_attention_global=_sage_attention_global())
     patch_fp = patch_fingerprint(descriptor)
     warnings = patch_warnings(descriptor)
+
+    # A checkpoint wired but never sampled with is still resident -- ~20 GB, and
+    # on a 32 GB box with Spectrum offloading history to system RAM that is 20 GB
+    # the render cannot have. Reported here as well as at compile time, because
+    # this is the node that actually holds both models.
+    checkpoint_warnings, checkpoint_notes = check_single_checkpoint(
+        {w.get("branch") for w in windows_doc}, model_fl2va is not None)
+    warnings.extend(checkpoint_warnings)
+    warnings.extend(checkpoint_notes)
 
     # ── run folder (§7.2) ───────────────────────────────────────────────────
     run_id = options.run_id or derive_run_id(timeline_dict)

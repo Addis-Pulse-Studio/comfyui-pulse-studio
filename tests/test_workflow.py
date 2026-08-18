@@ -99,8 +99,12 @@ class TestModelPathsMatchWhatComfyUIEmits(unittest.TestCase):
         for path in SHIPPED_GRAPHS:
             d = json.loads(path.read_text(encoding="utf-8"))
             loaders = [n for n in d["nodes"] if n["type"] in self.LOADERS]
-            self.assertEqual(len(loaders), 5, "%s: expected 2 DiT + 1 text encoder + 2 VAE"
-                                              % path.name)
+            # Was `len(loaders) == 5` -- 2 DiT + 1 text encoder + 2 VAE. That is the
+            # long-form graph's own shape, not a rule: a graph that never reaches
+            # the anchored branch loads one DiT checkpoint, and as of this commit
+            # the long-form graph is one of those. What every graph owes is that
+            # the models it does load are the ones the README documents.
+            self.assertTrue(loaders, "%s loads no model at all" % path.name)
             for node in loaders:
                 with self.subTest(workflow=path.name, node=node["type"]):
                     value = node["widgets_values"][0]

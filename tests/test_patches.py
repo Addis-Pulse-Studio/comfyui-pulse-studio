@@ -201,24 +201,51 @@ class TestSingleCheckpointWarning(unittest.TestCase):
     32 GB card forces an evict-and-reload mid-render."""
 
     def test_both_branches_live_with_fl2va_connected_warns(self):
-        notes = check_single_checkpoint({"ref2va", "fl2va"}, fl2va_connected=True)
+        warnings, notes = check_single_checkpoint({"ref2va", "fl2va"}, fl2va_connected=True)
+        self.assertEqual(len(warnings), 1)
+        self.assertIn("21 GB", warnings[0])
+        self.assertIn("evict", warnings[0])
+        self.assertEqual(notes, [], "the loud case must not also emit the quiet one")
+
+    def test_connecting_fl2va_without_using_it_is_a_note_not_a_warning(self):
+        """Silent until 2026-08-17, on the reasoning that lazy loading made it free.
+
+        It is not free. With Spectrum offloading history to system RAM on a 32 GB
+        box, a ~20 GB checkpoint nobody samples with is still 20 GB of system RAM
+        that the render wanted. Not a mistake either -- leaving the socket wired
+        is a reasonable way to work -- so it is a note, and it stays off the node
+        face.
+        """
+        warnings, notes = check_single_checkpoint({"ref2va"}, fl2va_connected=True)
+        self.assertEqual(warnings, [])
         self.assertEqual(len(notes), 1)
-        self.assertIn("21 GB", notes[0])
-        self.assertIn("evict", notes[0])
+        self.assertIn("model_fl2va", notes[0])
+        self.assertIn("no window uses it", notes[0])
 
-    def test_connecting_fl2va_without_using_it_is_not_a_warning(self):
-        """Wiring both is harmless -- ComfyUI loads lazily. Using both is not."""
-        self.assertEqual(check_single_checkpoint({"ref2va"}, fl2va_connected=True), [])
-
-    def test_both_branches_without_the_second_model_is_not_this_warning(self):
+    def test_both_branches_without_the_second_model_is_neither(self):
         """That case has its own message about falling back to the main model."""
         self.assertEqual(check_single_checkpoint({"ref2va", "fl2va"},
-                                                 fl2va_connected=False), [])
+                                                 fl2va_connected=False), ([], []))
 
-    def test_empty_and_none_are_safe(self):
-        self.assertEqual(check_single_checkpoint(None, True), [])
-        self.assertEqual(check_single_checkpoint(set(), True), [])
-        self.assertEqual(check_single_checkpoint({None, "ref2va"}, True), [])
+    def test_an_unconnected_fl2va_is_silent_whatever_the_branches(self):
+        for branches in (None, set(), {"ref2va"}, {"ref2va", "fl2va"}):
+            with self.subTest(branches=branches):
+                self.assertEqual(check_single_checkpoint(branches, False), ([], []))
+
+    def test_empty_and_none_still_produce_a_readable_note(self):
+        """A connected checkpoint and no compiled windows: the note must not
+        render an empty branch list into the middle of a sentence."""
+        for branches in (None, set()):
+            with self.subTest(branches=branches):
+                warnings, notes = check_single_checkpoint(branches, True)
+                self.assertEqual(warnings, [])
+                self.assertEqual(len(notes), 1)
+                self.assertIn("the reference branch", notes[0])
+
+    def test_a_none_branch_is_ignored_rather_than_counted(self):
+        warnings, notes = check_single_checkpoint({None, "ref2va"}, True)
+        self.assertEqual(warnings, [])
+        self.assertEqual(len(notes), 1)
 
 
 class TestItNeverBlocks(unittest.TestCase):

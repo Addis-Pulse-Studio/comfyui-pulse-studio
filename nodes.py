@@ -151,14 +151,23 @@ def _warn_on_node(unique_id, warnings):
 
 
 def _report_patches(model, unique_id, branches_used=(), fl2va_connected=False):
-    """§10 + §18.1. Warn, never block -- the user may be deliberately unpatched."""
+    """§10 + §18.1. Warn, never block -- the user may be deliberately unpatched.
+
+    Returns (warnings, notes). Only the warnings reach the node face; the notes
+    are things worth knowing that nobody needs to act on, and they go to the
+    report's warnings section with everything else. Putting a note on the node
+    face would train people to ignore the badge.
+    """
     report = check_model_patches(model, sage_attention_global=_sage_attention_global())
     warnings = list(report.warnings)
-    warnings.extend(check_single_checkpoint(branches_used, fl2va_connected))
-    for note in warnings:
-        log.warning("[PulseStudio] %s", note)
+    checkpoint_warnings, notes = check_single_checkpoint(branches_used, fl2va_connected)
+    warnings.extend(checkpoint_warnings)
+    for line in warnings:
+        log.warning("[PulseStudio] %s", line)
+    for line in notes:
+        log.info("[PulseStudio] %s", line)
     _warn_on_node(unique_id, warnings)
-    return warnings
+    return warnings, notes
 
 
 SAMPLERS = ["res_multistep", "euler", "euler_ancestral", "dpmpp_2m", "dpmpp_2m_sde", "ddim"]
@@ -579,9 +588,13 @@ class PulseSlate:
             log.warning("[PulseStudio] %s", note)
         document["warnings"].extend(audio_warnings)
 
-        _report_patches(model, unique_id,
-                        branches_used={w.branch for w in plan.windows},
-                        fl2va_connected=model_fl2va is not None)
+        _, checkpoint_notes = _report_patches(
+            model, unique_id,
+            branches_used={w.branch for w in plan.windows},
+            fl2va_connected=model_fl2va is not None)
+        # An unused checkpoint is a cost, not a mistake, so it reaches the report
+        # rather than the node face -- see _report_patches.
+        document["warnings"].extend(checkpoint_notes)
         _warn_on_node(unique_id, audio_warnings)
 
         preview = _compiled_prompt(document, plan, descriptor, notes)
