@@ -7,6 +7,7 @@ ComfyUI. The node layer that binds this to ComfyUI lives in ../nodes.py.
 """
 
 from .assets import Asset, AssetBin, BudgetError, BudgetReport
+from .canvas import ASPECT_OPTIONS, ASPECT_RATIOS, fit_canvas, resolution_for
 from .compiler import CarryPolicy, CompiledPlan, CompiledWindow, compile_timeline
 from .constants import BRANCH_FL2VA, BRANCH_REF2VA, MAX_WINDOW_FRAMES
 from .frames import align_frame_count, partition_windows, snap_frames
@@ -16,6 +17,7 @@ __version__ = "0.1.0"
 
 __all__ = [
     "Asset", "AssetBin", "BudgetError", "BudgetReport",
+    "ASPECT_OPTIONS", "ASPECT_RATIOS", "fit_canvas", "resolution_for",
     "CarryPolicy", "CompiledPlan", "CompiledWindow", "compile_timeline",
     "Shot", "Timeline", "TimelineError",
     "align_frame_count", "partition_windows", "snap_frames",

@@ -158,7 +158,7 @@ Outputs:
       "frames": 362,
       "fps": 24,
       "width": 1344,
-      "height": 736,
+      "height": 768,
       "seed": 1234567,
       "steps": 20,
       "sampler": "res_multistep",

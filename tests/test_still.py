@@ -20,7 +20,13 @@ from comfyui_pulse_studio.still import (
 
 class TestCanvasFromReference(unittest.TestCase):
     def test_never_exceeds_the_pixel_budget(self):
-        """1,032,192 px is the cap; rounding down is what guarantees this."""
+        """1,032,192 px is the cap, and it is enforced by construction.
+
+        The long edge is floored to the grid and the short edge is then capped at
+        `budget // long_edge` before rounding, so no pair can be built that
+        exceeds the budget -- which is what allows the short edge to round to
+        nearest instead of down.
+        """
         for w, h in [(1920, 1080), (1080, 1920), (1000, 1000), (3000, 500),
                      (500, 3000), (4096, 2160), (37, 41), (5000, 5000)]:
             cw, ch = canvas_from_reference(w, h)
@@ -32,13 +38,24 @@ class TestCanvasFromReference(unittest.TestCase):
             self.assertEqual(cw % CANVAS_MULTIPLE, 0)
             self.assertEqual(ch % CANVAS_MULTIPLE, 0)
 
-    def test_rounds_down_never_up(self):
+    def test_the_long_edge_rounds_down(self):
+        """The long edge still floors; only the short edge rounds to nearest.
+
+        This was `test_rounds_down_never_up` and asserted flooring on *both* axes.
+        That was the bug, not the contract: flooring twice compounds two losses
+        and moved 16:9 to a measured 1.826. The long edge floors, the short edge
+        is then chosen against the budget, and the budget is asserted separately
+        above.
+        """
         import math
-        for w, h in [(1920, 1080), (1000, 1000), (1600, 900)]:
+        for w, h in [(1920, 1080), (1000, 1000), (1600, 900), (1080, 1920)]:
             ratio = w / h
             cw, ch = canvas_from_reference(w, h)
-            self.assertLessEqual(cw, math.sqrt(MAX_PIXELS * ratio))
-            self.assertLessEqual(ch, math.sqrt(MAX_PIXELS / ratio))
+            long_edge, ideal = ((cw, math.sqrt(MAX_PIXELS * ratio)) if cw >= ch
+                                else (ch, math.sqrt(MAX_PIXELS / ratio)))
+            self.assertLessEqual(long_edge, ideal, "%dx%d -> %dx%d" % (w, h, cw, ch))
+            self.assertGreater(long_edge, ideal - CANVAS_MULTIPLE,
+                               "%dx%d floored more than one grid step" % (w, h))
 
     def test_aspect_is_approximately_preserved(self):
         for w, h in [(1920, 1080), (1080, 1920), (1600, 900), (2000, 1000)]:
@@ -54,7 +71,17 @@ class TestCanvasFromReference(unittest.TestCase):
             self.assertGreater(cw * ch, MAX_PIXELS * 0.85)
 
     def test_sixteen_by_nine_is_the_familiar_canvas(self):
-        self.assertEqual(canvas_from_reference(1920, 1080), (1344, 736))
+        """1344x768, and it must equal what the 16:9 *preset* resolves to.
+
+        A reference-derived canvas and a preset-selected one reach the same node.
+        They disagreed until 2026-08-17 -- 1344x736 here, 1344x768 there -- so the
+        two are asserted against each other rather than against two literals.
+        """
+        from comfyui_pulse_studio.canvas import resolution_for
+
+        self.assertEqual(canvas_from_reference(1920, 1080), (1344, 768))
+        self.assertEqual(canvas_from_reference(1920, 1080),
+                         resolution_for("16:9 landscape", 0, 0))
 
     def test_square_fills_the_budget(self):
         cw, ch = canvas_from_reference(1000, 1000)

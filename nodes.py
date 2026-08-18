@@ -32,7 +32,6 @@ what the user typed.
 """
 
 import logging
-import math
 import os
 
 import torch
@@ -43,14 +42,13 @@ from comfy_execution.graph import ExecutionBlocker
 from . import media, render
 from .comfyui_pulse_studio.assets import KIND_AUDIO, KIND_IMAGE, KIND_VIDEO, Asset
 from .comfyui_pulse_studio.bench import format_table, group_by_fingerprint, load_manifests
+from .comfyui_pulse_studio.canvas import ASPECT_OPTIONS, ASPECT_RATIOS, resolution_for
 from .comfyui_pulse_studio.compiler import CarryPolicy, compile_timeline
 from .comfyui_pulse_studio.constants import (
     AUDIO_ROLE_LIP_SYNC,
     AUDIO_ROLES,
     BRANCH_FL2VA,
-    CANVAS_MULTIPLE,
     DEFAULT_AUDIO_CARRY_SECONDS,
-    MAX_PIXELS,
     MAX_REF_AUDIOS,
     MAX_REF_AUDIOS_CEILING,
     MAX_REF_FILES_TOTAL,
@@ -163,32 +161,11 @@ SAMPLERS = ["res_multistep", "euler", "euler_ancestral", "dpmpp_2m", "dpmpp_2m_s
 SCHEDULERS = ["simple", "normal", "beta", "sgm_uniform", "karras", "exponential"]
 RESIZE_METHODS = ["crop", "pad", "stretch"]
 
-# H3's six documented aspect ratios, plus 'custom' to use the width/height
-# widgets directly. Each is fitted into the pixel budget at load time rather than
-# hardcoded, so the table cannot drift from MAX_PIXELS.
-ASPECT_RATIOS = {
-    "16:9 landscape": (16, 9),
-    "9:16 portrait": (9, 16),
-    "1:1 square": (1, 1),
-    "4:3 landscape": (4, 3),
-    "3:4 portrait": (3, 4),
-    "21:9 ultrawide": (21, 9),
-}
-ASPECT_OPTIONS = ["custom"] + list(ASPECT_RATIOS)
-
-
-def resolution_for(aspect, width, height):
-    """Canvas for an aspect-ratio choice, rounded down to /32 inside the budget."""
-    if aspect == "custom" or aspect not in ASPECT_RATIOS:
-        w = max(CANVAS_MULTIPLE, int(width) // CANVAS_MULTIPLE * CANVAS_MULTIPLE)
-        h = max(CANVAS_MULTIPLE, int(height) // CANVAS_MULTIPLE * CANVAS_MULTIPLE)
-        return w, h
-    rw, rh = ASPECT_RATIOS[aspect]
-    ratio = rw / rh
-    w = math.sqrt(MAX_PIXELS * ratio)
-    h = math.sqrt(MAX_PIXELS / ratio)
-    return (max(CANVAS_MULTIPLE, int(w // CANVAS_MULTIPLE) * CANVAS_MULTIPLE),
-            max(CANVAS_MULTIPLE, int(h // CANVAS_MULTIPLE) * CANVAS_MULTIPLE))
+# ASPECT_RATIOS, ASPECT_OPTIONS and resolution_for moved to
+# comfyui_pulse_studio/canvas.py on 2026-08-17 and are re-exported above. They are
+# pure arithmetic and this module imports torch, so keeping them here made the
+# canvas -- which sets every render's latent size -- unreachable from the headless
+# suite. See that module for why the short edge is rounded to nearest.
 
 
 # ── dynamic sockets (spec §4) ───────────────────────────────────────────────
@@ -420,7 +397,7 @@ class PulseSlate:
                     "to use the width and height widgets instead."}),
                 "width": ("INT", {"default": 1344, "min": 32, "max": 4096, "step": 32,
                                   "tooltip": "Used only when aspect_ratio is 'custom'."}),
-                "height": ("INT", {"default": 736, "min": 32, "max": 4096, "step": 32,
+                "height": ("INT", {"default": 768, "min": 32, "max": 4096, "step": 32,
                                    "tooltip": "Used only when aspect_ratio is 'custom'."}),
                 "steps": ("INT", {"default": 20, "min": 1, "max": 100}),
                 "sampler_name": (SAMPLERS, {"default": "res_multistep"}),
@@ -1290,7 +1267,7 @@ class PulseStill:
                                       "default": ""}),
                 "aspect_ratio": (ASPECT_OPTIONS, {"default": "16:9 landscape"}),
                 "width": ("INT", {"default": 1344, "min": 32, "max": 4096, "step": 32}),
-                "height": ("INT", {"default": 736, "min": 32, "max": 4096, "step": 32}),
+                "height": ("INT", {"default": 768, "min": 32, "max": 4096, "step": 32}),
                 "frame_pick": ("INT", {"default": 0, "min": 0, "max": 4, "step": 1,
                                        "display": "slider", "tooltip":
                     "Which of the 5 rendered frames to keep. The source is pinned at frame "

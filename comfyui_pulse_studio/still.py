@@ -26,6 +26,7 @@ inpainting. The moment it grows a brush it has become a different application.
 
 import math
 
+from .canvas import fit_canvas
 from .constants import (
     BASE_SHORT_EDGE,
     BRANCH_FL2VA,
@@ -47,10 +48,14 @@ class StillError(ValueError):
 def canvas_from_reference(width, height, max_pixels=MAX_PIXELS, multiple=CANVAS_MULTIPLE):
     """Largest canvas with the source's aspect ratio that fits the pixel budget.
 
-    Rounds DOWN to `multiple` on both axes, which is what keeps the result inside
-    the budget: rounding to nearest, as core's own adapt_canvas does, can round
-    both axes up and land slightly over. Rounding down can only ever undershoot,
-    and undershooting the budget is harmless where exceeding it is not.
+    The same rule the aspect-ratio presets use, and deliberately the same call:
+    these two paths reach the same node, so a 1920x1080 reference and the "16:9
+    landscape" preset must not resolve to different canvases. They did until
+    2026-08-17 -- 1344x736 here against 1344x768 there -- purely because each had
+    its own rounding.
+
+    Never exceeds the budget; see `canvas.fit_canvas` for why the short edge is
+    rounded to nearest rather than down, and why that is still safe.
 
     Returns (width, height), each at least `multiple`.
     """
@@ -58,14 +63,7 @@ def canvas_from_reference(width, height, max_pixels=MAX_PIXELS, multiple=CANVAS_
     if width <= 0 or height <= 0:
         raise StillError("reference dimensions must be positive, got %rx%r" % (width, height))
 
-    ratio = width / height
-    # Fill the budget exactly at this aspect, then round down to the grid.
-    nominal_w = math.sqrt(max_pixels * ratio)
-    nominal_h = math.sqrt(max_pixels / ratio)
-
-    w = max(multiple, int(nominal_w // multiple) * multiple)
-    h = max(multiple, int(nominal_h // multiple) * multiple)
-    return w, h
+    return fit_canvas(width / height, max_pixels=max_pixels, multiple=multiple)
 
 
 def adapt_canvas_core(width, height):
