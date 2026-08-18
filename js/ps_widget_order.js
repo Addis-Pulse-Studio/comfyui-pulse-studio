@@ -149,6 +149,10 @@ const SPECS = {
       { name: "dry_run", kind: "boolean" },
       { name: "prune_unused", kind: "boolean" },
       { name: "use_reference_audio", kind: "boolean" },
+      // Appended after 3.0.0 shipped, like ref_audio_mode above and for the same
+      // reason: a file saved before this existed has no value for it and takes
+      // the default, which is what name-based loading is for.
+      { name: "seam_treatment", kind: "string" },
     ],
   },
   PulseBench: {

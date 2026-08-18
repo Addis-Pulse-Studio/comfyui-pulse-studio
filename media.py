@@ -223,13 +223,88 @@ def audio_span(audio, start_seconds, seconds):
     return {"waveform": piece, "sample_rate": sr}
 
 
-def concat_audio(chunks):
-    """Concatenate AUDIO dicts along time. Returns None for an empty list."""
+def concat_audio(chunks, seam_treatment=False, fade_ms=None):
+    """Concatenate AUDIO dicts along time. Returns None for an empty list.
+
+    With `seam_treatment`, every join is also levelled and tapered -- see
+    `treat_audio_seams`. Off by default so that every existing caller, and every
+    test that asserts a plain concatenation, keeps the behaviour it had.
+    """
     chunks = [c for c in chunks if c is not None]
     if not chunks:
         return None
+    if seam_treatment and len(chunks) > 1:
+        chunks = treat_audio_seams(chunks, fade_ms=fade_ms)
     sr = chunks[0]["sample_rate"]
     return {"waveform": torch.cat([c["waveform"] for c in chunks], dim=-1), "sample_rate": sr}
+
+
+def treat_audio_seams(chunks, fade_ms=None):
+    """Level-match and taper each join between two independently generated scores.
+
+    The tensor rind over `concat.seam_gain_match` and `concat.seam_dip_gains`,
+    split the same way `audio_span` is split from `audio_span_bounds`: every
+    decision is made there, on numbers a GPU-less box can test, and everything
+    here is slicing.
+
+    Length is preserved exactly, which is not a detail. The video side is a
+    packet-level remux at fixed frame counts, so audio that loses samples at a
+    seam drifts against a picture that did not move, and the drift accumulates.
+    That is why this is a dip rather than a crossfade -- see concat.py.
+
+    Order matters: the gain match runs first, so the taper has less to cover.
+    """
+    from .comfyui_pulse_studio.concat import (
+        SEAM_FADE_MS_DEFAULT,
+        seam_dip_gains,
+        seam_dip_samples,
+        seam_gain_match,
+    )
+
+    fade_ms = SEAM_FADE_MS_DEFAULT if fade_ms is None else fade_ms
+    out = [{"waveform": chunks[0]["waveform"].clone(),
+            "sample_rate": chunks[0]["sample_rate"]}]
+
+    for chunk in chunks[1:]:
+        previous = out[-1]["waveform"]
+        following = chunk["waveform"].clone()
+        rate = int(chunk["sample_rate"])
+        # Half of each buffer, not all of it: a chunk shorter than two taper
+        # widths would otherwise have its head and tail regions overlap and get
+        # the gains applied twice in the middle. Real windows are seconds long,
+        # so this only bites on a degenerate chunk -- which is exactly when a
+        # silent double-attenuation would be hardest to notice.
+        half = seam_dip_samples(rate, fade_ms,
+                                before=previous.shape[-1] // 2,
+                                after=following.shape[-1] // 2)
+        if half <= 0:
+            out.append({"waveform": following, "sample_rate": rate})
+            continue
+
+        # Measured over the same span the taper covers, so the two agree about
+        # what "the seam" is.
+        tail, head = previous[..., -half:], following[..., :half]
+        gain = seam_gain_match(_rms(tail), _rms(head), head_peak=float(head.abs().max()))
+        if gain != 1.0:
+            following = following * gain
+            head = following[..., :half]
+
+        falling = torch.as_tensor(seam_dip_gains(half), dtype=previous.dtype,
+                                  device=previous.device)
+        rising = torch.as_tensor(seam_dip_gains(half, rising=True),
+                                 dtype=following.dtype, device=following.device)
+        previous[..., -half:] = tail * falling
+        following[..., :half] = head * rising
+        out.append({"waveform": following, "sample_rate": rate})
+
+    return out
+
+
+def _rms(waveform):
+    """Root-mean-square of a waveform slice, as a plain float."""
+    if waveform.numel() == 0:
+        return 0.0
+    return float(torch.sqrt(torch.mean(waveform.to(torch.float32) ** 2)))
 
 
 def resample_audio(audio, sample_rate):
@@ -328,6 +403,71 @@ def file_digest(path):
     except OSError:
         return ""
     return digest.hexdigest()[:16]
+
+
+# ── the colour seam ─────────────────────────────────────────────────────────
+
+def match_colour_across_seam(images, previous_frame, ramp_frames=12):
+    """Grade a window's opening towards the frame the previous window ended on.
+
+    Two windows are two independent generations. Identity and framing are carried
+    across by the reference and anchor machinery; overall exposure and colour cast
+    are not carried by anything, so a seam can step in brightness or drift warm
+    even when the content matches perfectly.
+
+    Per channel, this measures mean and standard deviation over the previous
+    window's exit frame and this window's entrance frame, and applies the affine
+    correction that maps the second onto the first.
+
+    WHY IT DECAYS INSTEAD OF APPLYING FLAT
+
+    Correcting the whole window does not remove a cut, it moves it: the window now
+    matches its predecessor at the head and mismatches its own successor at the
+    tail by the same amount, and the next seam inherits the error. So the
+    correction is full strength on frame 0 and reaches zero by `ramp_frames`,
+    which puts the change where the eye compares the two -- across the join --
+    and leaves the rest of the window as the model rendered it.
+
+    Returns a new tensor; `images` is not modified. A missing or mismatched
+    previous frame returns `images` unchanged rather than guessing.
+    """
+    if images is None or previous_frame is None:
+        return images
+    if images.ndim != 4 or images.shape[0] == 0:
+        return images
+    if previous_frame.shape[-3:] != images.shape[-3:]:
+        # A resolution change mid-render. There is no per-pixel correspondence to
+        # measure against, and stretching one to fit would grade against a
+        # resample rather than against the frame.
+        return images
+
+    ramp = int(min(max(1, ramp_frames), images.shape[0]))
+    # The carry frame can come off the CPU (the reuse path rebuilds it from a
+    # PNG) while `images` is still on the sampler's device.
+    exit_frame = previous_frame[-1].to(device=images.device, dtype=torch.float32)
+    entrance = images[0].to(torch.float32)
+
+    dims = (0, 1)  # height, width -- per channel
+    target_mean = exit_frame.mean(dim=dims)
+    target_std = exit_frame.std(dim=dims)
+    source_mean = entrance.mean(dim=dims)
+    source_std = entrance.std(dim=dims)
+
+    # A flat channel has no spread to rescale; leave its gain at 1 and let the
+    # offset do the work, rather than dividing by ~0 and blowing the frame out.
+    scale = torch.where(source_std > 1e-5, target_std / source_std,
+                        torch.ones_like(source_std))
+    scale = scale.clamp(0.8, 1.25)
+
+    corrected = images.to(torch.float32).clone()
+    weights = torch.linspace(1.0, 0.0, ramp + 1, dtype=torch.float32,
+                             device=images.device)[:ramp]
+    for offset in range(ramp):
+        weight = weights[offset]
+        frame = corrected[offset]
+        graded = (frame - source_mean) * scale + target_mean
+        corrected[offset] = (frame + (graded - frame) * weight).clamp(0.0, 1.0)
+    return corrected.to(images.dtype)
 
 
 # ── 8-bit frame accumulation (spec §8) ──────────────────────────────────────

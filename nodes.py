@@ -56,6 +56,8 @@ from .comfyui_pulse_studio.constants import (
     MAX_REF_VIDEOS,
     REF_IMAGE_SIZE_OPTIONS,
     SCHEMA_VERSION,
+    SEAM_DEFAULT,
+    SEAM_MODES,
 )
 from .comfyui_pulse_studio.fingerprint import (
     describe_model_patches,
@@ -995,6 +997,20 @@ class PulseRender:
                     "silences everything the model scored around the voice; the "
                     "generated audio is still written to each segment's .flac either "
                     "way, so this is reversible without re-rendering."}),
+                "seam_treatment": (list(SEAM_MODES), {"default": SEAM_DEFAULT, "tooltip":
+                    "What to do where two windows meet. The container seam is already "
+                    "gapless -- this is about the two sides being independent "
+                    "generations: a score that restarts, a level that steps, a grade "
+                    "that drifts.\n\n"
+                    "'audio' matches the opening level to the previous tail and puts a "
+                    "20-50ms equal-power dip across the join. Sample count is "
+                    "preserved exactly, so nothing drifts against the picture.\n\n"
+                    "'audio+colour' also matches the entrance frame's per-channel mean "
+                    "and spread to the previous exit frame, decaying over the first "
+                    "frames so the correction does not simply move the cut to the next "
+                    "seam.\n\n"
+                    "'off' is there so you can A/B it -- colour matching occasionally "
+                    "makes things worse."}),
                 # ── append new widgets HERE, at the end, and nowhere else ────
             },
             "optional": {
@@ -1015,7 +1031,7 @@ class PulseRender:
 
     def execute(self, timeline, model, vae, audio_vae, schema_version, cache_mode,
                 run_dir, run_id, save_segments, low_memory, dry_run, prune_unused,
-                use_reference_audio=False,
+                use_reference_audio=False, seam_treatment=SEAM_DEFAULT,
                 model_fl2va=None, unique_id=None, prompt=None):
         document, side = _unwrap_timeline(timeline)
         if document is None:
@@ -1028,6 +1044,7 @@ class PulseRender:
             cache_mode=cache_mode, run_dir=run_dir, run_id=run_id,
             save_segments=save_segments, low_memory=low_memory, dry_run=dry_run,
             prune_unused=prune_unused, use_reference_audio=use_reference_audio,
+            seam_treatment=seam_treatment,
             # §8: never assemble a frame stack nobody asked for.
             want_frames=render.output_is_connected(prompt, unique_id, 1))
 

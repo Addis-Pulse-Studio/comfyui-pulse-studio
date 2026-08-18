@@ -51,6 +51,11 @@ from .comfyui_pulse_studio.constants import (
     AUDIO_ROLE_LIP_SYNC,
     BRANCH_FL2VA,
     BRANCH_REF2VA,
+    SEAM_AUDIO,
+    SEAM_AUDIO_COLOUR,
+    SEAM_COLOUR_RAMP_FRAMES,
+    SEAM_MODES,
+    SEAM_OFF,
 )
 from .comfyui_pulse_studio.fingerprint import (
     describe_model_patches,
@@ -427,11 +432,13 @@ class RenderOptions:
     """The `PulseRender` widgets, in one object."""
 
     __slots__ = ("cache_mode", "run_dir", "run_id", "save_segments", "low_memory",
-                 "dry_run", "prune_unused", "want_frames", "use_reference_audio")
+                 "dry_run", "prune_unused", "want_frames", "use_reference_audio",
+                 "seam_treatment")
 
     def __init__(self, cache_mode=CACHE_AUTO, run_dir="pulseslate", run_id="",
                  save_segments=True, low_memory=True, dry_run=False,
-                 prune_unused=False, want_frames=False, use_reference_audio=False):
+                 prune_unused=False, want_frames=False, use_reference_audio=False,
+                 seam_treatment=SEAM_OFF):
         self.cache_mode = cache_mode
         self.run_dir = (run_dir or "pulseslate").strip() or "pulseslate"
         self.run_id = (run_id or "").strip()
@@ -441,6 +448,18 @@ class RenderOptions:
         self.prune_unused = bool(prune_unused)
         self.want_frames = bool(want_frames)
         self.use_reference_audio = bool(use_reference_audio)
+        # Defaults to off *here* so that every existing caller and test keeps the
+        # behaviour it had; the node widget is what turns it on, and that
+        # defaults to the full treatment.
+        self.seam_treatment = seam_treatment if seam_treatment in SEAM_MODES else SEAM_OFF
+
+    @property
+    def treat_audio_seams(self):
+        return self.seam_treatment in (SEAM_AUDIO, SEAM_AUDIO_COLOUR)
+
+    @property
+    def treat_colour_seams(self):
+        return self.seam_treatment == SEAM_AUDIO_COLOUR
 
 
 class RenderResult:
@@ -555,6 +574,9 @@ def run(timeline_dict, side, model, vae, audio_vae, model_fl2va=None,
     frame_chunks = []
     audio_chunks = []
     rendered = 0
+    # Whether the window *before* this one came off disk. A reused segment is
+    # already encoded, so a seam against it can only be corrected on one side.
+    reused_previous = False
 
     for position, window in enumerate(windows_doc):
         index = window["window_index"]
@@ -586,6 +608,7 @@ def run(timeline_dict, side, model, vae, audio_vae, model_fl2va=None,
                 chunk = media.read_segment_frames(video_files[-1])
                 if chunk is not None:
                     frame_chunks.append(media.to_uint8(chunk) if options.low_memory else chunk)
+            reused_previous = True
             continue
 
         if compiled is None:  # pragma: no cover - plan/document mismatch
@@ -620,6 +643,28 @@ def run(timeline_dict, side, model, vae, audio_vae, model_fl2va=None,
         elapsed = time.time() - started
         peak = media.peak_vram_bytes()
         rendered += 1
+
+        # The colour seam, in the only place both sides of it exist as tensors.
+        #
+        # `carry_frame` still holds window N's exit frame here -- it is not
+        # reassigned until three lines below -- and images[0] is window N+1's
+        # entrance frame. The encode is further down and `del images` is the
+        # deadline, so this is a fourteen-line window and there is no second
+        # chance at it.
+        if options.treat_colour_seams and carry_frame is not None and position:
+            if reused_previous:
+                # The reuse path never decodes, so the previous window's frame
+                # came back from a PNG and the segment it belongs to is already
+                # encoded. Correcting this window against it would grade a
+                # boundary only half of which can move.
+                warnings.append(
+                    "window %d follows a cached segment, so its colour was not "
+                    "matched across the seam. Re-render both windows together "
+                    "(cache_mode: off) if the grade steps there." % index)
+            else:
+                images = media.match_colour_across_seam(
+                    images, carry_frame, ramp_frames=SEAM_COLOUR_RAMP_FRAMES)
+        reused_previous = False
 
         carry_frame = images[-1:]
         carry_clip = images[-min(images.shape[0], 48):]
@@ -672,11 +717,18 @@ def run(timeline_dict, side, model, vae, audio_vae, model_fl2va=None,
     # own AAC stream, but AAC opens on a priming delay that cannot be
     # concatenated away -- so the finished track is joined from the lossless
     # per-segment FLACs instead and muxed in once.
+    #
+    # Every element of the list below is exactly one window, so every join in it
+    # *is* a window seam and no bookkeeping is needed to find them. The treatment
+    # levels and tapers each one; it preserves sample count exactly, because the
+    # video it has to stay in step with is a packet remux at fixed frame counts.
     try:
+        seams = options.treat_audio_seams
         if audio_files:
-            audio_out = media.concat_audio([media.load_audio(p) for p in audio_files])
+            audio_out = media.concat_audio(
+                [media.load_audio(p) for p in audio_files], seam_treatment=seams)
         else:
-            audio_out = media.concat_audio(audio_chunks)
+            audio_out = media.concat_audio(audio_chunks, seam_treatment=seams)
     except Exception as exc:  # pragma: no cover - decode failure
         log.error("[PulseStudio] could not join the segment audio (%s)", exc)
         audio_out = None
@@ -691,9 +743,18 @@ def run(timeline_dict, side, model, vae, audio_vae, model_fl2va=None,
             log.error("[PulseStudio] could not build the reference audio track (%s)", exc)
             supplied = None
         if supplied is not None:
+            # This replaces the joined track wholesale with one continuous
+            # recording, which has no seam in it -- so the treatment applied above
+            # is discarded along with the audio it was applied to. Said plainly
+            # rather than left for someone to infer from a quiet report.
             audio_out = supplied
             log.info("[PulseStudio] using the supplied lip-sync audio; H3's generated "
                      "track is still in each segment's .flac")
+            if options.treat_audio_seams:
+                warnings.append(
+                    "seam_treatment did not touch the audio: use_reference_audio "
+                    "replaced the joined track with one continuous recording, which "
+                    "has no seam to treat.")
         else:
             warnings.append(
                 "use_reference_audio is on, but no shot carries a lip_sync reference "

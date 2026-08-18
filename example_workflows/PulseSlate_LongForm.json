@@ -612,7 +612,8 @@
         true,
         false,
         false,
-        false
+        false,
+        "audio+colour"
       ],
       "title": "② Pulse Render · execute"
     },

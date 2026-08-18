@@ -31,16 +31,25 @@ So the placement is not derived from timestamps at all. Every segment is exactly
 fps` seconds and nowhere else. That is exact, gapless, and independent of whatever
 the encoder did with its priming delays.
 
-The audio is not placed by this module. It is rebuilt from the segments' lossless
-per-segment FLACs as one continuous waveform, which has no priming delay to repeat
-and no seam to align -- see `media._remux_concat`.
+The audio is not *placed* by this module. It is rebuilt from the segments'
+lossless per-segment FLACs as one continuous waveform, which has no priming delay
+to repeat and no timestamps to align -- see `media._remux_concat`.
+
+That is a statement about the container, and it used to be the whole story. It is
+not: the two sides of an audio seam are two independently generated scores, and
+nothing about a correct timestamp makes them meet. The seam arithmetic further
+down is about that, and only that.
 
 Pure stdlib. `tests/test_concat.py` drives it with numbers read out of real
 segment files.
 """
 
+import math
+
 __all__ = ["video_shifts", "video_is_gapless", "frame_duration",
-           "audio_span_bounds"]
+           "audio_span_bounds", "seam_dip_samples", "seam_dip_gains",
+           "seam_gain_match", "SEAM_FADE_MS_DEFAULT",
+           "SEAM_FADE_MS_MIN", "SEAM_FADE_MS_MAX"]
 
 
 def frame_duration(fps, time_base):
@@ -99,3 +108,107 @@ def audio_span_bounds(total_samples, sample_rate, start_seconds, seconds):
     start = max(0, min(int(round(float(start_seconds or 0.0) * rate)), total))
     stop = min(total, start + want)
     return start, stop, want - (stop - start)
+
+
+# ── the audio seam, at content level ────────────────────────────────────────
+#
+# WHY THIS IS A DIP AND NOT A CROSSFADE
+#
+# A crossfade needs overlap material. There is none: windows are sequential, butt
+# joined, and every sample belongs to exactly one of them. Overlapping by F
+# samples to crossfade properly would shorten the track by F at every seam -- and
+# that is disqualifying, because the video side is a packet-level remux at fixed
+# frame counts whose placement is *computed* from those counts (see the module
+# docstring above). Audio that loses samples drifts against a video timeline that
+# did not move, and the drift accumulates across every seam after it.
+#
+# So what is on offer is a length-preserving equal-power dip: the last half of the
+# region attenuates window N from 1.0 to 1/sqrt(2), and the first half brings
+# window N+1 back from 1/sqrt(2) to 1.0. Sample count is exactly preserved, there
+# is no drift, and the discontinuity is replaced by a -3 dB notch one region wide.
+# At 20-50 ms that is below where it reads as a duck, and it is a great deal less
+# audible than the click it replaces.
+#
+# The gain match runs FIRST and is not cosmetic: bringing window N+1's opening
+# level to the carry tail's leaves the dip less discontinuity to cover.
+
+SEAM_FADE_MS_MIN = 20.0
+SEAM_FADE_MS_MAX = 50.0
+SEAM_FADE_MS_DEFAULT = 30.0
+
+
+def seam_dip_samples(sample_rate, milliseconds=SEAM_FADE_MS_DEFAULT,
+                     before=None, after=None):
+    """Half-width of the dip in samples: how many to taper on each side of a seam.
+
+    `before` and `after` are the sample counts actually available either side.
+    The dip cannot eat a whole window, so it is clamped to both -- a 20 ms taper
+    against a buffer of 12 samples is 12 samples, not an IndexError.
+
+    Returns 0 when there is nothing to work with, which callers treat as "leave
+    this seam alone".
+    """
+    rate = int(sample_rate)
+    if rate <= 0:
+        raise ValueError("sample_rate must be positive, got %r" % (sample_rate,))
+    span = min(max(float(milliseconds), SEAM_FADE_MS_MIN), SEAM_FADE_MS_MAX)
+    half = int(round(span / 1000.0 * rate / 2.0))
+    for available in (before, after):
+        if available is not None:
+            half = min(half, max(0, int(available)))
+    return max(0, half)
+
+
+def seam_dip_gains(n, rising=False):
+    """The taper, as a plain list of `n` gains.
+
+    A cosine quarter-wave, so the pair of gains meeting at the seam are both
+    1/sqrt(2) and their squares sum to 1 -- the same curve a real equal-power
+    crossfade uses, applied to a join that cannot have one.
+
+    `rising=False` is the outgoing side: 1.0 at the far end, 1/sqrt(2) at the
+    seam. `rising=True` is its mirror, for the incoming side. The far end is
+    exactly 1.0 in both cases, because that is where the taper meets audio it
+    must not touch.
+    """
+    n = int(n)
+    if n <= 0:
+        return []
+    if n == 1:
+        # One sample is not a taper, it is a click. Leave it alone.
+        return [1.0]
+    # Both endpoints are exact: i=0 gives cos(0) = 1 where the taper meets
+    # untouched audio, and i=n-1 gives cos(pi/4) = 1/sqrt(2) at the seam itself,
+    # so the two sides really do satisfy a^2 + b^2 == 1 there.
+    gains = [math.cos(i / float(n - 1) * (math.pi / 4.0)) for i in range(n)]
+    return gains[::-1] if rising else gains
+
+
+def seam_gain_match(tail_rms, head_rms, head_peak=0.0,
+                    max_change_db=6.0, ceiling=1.0):
+    """Scalar to bring a window's opening up (or down) to the previous tail's level.
+
+    A level jump at a seam is heard as a jump even when there is no click, and it
+    is the half of the problem a taper cannot fix -- the taper is 30 ms wide and
+    the level difference lasts the whole window.
+
+    Three guards, each earning its place:
+
+    * `max_change_db` bounds the correction to +/-6 dB. A window that genuinely
+      opens on near-silence -- a cut to a quiet room -- must not be dragged up to
+      match the tail of a loud one. That would not be matching the seam, it would
+      be flattening the film.
+    * `ceiling` keeps the corrected peak inside the format. Applying a gain that
+      pushes a peak past 1.0 trades a level step for clipping.
+    * a silent tail or head returns 1.0. There is no ratio to take, and inventing
+      one would amplify the noise floor.
+    """
+    tail_rms, head_rms = float(tail_rms), float(head_rms)
+    if tail_rms <= 1e-9 or head_rms <= 1e-9:
+        return 1.0
+    limit = 10.0 ** (abs(float(max_change_db)) / 20.0)
+    gain = min(max(tail_rms / head_rms, 1.0 / limit), limit)
+    peak = float(head_peak)
+    if peak > 0 and gain * peak > ceiling:
+        gain = max(1.0 / limit, ceiling / peak)
+    return gain

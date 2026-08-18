@@ -199,6 +199,28 @@ AUDIO_ROLE_LIP_SYNC = "lip_sync"
 AUDIO_ROLE_TIMBRE = "voice_timbre"
 AUDIO_ROLES = (AUDIO_ROLE_LIP_SYNC, AUDIO_ROLE_TIMBRE)
 
+# ── What to do where two windows meet ───────────────────────────────────────
+# The container-level seam is solved: segment placement is computed from frame
+# counts, not measured from timestamps, so the picture is gapless by
+# construction. What is not solved is that the two sides are two *independently
+# generated* takes -- a score that restarts, a level that steps, a grade that
+# drifts. None of that is a timestamp problem and none of it was addressed
+# anywhere.
+#
+# Off is offered because a treatment that changes rendered output should be
+# A/B-able against the untreated join, and because colour matching is the kind of
+# correction that occasionally makes things worse.
+SEAM_OFF = "off"
+SEAM_AUDIO = "audio"
+SEAM_AUDIO_COLOUR = "audio+colour"
+SEAM_MODES = (SEAM_OFF, SEAM_AUDIO, SEAM_AUDIO_COLOUR)
+SEAM_DEFAULT = SEAM_AUDIO_COLOUR
+
+#: How far into the next window a colour correction is carried before it has
+#: fully decayed. A flat correction across a whole window does not remove a cut,
+#: it moves it to the *next* seam.
+SEAM_COLOUR_RAMP_FRAMES = 12
+
 # ── Audio carry-over ────────────────────────────────────────────────────────
 # Upstream (muse-collective, MIT) fed the previous window's last ~4s of decoded
 # audio back through ref_audios slot 0, having observed an audible hard reset
