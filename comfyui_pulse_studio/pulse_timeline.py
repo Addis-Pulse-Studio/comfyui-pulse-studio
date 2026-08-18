@@ -349,7 +349,7 @@ def shot_block(shot_id, index, label="", visual="", audio_line="",
     }
 
 
-def window_block(window_index, shot_ids, frames, fps=FPS, width=1344, height=736,
+def window_block(window_index, shot_ids, frames, fps=FPS, width=1344, height=768,
                  seed=0, steps=20, sampler="res_multistep", scheduler="simple",
                  cfg=1.0, continuity_in=CONTINUITY_NONE, continuity_out=CONTINUITY_NONE,
                  branch=None, prompt="", cache_key=None):
