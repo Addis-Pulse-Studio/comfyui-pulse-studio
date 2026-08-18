@@ -266,6 +266,41 @@ What went with them, stated plainly because none of it is free:
 Restoring any of it is `git revert` plus a one-line change to `SHIPPED_GRAPHS` in
 `tests/test_workflow.py`, which still loops over a tuple for exactly that reason.
 
+### Still unverified — everything above
+
+Same rule as the 3.0.0 checklist at the bottom of this file: what needs a GPU, a
+real frontend or a pair of ears is listed rather than assumed, and stays listed
+until somebody writes down what they saw.
+
+- [ ] **A treated seam, heard against an untreated one.** `seam_treatment`
+      changes rendered output. Its arithmetic is tested — the taper is symmetric,
+      the gain is bounded, the ramp decays — and none of that says whether the
+      join sounds better. `off` exists so the comparison can be made; nobody has
+      made it.
+- [ ] **A colour-matched seam, looked at.** Same, for the picture: the grade is
+      applied over 12 frames from the previous window's exit frame, and the case
+      where it declines to act (a window following a cached segment) is reported
+      but has not been watched.
+- [ ] **`shot_aligned` on a real render.** The invariant it exists for is
+      asserted on the compiled plan — no shot handed to two windows, every window
+      on the grid, the whole timeline covered — but no film has been rendered with
+      it, so nobody has seen whether a seam on a cut is in fact less visible than
+      a seam inside a shot.
+- [ ] **The canvas change against real VRAM.** 16:9 is 1344×768 now: 4.2% more
+      pixels per window than the 1344×736 every measurement on this box was taken
+      at, including the 362-frame window that only fits with Spectrum offloading
+      history to system RAM. It should still fit — the budget is H3's own — but
+      "should" is not a measurement.
+- [ ] **The placeholder references, installed by a real ComfyUI.** The copy into
+      `input/` runs at import against `folder_paths`, which the headless suite
+      does not have; what is tested here is that the files exist, regenerate, and
+      are named by the Cast graph's bin. Whether they land in `input/` on a real
+      install, and whether Cast then opens with every `@reference` resolved, has
+      not been seen.
+- [ ] **The bin panel's new fields in the frontend.** `description` and
+      `retention` are covered on the server side, where the rule lives. The row
+      that edits them is JavaScript in a real browser and has not been clicked.
+
 ## [3.0.0] — 2026-08-10
 
 Compile and render are separate nodes now, and every window a render produces is
@@ -912,10 +947,12 @@ and commit it; a verification nobody wrote down has to be done again.
       asked for one at the top of the README; the README ships without it and the
       placeholder comment is gone. `docs/` keeps its image exemption and the
       narrowness test around it, so adding one later needs no other change.
-- [ ] **Both example workflows opened on a fresh ComfyUI** with no red nodes.
+- [ ] **Every example workflow opened on a fresh ComfyUI** with no red nodes.
       Their structure is asserted by test — ids, slots, link backfill both ways,
       the patch chain's direction — but "no red nodes" is a claim about the host
-      install, and only loading them proves it.
+      install, and only loading them proves it. Two graphs shipped when this was
+      written and one when 3.0.0's set was cut back; **four** ship as of
+      2026-08-17, and the new three have never been opened.
 - [x] **CI observed green on GitHub** — run `31318598402`, 2026-08-09, the first
       push to that remote (then named `comfyui-addis-pulse`, renamed to
       `comfyui-pulse-studio` later the same day). All five jobs: `test`
