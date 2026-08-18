@@ -439,7 +439,7 @@ export function describeMisalignment(report) {
     "\n  This file was saved by a build that inserted panel headers into the widget " +
     "list, which shifted every value. The layout bug is fixed, but the saved values " +
     "cannot be recovered — the text that landed in a header slot was discarded at " +
-    "save time.\n  Load a fresh copy of example_workflows/PulseSlate_Starter.json " +
+    "save time.\n  Load a fresh copy of example_workflows/PulseSlate_LongForm.json " +
     "and re-enter your prompts.");
 }
 
@@ -449,5 +449,5 @@ export function describeUnloadable(nodeId, reason) {
     `[PulseStudio] ${nodeId}: this workflow cannot be loaded.\n  ${reason}\n` +
     "  Workflows saved by any build before 2.0.0 are not loadable and must be " +
     "recreated — see CHANGELOG.md. Start from " +
-    "example_workflows/PulseSlate_Starter.json.");
+    "example_workflows/PulseSlate_LongForm.json.");
 }

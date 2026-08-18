@@ -14,6 +14,47 @@ WEB_DIRECTORY = "./js"
 __all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS", "WEB_DIRECTORY"]
 
 
+# ── placeholder references for the Cast example ─────────────────────────────
+# PulseSlate_Cast.json is the graph that demonstrates the asset bin, so it has to
+# open on a populated bin. A ComfyUI workflow names its references by filename
+# relative to the input directory, so shipping the files in the pack is not
+# enough -- they have to be *in* input/ or every @mention opens unresolved, which
+# is exactly the state tests/test_shipped_assets.py exists to keep out of a demo.
+#
+# Copied, never overwritten: a file the user has already put there under one of
+# these names is theirs. Whole thing is best-effort -- a read-only or headless
+# install must degrade to "Cast opens with unresolved references", never to a
+# node pack that fails to load.
+
+def _install_example_assets():
+    import os
+    import shutil
+
+    source = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                          "example_workflows", "assets")
+    if not os.path.isdir(source):
+        return
+    import folder_paths
+
+    target = folder_paths.get_input_directory()
+    os.makedirs(target, exist_ok=True)
+    for name in sorted(os.listdir(source)):
+        destination = os.path.join(target, name)
+        if os.path.exists(destination):
+            continue
+        shutil.copyfile(os.path.join(source, name), destination)
+        log.info("[PulseStudio] installed example reference %s", name)
+
+
+try:
+    _install_example_assets()
+except Exception as exc:  # pragma: no cover - no ComfyUI, or a read-only input dir
+    log.info("[PulseStudio] example references were not installed (%s); "
+             "PulseSlate_Cast.json will open with unresolved references until the "
+             "files in example_workflows/assets/ are copied into ComfyUI's input "
+             "folder by hand.", exc)
+
+
 # ── Asset Bin backend routes ────────────────────────────────────────────────
 # The bin panel asks the server to evaluate and apply edits rather than
 # reimplementing the numbering rule in JavaScript. There is exactly one

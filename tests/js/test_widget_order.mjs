@@ -15,6 +15,9 @@
  */
 
 import assert from "node:assert/strict";
+import { existsSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   CURRENT,
   NATIVE_WIDGETS,
@@ -175,9 +178,25 @@ test("a non-array is reported as unreadable rather than throwing", () => {
   assert.equal(report.unreadable, true);
 });
 
-test("the explanation names the file to reload", () => {
-  const text = describeMisalignment(validateWidgetValues(CORRUPT));
-  assert.match(text, /PulseSlate_Starter\.json/);
+// Both recovery messages named PulseSlate_Starter.json, which was dropped in
+// 3.0.0 and does not ship -- so the advice sent users to a file that is not
+// there. Asserting the name against the directory rather than against a
+// literal means the next graph that goes fails here instead of in the wild.
+const WORKFLOW_DIR = resolve(dirname(fileURLToPath(import.meta.url)),
+                             "..", "..", "example_workflows");
+
+function assertNamesAShippedGraph(text) {
+  const named = [...text.matchAll(/example_workflows\/([\w.-]+\.json)/g)]
+    .map((m) => m[1]);
+  assert.ok(named.length, `no example_workflows/*.json named in:\n${text}`);
+  for (const name of named) {
+    assert.ok(existsSync(resolve(WORKFLOW_DIR, name)),
+              `recovery advice names ${name}, which does not ship`);
+  }
+}
+
+test("the explanation names a file that actually ships", () => {
+  assertNamesAShippedGraph(describeMisalignment(validateWidgetValues(CORRUPT)));
 });
 
 // ── the frozen prefix ───────────────────────────────────────────────────────
@@ -246,11 +265,11 @@ test("isKnownVersion answers for every node", () => {
   }
 });
 
-test("the unloadable message names the node and the recovery path", () => {
+test("the unloadable message names the node and a recovery path that ships", () => {
   const text = describeUnloadable("PulseSlate", "because reasons");
   assert.match(text, /PulseSlate/);
   assert.match(text, /CHANGELOG/);
-  assert.match(text, /PulseSlate_Starter\.json/);
+  assertNamesAShippedGraph(text);
 });
 
 // ── restoring by name ───────────────────────────────────────────────────────

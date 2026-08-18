@@ -1,0 +1,617 @@
+{
+  "id": "00000000-0000-0000-0000-000000000000",
+  "revision": 0,
+  "last_node_id": 71,
+  "last_link_id": 11,
+  "nodes": [
+    {
+      "id": 11,
+      "type": "UNETLoader",
+      "pos": [
+        20,
+        60
+      ],
+      "size": [
+        400,
+        82
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "MODEL",
+          "type": "MODEL",
+          "links": [
+            2
+          ],
+          "slot_index": 0
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "UNETLoader"
+      },
+      "widgets_values": [
+        "minimax\\minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+        "default"
+      ],
+      "title": "fl2va checkpoint — a retake pins both ends"
+    },
+    {
+      "id": 12,
+      "type": "CLIPLoader",
+      "pos": [
+        20,
+        180
+      ],
+      "size": [
+        400,
+        106
+      ],
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "CLIP",
+          "type": "CLIP",
+          "links": [
+            3
+          ],
+          "slot_index": 0
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "CLIPLoader"
+      },
+      "widgets_values": [
+        "minimax\\qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+        "minimax",
+        "default"
+      ]
+    },
+    {
+      "id": 13,
+      "type": "VAELoader",
+      "pos": [
+        20,
+        320
+      ],
+      "size": [
+        400,
+        58
+      ],
+      "flags": {},
+      "order": 2,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "VAE",
+          "type": "VAE",
+          "links": [
+            4
+          ],
+          "slot_index": 0
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "VAELoader"
+      },
+      "widgets_values": [
+        "minimax\\minimax_h3_video_vae_fp16.safetensors"
+      ],
+      "title": "video VAE"
+    },
+    {
+      "id": 14,
+      "type": "VAELoader",
+      "pos": [
+        20,
+        400
+      ],
+      "size": [
+        400,
+        58
+      ],
+      "flags": {},
+      "order": 3,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "VAE",
+          "type": "VAE",
+          "links": [
+            5
+          ],
+          "slot_index": 0
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "VAELoader"
+      },
+      "widgets_values": [
+        "minimax\\minimax_h3_audio_vae_fp32.safetensors"
+      ],
+      "title": "audio VAE"
+    },
+    {
+      "id": 70,
+      "type": "LoadVideo",
+      "pos": [
+        500,
+        60
+      ],
+      "size": [
+        400,
+        320
+      ],
+      "flags": {},
+      "order": 4,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "VIDEO",
+          "type": "VIDEO",
+          "links": [
+            1
+          ],
+          "slot_index": 0
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "LoadVideo"
+      },
+      "widgets_values": [
+        ""
+      ],
+      "title": "the finished film — load your own render"
+    },
+    {
+      "id": 71,
+      "type": "GetVideoComponents",
+      "pos": [
+        500,
+        420
+      ],
+      "size": [
+        400,
+        106
+      ],
+      "flags": {},
+      "order": 5,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "video",
+          "type": "VIDEO",
+          "link": 1
+        }
+      ],
+      "outputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "links": [
+            6
+          ],
+          "slot_index": 0
+        },
+        {
+          "name": "audio",
+          "type": "AUDIO",
+          "links": [
+            7
+          ],
+          "slot_index": 1
+        },
+        {
+          "name": "fps",
+          "type": "FLOAT",
+          "links": [],
+          "slot_index": 2
+        },
+        {
+          "name": "bit_depth",
+          "type": "INT",
+          "links": [],
+          "slot_index": 3
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "GetVideoComponents"
+      },
+      "title": "split into frames + audio"
+    },
+    {
+      "id": 40,
+      "type": "PulseRetake",
+      "pos": [
+        980,
+        60
+      ],
+      "size": [
+        480,
+        640
+      ],
+      "flags": {},
+      "order": 6,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "model_fl2va",
+          "type": "MODEL",
+          "link": 2
+        },
+        {
+          "name": "clip",
+          "type": "CLIP",
+          "link": 3
+        },
+        {
+          "name": "vae",
+          "type": "VAE",
+          "link": 4
+        },
+        {
+          "name": "audio_vae",
+          "type": "VAE",
+          "link": 5
+        },
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 6
+        },
+        {
+          "name": "base_audio",
+          "type": "AUDIO",
+          "link": 7,
+          "shape": 7
+        }
+      ],
+      "outputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "links": [
+            8
+          ],
+          "slot_index": 0
+        },
+        {
+          "name": "audio",
+          "type": "AUDIO",
+          "links": [
+            9
+          ],
+          "slot_index": 1
+        },
+        {
+          "name": "plan",
+          "type": "STRING",
+          "links": [
+            11
+          ],
+          "slot_index": 2
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "PulseRetake"
+      },
+      "widgets_values": [
+        "3.0.0",
+        "She turns her head the other way and the shrug lands properly.",
+        12.0,
+        15.0,
+        true,
+        24,
+        0,
+        "fixed",
+        20,
+        "res_multistep",
+        "simple",
+        1.0,
+        12.0,
+        3.0
+      ],
+      "title": "Pulse Retake · patch 12.0s → 15.0s"
+    },
+    {
+      "id": 38,
+      "type": "CreateVideo",
+      "pos": [
+        1520,
+        60
+      ],
+      "size": [
+        300,
+        106
+      ],
+      "flags": {},
+      "order": 7,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 8
+        },
+        {
+          "name": "audio",
+          "type": "AUDIO",
+          "link": 9,
+          "shape": 7
+        }
+      ],
+      "outputs": [
+        {
+          "name": "VIDEO",
+          "type": "VIDEO",
+          "links": [
+            10
+          ],
+          "slot_index": 0
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "CreateVideo"
+      },
+      "widgets_values": [
+        24.0,
+        8
+      ],
+      "title": "remux the patched film"
+    },
+    {
+      "id": 39,
+      "type": "SaveVideo",
+      "pos": [
+        1520,
+        220
+      ],
+      "size": [
+        300,
+        250
+      ],
+      "flags": {},
+      "order": 8,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "video",
+          "type": "VIDEO",
+          "link": 10
+        }
+      ],
+      "outputs": [
+        {
+          "name": "video",
+          "type": "VIDEO",
+          "links": [],
+          "slot_index": 0
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "SaveVideo"
+      },
+      "widgets_values": [
+        "video/PulseSlate_retake",
+        "mp4",
+        "h264",
+        "auto"
+      ]
+    },
+    {
+      "id": 60,
+      "type": "PreviewAny",
+      "pos": [
+        1520,
+        520
+      ],
+      "size": [
+        300,
+        240
+      ],
+      "flags": {},
+      "order": 9,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "source",
+          "type": "*",
+          "link": 11
+        }
+      ],
+      "outputs": [],
+      "properties": {
+        "Node name for S&R": "PreviewAny"
+      },
+      "widgets_values": [],
+      "title": "the plan — where the cut actually landed"
+    },
+    {
+      "id": 1,
+      "type": "MarkdownNote",
+      "pos": [
+        20,
+        520
+      ],
+      "size": [
+        440,
+        700
+      ],
+      "flags": {},
+      "order": 10,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "properties": {
+        "Node name for S&R": "MarkdownNote"
+      },
+      "widgets_values": [
+        "# Pulse Slate 3 · retake a bad three seconds\n\n**A different job with a different input.** Everything else in this pack starts\nfrom a timeline. This starts from a *finished film* — load one, name the span\nthat is wrong, and only that span re-renders.\n\n## What it actually does\n\n1. **The cut snaps to the frame grid.** H3 renders `17k+5` frames and nothing\n   else, so the patch length is snapped and *the cut moves with it*. Ask for\n   4.00 s → 4.20 s and the in/out points shift accordingly. The `plan` output\n   says exactly where they landed — read it.\n2. **The stitch preserves length.** The result is the same number of frames as\n   the base clip. A retake never shortens or lengthens the film, so anything cut\n   to it stays in sync.\n3. **Both surrounding frames are pinned.** The frame before the cut and the frame\n   after it are the patch's first and last frames. That is the fl2va branch\n   specifically — which is why this node takes `model_fl2va` and not the\n   reference checkpoint.\n\n## keep_base_audio is on, and should stay on\n\nA re-rendered patch invents its own score. It will not match the track either\nside of it, and a three-second audio mismatch in the middle of a scene is far more\nobvious than a three-second picture mismatch. Leave this on unless the audio is\nthe thing you are fixing.\n\n## Set the span from the plan, not from the timeline\n\n`cut_start_seconds` / `cut_end_seconds` are in seconds on the **base clip**, from\nits own frame 0. Scrub the loaded video, take the numbers, queue with `dry_run`\noff — the `plan` output tells you what it snapped to before anything renders.\n"
+      ],
+      "title": "READ ME"
+    }
+  ],
+  "links": [
+    [
+      1,
+      70,
+      0,
+      71,
+      0,
+      "VIDEO"
+    ],
+    [
+      2,
+      11,
+      0,
+      40,
+      0,
+      "MODEL"
+    ],
+    [
+      3,
+      12,
+      0,
+      40,
+      1,
+      "CLIP"
+    ],
+    [
+      4,
+      13,
+      0,
+      40,
+      2,
+      "VAE"
+    ],
+    [
+      5,
+      14,
+      0,
+      40,
+      3,
+      "VAE"
+    ],
+    [
+      6,
+      71,
+      0,
+      40,
+      4,
+      "IMAGE"
+    ],
+    [
+      7,
+      71,
+      1,
+      40,
+      5,
+      "AUDIO"
+    ],
+    [
+      8,
+      40,
+      0,
+      38,
+      0,
+      "IMAGE"
+    ],
+    [
+      9,
+      40,
+      1,
+      38,
+      1,
+      "AUDIO"
+    ],
+    [
+      10,
+      38,
+      0,
+      39,
+      0,
+      "VIDEO"
+    ],
+    [
+      11,
+      40,
+      2,
+      60,
+      0,
+      "STRING"
+    ]
+  ],
+  "groups": [
+    {
+      "id": 100,
+      "title": "LOADERS",
+      "bounding": [
+        10,
+        10,
+        420,
+        480
+      ],
+      "color": "#a1309b",
+      "font_size": 24,
+      "flags": {}
+    },
+    {
+      "id": 101,
+      "title": "THE FILM YOU ALREADY RENDERED",
+      "bounding": [
+        490,
+        10,
+        420,
+        560
+      ],
+      "color": "#b58b2a",
+      "font_size": 24,
+      "flags": {}
+    },
+    {
+      "id": 102,
+      "title": "PATCH",
+      "bounding": [
+        970,
+        10,
+        500,
+        720
+      ],
+      "color": "#3f789e",
+      "font_size": 24,
+      "flags": {}
+    },
+    {
+      "id": 103,
+      "title": "STITCH · SAVE · READ",
+      "bounding": [
+        1510,
+        10,
+        320,
+        780
+      ],
+      "color": "#3f5159",
+      "font_size": 24,
+      "flags": {}
+    }
+  ],
+  "config": {},
+  "extra": {
+    "ds": {
+      "scale": 0.7,
+      "offset": [
+        0,
+        0
+      ]
+    }
+  },
+  "version": 0.4
+}

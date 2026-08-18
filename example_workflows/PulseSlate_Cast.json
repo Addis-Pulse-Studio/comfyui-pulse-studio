@@ -1,0 +1,1087 @@
+{
+  "id": "00000000-0000-0000-0000-000000000000",
+  "revision": 0,
+  "last_node_id": 90,
+  "last_link_id": 21,
+  "nodes": [
+    {
+      "id": 10,
+      "type": "UNETLoader",
+      "pos": [
+        20,
+        60
+      ],
+      "size": [
+        400,
+        82
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "MODEL",
+          "type": "MODEL",
+          "links": [
+            1,
+            9,
+            17
+          ],
+          "slot_index": 0
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "UNETLoader"
+      },
+      "widgets_values": [
+        "minimax\\minimax_h3_ref2va_pruned_int8_convrot.safetensors",
+        "default"
+      ],
+      "title": "ref2va checkpoint (references)"
+    },
+    {
+      "id": 12,
+      "type": "CLIPLoader",
+      "pos": [
+        20,
+        180
+      ],
+      "size": [
+        400,
+        106
+      ],
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "CLIP",
+          "type": "CLIP",
+          "links": [
+            2,
+            10
+          ],
+          "slot_index": 0
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "CLIPLoader"
+      },
+      "widgets_values": [
+        "minimax\\qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+        "minimax",
+        "default"
+      ]
+    },
+    {
+      "id": 13,
+      "type": "VAELoader",
+      "pos": [
+        20,
+        320
+      ],
+      "size": [
+        400,
+        58
+      ],
+      "flags": {},
+      "order": 2,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "VAE",
+          "type": "VAE",
+          "links": [
+            3,
+            11,
+            18
+          ],
+          "slot_index": 0
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "VAELoader"
+      },
+      "widgets_values": [
+        "minimax\\minimax_h3_video_vae_fp16.safetensors"
+      ],
+      "title": "video VAE"
+    },
+    {
+      "id": 14,
+      "type": "VAELoader",
+      "pos": [
+        20,
+        400
+      ],
+      "size": [
+        400,
+        58
+      ],
+      "flags": {},
+      "order": 3,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "VAE",
+          "type": "VAE",
+          "links": [
+            4,
+            12,
+            19
+          ],
+          "slot_index": 0
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "VAELoader"
+      },
+      "widgets_values": [
+        "minimax\\minimax_h3_audio_vae_fp32.safetensors"
+      ],
+      "title": "audio VAE"
+    },
+    {
+      "id": 50,
+      "type": "PulseStill",
+      "pos": [
+        500,
+        60
+      ],
+      "size": [
+        440,
+        520
+      ],
+      "flags": {},
+      "order": 4,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "link": 1
+        },
+        {
+          "name": "clip",
+          "type": "CLIP",
+          "link": 2
+        },
+        {
+          "name": "vae",
+          "type": "VAE",
+          "link": 3
+        },
+        {
+          "name": "audio_vae",
+          "type": "VAE",
+          "link": 4
+        },
+        {
+          "name": "source_image",
+          "type": "IMAGE",
+          "link": null,
+          "shape": 7
+        },
+        {
+          "name": "ref_images",
+          "type": "IMAGE",
+          "link": 5,
+          "shape": 7
+        }
+      ],
+      "outputs": [
+        {
+          "name": "image",
+          "type": "IMAGE",
+          "links": [
+            6
+          ],
+          "slot_index": 0
+        },
+        {
+          "name": "plan",
+          "type": "STRING",
+          "links": [],
+          "slot_index": 1
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "PulseStill"
+      },
+      "widgets_values": [
+        "3.0.0",
+        "The woman in the red scarf, seated by a rain-streaked cafe window, three-quarter view, looking off-frame left.",
+        "16:9 landscape",
+        1344,
+        768,
+        2,
+        false,
+        0,
+        "fixed",
+        20,
+        "res_multistep",
+        "simple",
+        1.0,
+        12.0,
+        3.0
+      ],
+      "title": "Pulse Still · a frame from the same references"
+    },
+    {
+      "id": 71,
+      "type": "LoadImage",
+      "pos": [
+        500,
+        620
+      ],
+      "size": [
+        330,
+        320
+      ],
+      "flags": {},
+      "order": 5,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "links": [
+            5
+          ],
+          "slot_index": 0
+        },
+        {
+          "name": "MASK",
+          "type": "MASK",
+          "links": [],
+          "slot_index": 1
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "LoadImage"
+      },
+      "widgets_values": [
+        "example_pulse_subject_a.png",
+        "image"
+      ],
+      "title": "the same subject reference the film uses"
+    },
+    {
+      "id": 70,
+      "type": "LoadAudio",
+      "pos": [
+        500,
+        990
+      ],
+      "size": [
+        330,
+        136
+      ],
+      "flags": {},
+      "order": 6,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "AUDIO",
+          "type": "AUDIO",
+          "links": [
+            7,
+            8
+          ],
+          "slot_index": 0
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "LoadAudio"
+      },
+      "widgets_values": [
+        "example_pulse_voice.wav"
+      ],
+      "title": "the take (placeholder)"
+    },
+    {
+      "id": 80,
+      "type": "PulseShot",
+      "pos": [
+        990,
+        60
+      ],
+      "size": [
+        420,
+        400
+      ],
+      "flags": {},
+      "order": 7,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "start_image",
+          "type": "IMAGE",
+          "link": null,
+          "shape": 7
+        },
+        {
+          "name": "end_image",
+          "type": "IMAGE",
+          "link": null,
+          "shape": 7
+        },
+        {
+          "name": "ref_audio",
+          "type": "AUDIO",
+          "link": null,
+          "shape": 7
+        },
+        {
+          "name": "refs.ref_image_1",
+          "type": "IMAGE",
+          "link": 6,
+          "shape": 7
+        }
+      ],
+      "outputs": [
+        {
+          "name": "shot",
+          "type": "PULSE_SHOT",
+          "links": [
+            13
+          ],
+          "slot_index": 0
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "PulseShot"
+      },
+      "widgets_values": [
+        "3.0.0",
+        "",
+        "The arrival",
+        "@Mimi pushes through the door of @Cafe, shaking rain off her scarf. She matches @Ref1 exactly as she stops just inside.",
+        "",
+        6.0,
+        "inherit",
+        "lip_sync"
+      ],
+      "title": "Shot 1 — The arrival"
+    },
+    {
+      "id": 81,
+      "type": "PulseShot",
+      "pos": [
+        990,
+        500
+      ],
+      "size": [
+        420,
+        400
+      ],
+      "flags": {},
+      "order": 8,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "start_image",
+          "type": "IMAGE",
+          "link": null,
+          "shape": 7
+        },
+        {
+          "name": "end_image",
+          "type": "IMAGE",
+          "link": null,
+          "shape": 7
+        },
+        {
+          "name": "ref_audio",
+          "type": "AUDIO",
+          "link": 7,
+          "shape": 7
+        },
+        {
+          "name": "refs.ref_image_1",
+          "type": "IMAGE",
+          "link": null,
+          "shape": 7
+        }
+      ],
+      "outputs": [
+        {
+          "name": "shot",
+          "type": "PULSE_SHOT",
+          "links": [
+            14
+          ],
+          "slot_index": 0
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "PulseShot"
+      },
+      "widgets_values": [
+        "3.0.0",
+        "",
+        "The counter",
+        "@Mimi crosses to the counter where @Kade is drying a glass.",
+        "@Mimi: \"you're still open, thank god\"",
+        5.0,
+        "inherit",
+        "lip_sync"
+      ],
+      "title": "Shot 2 — The counter"
+    },
+    {
+      "id": 82,
+      "type": "PulseShot",
+      "pos": [
+        990,
+        940
+      ],
+      "size": [
+        420,
+        400
+      ],
+      "flags": {},
+      "order": 9,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "start_image",
+          "type": "IMAGE",
+          "link": null,
+          "shape": 7
+        },
+        {
+          "name": "end_image",
+          "type": "IMAGE",
+          "link": null,
+          "shape": 7
+        },
+        {
+          "name": "ref_audio",
+          "type": "AUDIO",
+          "link": 8,
+          "shape": 7
+        },
+        {
+          "name": "refs.ref_image_1",
+          "type": "IMAGE",
+          "link": null,
+          "shape": 7
+        }
+      ],
+      "outputs": [
+        {
+          "name": "shot",
+          "type": "PULSE_SHOT",
+          "links": [
+            15
+          ],
+          "slot_index": 0
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "PulseShot"
+      },
+      "widgets_values": [
+        "3.0.0",
+        "",
+        "The answer",
+        "@Kade sets the glass down and shrugs, half a smile.",
+        "@Kade: \"for you, always\"",
+        5.0,
+        "inherit",
+        "voice_timbre"
+      ],
+      "title": "Shot 3 — The answer"
+    },
+    {
+      "id": 20,
+      "type": "PulseSlate",
+      "pos": [
+        1470,
+        60
+      ],
+      "size": [
+        620,
+        900
+      ],
+      "flags": {},
+      "order": 10,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "link": 9
+        },
+        {
+          "name": "clip",
+          "type": "CLIP",
+          "link": 10
+        },
+        {
+          "name": "vae",
+          "type": "VAE",
+          "link": 11
+        },
+        {
+          "name": "audio_vae",
+          "type": "VAE",
+          "link": 12
+        },
+        {
+          "name": "model_fl2va",
+          "type": "MODEL",
+          "link": null,
+          "shape": 7
+        },
+        {
+          "name": "ref_video",
+          "type": "IMAGE",
+          "link": null,
+          "shape": 7
+        },
+        {
+          "name": "ref_video_audio",
+          "type": "AUDIO",
+          "link": null,
+          "shape": 7
+        },
+        {
+          "name": "ref_music",
+          "type": "AUDIO",
+          "link": null,
+          "shape": 7
+        },
+        {
+          "name": "refs.ref_image_1",
+          "type": "IMAGE",
+          "link": null,
+          "shape": 7
+        },
+        {
+          "name": "shots.shot_1",
+          "type": "PULSE_SHOT",
+          "link": 13,
+          "shape": 7
+        },
+        {
+          "name": "shots.shot_2",
+          "type": "PULSE_SHOT",
+          "link": 14,
+          "shape": 7
+        },
+        {
+          "name": "shots.shot_3",
+          "type": "PULSE_SHOT",
+          "link": 15,
+          "shape": 7
+        }
+      ],
+      "outputs": [
+        {
+          "name": "timeline",
+          "type": "PULSE_TIMELINE",
+          "links": [
+            16
+          ],
+          "slot_index": 0
+        },
+        {
+          "name": "positive",
+          "type": "CONDITIONING",
+          "links": [
+            8
+          ],
+          "slot_index": 1
+        },
+        {
+          "name": "latent",
+          "type": "LATENT",
+          "links": [
+            13
+          ],
+          "slot_index": 2
+        },
+        {
+          "name": "combined_audio",
+          "type": "AUDIO",
+          "links": [],
+          "slot_index": 3
+        },
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "links": [],
+          "slot_index": 4
+        },
+        {
+          "name": "compiled_prompt",
+          "type": "STRING",
+          "links": [
+            21
+          ],
+          "slot_index": 5
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "PulseSlate"
+      },
+      "widgets_values": [
+        "3.0.0",
+        "{\"schema\": 2, \"assets\": [{\"id\": \"asset_mimi\", \"kind\": \"image\", \"name\": \"Mimi\", \"file\": \"example_pulse_subject_a.png\", \"description\": \"a woman in her thirties with dark hair and a red scarf\", \"retention\": \"fully_preserved\"}, {\"id\": \"asset_kade\", \"kind\": \"image\", \"name\": \"Kade\", \"file\": \"example_pulse_subject_b.png\", \"description\": \"a man in his fifties in a blue work coat, greying beard\", \"retention\": \"fully_preserved\"}, {\"id\": \"asset_cafe\", \"kind\": \"image\", \"name\": \"Cafe\", \"file\": \"example_pulse_place.png\", \"description\": \"the cafe interior: green tiles, brass fittings, rain on the glass\", \"retention\": \"partially_copy\"}, {\"id\": \"asset_voice\", \"kind\": \"audio\", \"name\": \"Take\", \"file\": \"example_pulse_voice.wav\", \"audio_role\": \"lip_sync\"}], \"cast\": []}",
+        "style: Shot on 35mm, warm practical light, shallow depth of field.\nidentity: @Mimi keeps the red scarf in every shot; @Kade keeps the blue work coat.\nretention: the scarf is never removed or recoloured.\nsoundscape: Rain outside, low espresso-machine hiss, quiet room tone.\nmusic: Sparse piano, no percussion.",
+        "",
+        16.0,
+        "16:9 landscape",
+        1344,
+        768,
+        20,
+        "res_multistep",
+        "simple",
+        1.0,
+        0,
+        "fixed",
+        "balanced",
+        15.0,
+        "crop",
+        "image",
+        true,
+        4.0,
+        "match",
+        12.0,
+        3.0,
+        3,
+        "none"
+      ],
+      "title": "① Pulse Slate · compile"
+    },
+    {
+      "id": 90,
+      "type": "PulseRender",
+      "pos": [
+        2140,
+        60
+      ],
+      "size": [
+        420,
+        400
+      ],
+      "flags": {},
+      "order": 11,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "timeline",
+          "type": "PULSE_TIMELINE",
+          "link": 16
+        },
+        {
+          "name": "model",
+          "type": "MODEL",
+          "link": 17
+        },
+        {
+          "name": "vae",
+          "type": "VAE",
+          "link": 18
+        },
+        {
+          "name": "audio_vae",
+          "type": "VAE",
+          "link": 19
+        },
+        {
+          "name": "model_fl2va",
+          "type": "MODEL",
+          "link": null,
+          "shape": 7
+        }
+      ],
+      "outputs": [
+        {
+          "name": "video",
+          "type": "VIDEO",
+          "links": [
+            20
+          ],
+          "slot_index": 0
+        },
+        {
+          "name": "frames",
+          "type": "IMAGE",
+          "links": [],
+          "slot_index": 1
+        },
+        {
+          "name": "audio",
+          "type": "AUDIO",
+          "links": [],
+          "slot_index": 2
+        },
+        {
+          "name": "segment_paths",
+          "type": "STRING",
+          "links": [],
+          "slot_index": 3
+        },
+        {
+          "name": "report",
+          "type": "STRING",
+          "links": [
+            21
+          ],
+          "slot_index": 4
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "PulseRender"
+      },
+      "widgets_values": [
+        "3.0.0",
+        "auto",
+        "pulseslate",
+        "",
+        true,
+        true,
+        false,
+        false,
+        false,
+        "audio+colour"
+      ],
+      "title": "② Pulse Render · execute"
+    },
+    {
+      "id": 38,
+      "type": "SaveVideo",
+      "pos": [
+        2600,
+        60
+      ],
+      "size": [
+        300,
+        250
+      ],
+      "flags": {},
+      "order": 12,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "video",
+          "type": "VIDEO",
+          "link": 20
+        }
+      ],
+      "outputs": [
+        {
+          "name": "video",
+          "type": "VIDEO",
+          "links": [],
+          "slot_index": 0
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "SaveVideo"
+      },
+      "widgets_values": [
+        "video/PulseSlate_cast",
+        "mp4",
+        "h264",
+        "auto"
+      ]
+    },
+    {
+      "id": 60,
+      "type": "PreviewAny",
+      "pos": [
+        2600,
+        360
+      ],
+      "size": [
+        300,
+        260
+      ],
+      "flags": {},
+      "order": 13,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "source",
+          "type": "*",
+          "link": 21
+        }
+      ],
+      "outputs": [],
+      "properties": {
+        "Node name for S&R": "PreviewAny"
+      },
+      "widgets_values": [],
+      "title": "③ report — run dry_run and read the ORDINAL MAP"
+    },
+    {
+      "id": 1,
+      "type": "MarkdownNote",
+      "pos": [
+        20,
+        460
+      ],
+      "size": [
+        440,
+        900
+      ],
+      "flags": {},
+      "order": 14,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "properties": {
+        "Node name for S&R": "MarkdownNote"
+      },
+      "widgets_values": [
+        "# Pulse Slate 3 · cast and references\n\n**The feature the pack is named for.** Three images sit in the Asset Bin, each\nwith a **description** and a **retention** value, and every one is cited in the\nprose by `@Name` — never by an ordinal.\n\n## Why you never type `<Picture 2>`\n\nThe tag is assigned from *live bin order* at compile time, and MiniMax's\ntokenizer numbers by socket position: adding a reference or dragging one up the\nlist renumbers everything after it. A hand-typed ordinal goes stale the moment\nyou do that, silently. Write `@Mimi`; the compiler writes the number.\n\nA description does one more thing: it promotes the reference to a `<Subject N>`\ndefinition, which is the shape MiniMax's own reference format asks for. Clear the\ndescription and the same image is cited as a bare `<Picture i>` instead. Both are\nlegal; the first is what identity consistency is built on.\n\n## The placeholder files\n\n`example_pulse_*.png` and `.wav` are installed into ComfyUI's `input/` folder the\nfirst time this pack loads. They are flat colour and a sine tone — enough to make\nthe graph open with everything resolved. **Replace them with your own** before\nrendering anything you care about; the bin rows are where you do it.\n\n## Per-shot audio, and the two modes\n\n`ref_audio` on a `PulseShot` is scene-local: visible to that shot and no other.\nThe mode beside it is what the socket is *for*, and the two are not\ninterchangeable:\n\n- **lip_sync** — the mouth matches that recording, and the clip is trimmed to the\n  window's exact span so the two describe the same seconds. Shot 2 uses this.\n- **voice_timbre** — the model speaks the shot's own written dialogue and only\n  borrows the voice's character. Shot 3 uses this.\n\nNothing about wiring the socket tells the model which you meant; the compiler\nwrites the directive into the prose, and *that sentence is the whole mechanism*.\nSet the mode without connecting audio and the pre-flight report says so.\n\n## PulseStill, feeding a shot\n\n`PulseStill` generates a single frame from the **same subject reference** the film\nuses, and hands it to Shot 1's `refs.ref_image_1`. That is the point of the node:\na shot can open on a frame generated elsewhere in this graph, and because it came\nfrom the same reference its identity already matches.\n\nNote its prompt is plain prose with no `@`. `PulseStill` has no Asset Bin — it\ntakes references on a socket, so there is no bin for a name to resolve against and\nan `@Name` there would reach the model as literal text.\n\nInside Shot 1, that arriving frame *is* addressable: scene-local references get\nshort fixed handles, `@Ref1` here, scoped to that shot alone — so every shot can\nuse the same handle without colliding.\n"
+      ],
+      "title": "READ ME"
+    }
+  ],
+  "links": [
+    [
+      1,
+      10,
+      0,
+      50,
+      0,
+      "MODEL"
+    ],
+    [
+      2,
+      12,
+      0,
+      50,
+      1,
+      "CLIP"
+    ],
+    [
+      3,
+      13,
+      0,
+      50,
+      2,
+      "VAE"
+    ],
+    [
+      4,
+      14,
+      0,
+      50,
+      3,
+      "VAE"
+    ],
+    [
+      5,
+      71,
+      0,
+      50,
+      5,
+      "IMAGE"
+    ],
+    [
+      6,
+      50,
+      0,
+      80,
+      3,
+      "IMAGE"
+    ],
+    [
+      7,
+      70,
+      0,
+      81,
+      2,
+      "AUDIO"
+    ],
+    [
+      8,
+      70,
+      0,
+      82,
+      2,
+      "AUDIO"
+    ],
+    [
+      9,
+      10,
+      0,
+      20,
+      0,
+      "MODEL"
+    ],
+    [
+      10,
+      12,
+      0,
+      20,
+      1,
+      "CLIP"
+    ],
+    [
+      11,
+      13,
+      0,
+      20,
+      2,
+      "VAE"
+    ],
+    [
+      12,
+      14,
+      0,
+      20,
+      3,
+      "VAE"
+    ],
+    [
+      13,
+      80,
+      0,
+      20,
+      9,
+      "PULSE_SHOT"
+    ],
+    [
+      14,
+      81,
+      0,
+      20,
+      10,
+      "PULSE_SHOT"
+    ],
+    [
+      15,
+      82,
+      0,
+      20,
+      11,
+      "PULSE_SHOT"
+    ],
+    [
+      16,
+      20,
+      0,
+      90,
+      0,
+      "PULSE_TIMELINE"
+    ],
+    [
+      17,
+      10,
+      0,
+      90,
+      1,
+      "MODEL"
+    ],
+    [
+      18,
+      13,
+      0,
+      90,
+      2,
+      "VAE"
+    ],
+    [
+      19,
+      14,
+      0,
+      90,
+      3,
+      "VAE"
+    ],
+    [
+      20,
+      90,
+      0,
+      38,
+      0,
+      "VIDEO"
+    ],
+    [
+      21,
+      90,
+      4,
+      60,
+      0,
+      "STRING"
+    ]
+  ],
+  "groups": [
+    {
+      "id": 100,
+      "title": "LOADERS",
+      "bounding": [
+        10,
+        10,
+        420,
+        440
+      ],
+      "color": "#a1309b",
+      "font_size": 24,
+      "flags": {}
+    },
+    {
+      "id": 101,
+      "title": "REFERENCES — bin assets live in the Slate; these are per-shot",
+      "bounding": [
+        490,
+        10,
+        450,
+        800
+      ],
+      "color": "#b58b2a",
+      "font_size": 24,
+      "flags": {}
+    },
+    {
+      "id": 102,
+      "title": "SHOTS",
+      "bounding": [
+        980,
+        10,
+        440,
+        1330
+      ],
+      "color": "#4a7",
+      "font_size": 24,
+      "flags": {}
+    },
+    {
+      "id": 103,
+      "title": "COMPILE · EXECUTE",
+      "bounding": [
+        1460,
+        10,
+        1110,
+        950
+      ],
+      "color": "#3f789e",
+      "font_size": 24,
+      "flags": {}
+    }
+  ],
+  "config": {},
+  "extra": {
+    "ds": {
+      "scale": 0.7,
+      "offset": [
+        0,
+        0
+      ]
+    }
+  },
+  "version": 0.4
+}
