@@ -46,6 +46,7 @@ from .comfyui_pulse_studio.canvas import ASPECT_OPTIONS, ASPECT_RATIOS, resoluti
 from .comfyui_pulse_studio.compiler import CarryPolicy, compile_timeline
 from .comfyui_pulse_studio.constants import (
     AUDIO_ROLE_LIP_SYNC,
+    AUDIO_ROLE_TIMBRE,
     AUDIO_ROLES,
     BRANCH_FL2VA,
     DEFAULT_AUDIO_CARRY_SECONDS,
@@ -682,6 +683,8 @@ def _apply_shot_nodes(timeline, side, payloads, project_continuity):
     notes = []
     shots = []
     cursor = 0.0
+    inert_modes = []
+    audio_connected = False
 
     for index, payload in enumerate(payloads):
         shot_id = payload["shot_id"]
@@ -708,6 +711,7 @@ def _apply_shot_nodes(timeline, side, payloads, project_continuity):
                                name="Ref%d" % j, file=""))
             side.put(slot, tensor, digest=media.tensor_digest(tensor))
         if payload.get("ref_audio") is not None:
+            audio_connected = True
             slot = "shot.%s.ref_audio" % shot_id
             local.append(Asset(socket_asset_id(slot), KIND_AUDIO,
                                name="Voice", file="",
@@ -715,6 +719,12 @@ def _apply_shot_nodes(timeline, side, payloads, project_continuity):
                                or AUDIO_ROLE_LIP_SYNC))
             side.put(slot, payload["ref_audio"],
                      digest=media.audio_digest(payload["ref_audio"]))
+        else:
+            # A mode with nothing to apply it to. Collected rather than reported
+            # here -- see _inert_audio_modes for why it depends on the rest of the
+            # timeline.
+            inert_modes.append((payload.get("label") or shot_id,
+                                payload.get("ref_audio_mode") or AUDIO_ROLE_LIP_SYNC))
         if local:
             timeline.local_refs[shot_id] = local
 
@@ -749,9 +759,64 @@ def _apply_shot_nodes(timeline, side, payloads, project_continuity):
 
     timeline.shots = shots
     timeline.duration_seconds = cursor
+    notes.extend(_inert_audio_modes(inert_modes, audio_connected))
     if not shots:
         notes.append("every connected PulseShot is empty; there is nothing to render.")
     return notes
+
+
+def _inert_audio_modes(inert_modes, audio_connected):
+    """Shots whose ref_audio_mode does nothing, reported only where it means something.
+
+    `ref_audio_mode` is inert with nothing wired to `ref_audio` -- the compiler
+    emits a lip-sync directive only when there is an audio asset to name, so the
+    widget reads "lip_sync" on the node face and the render comes back with a
+    mouth doing whatever H3 felt like. Nothing said so.
+
+    But the widget *defaults* to lip_sync, so "lip_sync and no audio" is also the
+    resting state of every shot in every graph that does not use reference audio
+    at all. Reporting all of those would put three warnings on the shipped
+    long-form graph, which is doing nothing wrong -- and a warning channel that
+    cries wolf is worth less than no channel.
+
+    So the two cases are separated by what the rest of the timeline is doing:
+
+    - `voice_timbre` with no audio is always reported. It is not the default, so
+      somebody chose it, and it cannot do anything.
+    - `lip_sync` with no audio is reported only when some *other* shot does
+      connect ref_audio. That is a film doing per-shot audio with one shot
+      missed, which is the oversight worth catching. On a film using no reference
+      audio anywhere, it is just the default and stays quiet.
+    """
+    notes = []
+    deliberate = [label for label, mode in inert_modes if mode != AUDIO_ROLE_LIP_SYNC]
+    defaulted = [label for label, mode in inert_modes if mode == AUDIO_ROLE_LIP_SYNC]
+
+    if deliberate:
+        notes.append(
+            "ref_audio_mode is set to %s on %s, but nothing is connected to "
+            "ref_audio there, so the setting does nothing."
+            % (AUDIO_ROLE_TIMBRE, _shot_list(deliberate)))
+    if defaulted and audio_connected:
+        notes.append(
+            "other shots in this film carry reference audio, but %s %s "
+            "ref_audio_mode set to %s with nothing connected to ref_audio, so no "
+            "mouth there tracks a recording. Connect one, or ignore this if the "
+            "shot is meant to have no speech."
+            % (_shot_list(defaulted), "have" if len(defaulted) > 1 else "has",
+               AUDIO_ROLE_LIP_SYNC))
+    return notes
+
+
+def _shot_list(labels, limit=4):
+    """'Shot 1', 'Shot 1 and Shot 2', 'Shot 1, Shot 2 and 3 others'."""
+    quoted = ["%r" % label for label in labels[:limit]]
+    extra = len(labels) - len(quoted)
+    if extra > 0:
+        quoted.append("%d other%s" % (extra, "s" if extra > 1 else ""))
+    if len(quoted) == 1:
+        return quoted[0]
+    return "%s and %s" % (", ".join(quoted[:-1]), quoted[-1])
 
 
 def _apply_continuity_branch(timeline, continuity):

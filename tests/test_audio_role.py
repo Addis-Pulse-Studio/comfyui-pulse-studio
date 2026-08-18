@@ -265,3 +265,76 @@ class TestTheTensorSlicing(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestAnInertAudioModeIsReported(unittest.TestCase):
+    """ref_audio_mode with nothing wired to ref_audio does nothing, and said so
+    nowhere.
+
+    The rule is deliberately not "warn whenever the mode is set and the socket is
+    empty". `ref_audio_mode` *defaults* to lip_sync, so that condition is the
+    resting state of every shot in every film that does not use reference audio,
+    and firing on it would put a warning on each of the three shots in the
+    shipped long-form graph -- which is doing nothing wrong. See
+    `nodes._inert_audio_modes`.
+
+    Tested against the helper rather than through PulseSlate.execute, which needs
+    torch and a running ComfyUI; the helper is the whole decision.
+    """
+
+    @staticmethod
+    def _helper():
+        # nodes.py imports torch, so the two pure functions are lifted out of it
+        # by ast rather than imported. Same technique as tests/test_workflow.py.
+        import ast
+        from pathlib import Path
+
+        source = Path(__file__).parent.parent / "nodes.py"
+        tree = ast.parse(source.read_text(encoding="utf-8"))
+        wanted = {"_inert_audio_modes", "_shot_list"}
+        module = ast.Module(
+            body=[n for n in tree.body
+                  if isinstance(n, ast.FunctionDef) and n.name in wanted],
+            type_ignores=[])
+        namespace = {"AUDIO_ROLE_LIP_SYNC": AUDIO_ROLE_LIP_SYNC,
+                     "AUDIO_ROLE_TIMBRE": AUDIO_ROLE_TIMBRE}
+        exec(compile(module, "nodes.py", "exec"), namespace)
+        return namespace["_inert_audio_modes"]
+
+    def test_a_film_with_no_reference_audio_stays_quiet(self):
+        """The shipped long-form graph's exact shape. Three shots, no audio."""
+        inert = [("Shot %d" % i, AUDIO_ROLE_LIP_SYNC) for i in (1, 2, 3)]
+        self.assertEqual(self._helper()(inert, False), [])
+
+    def test_a_shot_missed_in_a_film_that_does_use_audio_is_reported(self):
+        notes = self._helper()([("Shot 3", AUDIO_ROLE_LIP_SYNC)], True)
+        self.assertEqual(len(notes), 1)
+        self.assertIn("Shot 3", notes[0])
+        self.assertIn(AUDIO_ROLE_LIP_SYNC, notes[0])
+
+    def test_voice_timbre_is_reported_even_with_no_audio_anywhere(self):
+        """Not the default, so somebody chose it, and it cannot do anything."""
+        notes = self._helper()([("Shot 2", AUDIO_ROLE_TIMBRE)], False)
+        self.assertEqual(len(notes), 1)
+        self.assertIn(AUDIO_ROLE_TIMBRE, notes[0])
+
+    def test_a_fully_wired_film_reports_nothing(self):
+        self.assertEqual(self._helper()([], True), [])
+
+    def test_several_missed_shots_are_one_note_not_several(self):
+        inert = [("Shot %d" % i, AUDIO_ROLE_LIP_SYNC) for i in (2, 3, 4)]
+        notes = self._helper()(inert, True)
+        self.assertEqual(len(notes), 1)
+        for label in ("Shot 2", "Shot 3", "Shot 4"):
+            self.assertIn(label, notes[0])
+
+    def test_a_long_list_is_truncated_rather_than_dumped(self):
+        inert = [("Shot %d" % i, AUDIO_ROLE_LIP_SYNC) for i in range(9)]
+        notes = self._helper()(inert, True)
+        self.assertIn("5 others", notes[0])
+        self.assertNotIn("Shot 8", notes[0])
+
+    def test_both_kinds_at_once_are_two_notes(self):
+        notes = self._helper()([("Shot 1", AUDIO_ROLE_TIMBRE),
+                                ("Shot 2", AUDIO_ROLE_LIP_SYNC)], True)
+        self.assertEqual(len(notes), 2)
