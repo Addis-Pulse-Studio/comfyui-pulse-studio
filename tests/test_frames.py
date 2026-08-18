@@ -258,3 +258,167 @@ class TestWindowBounds(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestShotAlignedPolicy(unittest.TestCase):
+    """Seams on shot cuts, where the grid allows it -- and honesty where it does not.
+
+    WHY THE POLICY CANNOT SIMPLY SNAP
+
+    Cumulative position after k windows is 17K + 5k, so a seam lands on a cut at
+    frame p only when p == 5k (mod 17). Landing *near* a cut buys nothing:
+    Timeline.shots_in is an overlap test, so a seam one frame inside a shot
+    straddles it exactly as much as one in the middle. Alignment is therefore
+    all-or-nothing per seam, and the policy's job is to hit the largest subset of
+    cuts that can be hit at once and to say which ones it could not.
+    """
+
+    def _run(self, total, cuts, cap=MAX_WINDOW_FRAMES):
+        notes = []
+        windows = partition_windows(total, window_frames=cap, policy="shot_aligned",
+                                    diagnostics=notes, boundaries=cuts)
+        seams, cursor = [], 0
+        for frames in windows[:-1]:
+            cursor += frames
+            seams.append(cursor)
+        return windows, seams, notes
+
+    # ── the invariants that hold whatever the cuts are ──────────────────────
+
+    def test_every_window_is_on_the_grid(self):
+        for total, cuts in ((960, [240, 480, 720]), (960, [362, 724]),
+                            (700, [345]), (2160, [180 * i for i in range(1, 12)]),
+                            (400, []), (130, [60])):
+            with self.subTest(total=total, cuts=cuts):
+                windows, _, _ = self._run(total, cuts)
+                for frames in windows:
+                    self.assertTrue(is_on_grid(frames), "%d not on grid" % frames)
+
+    def test_the_partition_still_covers_the_whole_timeline(self):
+        for total, cuts in ((960, [240, 480, 720]), (960, [362, 724]), (700, [345])):
+            with self.subTest(total=total, cuts=cuts):
+                windows, _, _ = self._run(total, cuts)
+                self.assertGreaterEqual(sum(windows), total)
+
+    def test_no_window_breaches_the_floor_or_the_ceiling(self):
+        for total, cuts in ((960, [240, 480, 720]), (960, [362, 724]),
+                            (2160, [180 * i for i in range(1, 12)])):
+            with self.subTest(total=total, cuts=cuts):
+                windows, _, _ = self._run(total, cuts)
+                self.assertLessEqual(max(windows), MAX_WINDOW_FRAMES)
+                if len(windows) > 1:
+                    self.assertGreaterEqual(min(windows), MIN_TRAINED_FRAMES)
+
+    # ── the case the policy exists for ──────────────────────────────────────
+
+    def test_solvable_cuts_are_all_hit_and_nothing_straddles(self):
+        """362 + 362 is two legal windows, so both cuts are reachable."""
+        windows, seams, notes = self._run(960, [362, 724])
+        self.assertEqual(seams[:2], [362, 724])
+        self.assertTrue(any("every one of the 2 shot boundaries" in n for n in notes), notes)
+
+    def test_a_single_reachable_cut_is_hit(self):
+        windows, seams, _ = self._run(700, [345])
+        self.assertIn(345, seams)
+
+    def test_balanced_would_not_have_hit_it(self):
+        """The comparison that makes the policy worth having."""
+        balanced = partition_windows(700, policy="balanced")
+        seams, cursor = [], 0
+        for frames in balanced[:-1]:
+            cursor += frames
+            seams.append(cursor)
+        self.assertNotIn(345, seams)
+
+    # ── and the case that is arithmetically impossible ──────────────────────
+
+    def test_unreachable_cuts_are_reported_rather_than_faked(self):
+        """Four equal 10s shots at 24fps. No run of 17k+5 windows sums to 240.
+
+        This is the ordinary case, not an edge case, and the policy must not
+        claim an alignment it did not achieve.
+        """
+        windows, seams, notes = self._run(960, [240, 480, 720])
+        self.assertEqual([s for s in seams if s in (240, 480, 720)], [])
+        self.assertTrue(any("could not be reached" in n for n in notes), notes)
+        self.assertTrue(any("0 of 3" in n for n in notes), notes)
+
+    def test_a_near_miss_is_not_counted_as_a_hit(self):
+        """One frame inside a shot straddles it exactly as much as the middle does."""
+        windows, seams, notes = self._run(960, [240, 480, 720])
+        for seam in seams:
+            self.assertNotIn(seam, (240, 480, 720))
+        self.assertFalse(any("every one of" in n for n in notes), notes)
+
+    def test_no_boundaries_falls_back_to_balanced_and_says_so(self):
+        windows, _, notes = self._run(960, [])
+        self.assertEqual(windows, partition_windows(960, policy="balanced"))
+        self.assertTrue(any("none were supplied" in n for n in notes), notes)
+
+    def test_boundaries_outside_the_timeline_are_ignored(self):
+        windows, _, _ = self._run(700, [0, 345, 700, 9000])
+        self.assertEqual(sum(windows) >= 700, True)
+
+    # ── plumbing ────────────────────────────────────────────────────────────
+
+    def test_the_policy_name_is_accepted_and_a_bad_one_is_not(self):
+        partition_windows(600, policy="shot_aligned", boundaries=[362])
+        with self.assertRaises(ValueError):
+            partition_windows(600, policy="cut_aware", boundaries=[362])
+
+    def test_boundaries_are_ignored_by_the_other_policies(self):
+        for policy in ("balanced", "fill"):
+            with self.subTest(policy=policy):
+                self.assertEqual(
+                    partition_windows(960, policy=policy, boundaries=[362, 724]),
+                    partition_windows(960, policy=policy))
+
+    def test_a_short_timeline_with_no_interior_cut_is_one_window(self):
+        self.assertEqual(len(partition_windows(300, policy="shot_aligned",
+                                               boundaries=[300])), 1)
+
+    def test_a_cut_inside_a_single_window_timeline_can_still_split_it(self):
+        """A timeline that fits in one window may still be worth cutting in two.
+
+        The single-window shortcut runs before every other policy; shot_aligned
+        has to look first, or a two-shot 14s timeline would never get a seam.
+        """
+        windows, seams, _ = self._run(700, [345], cap=MAX_WINDOW_FRAMES)
+        self.assertEqual(len(windows), 2)
+        self.assertEqual(seams, [345])
+
+
+class TestExactSplit(unittest.TestCase):
+    """The arithmetic under shot_aligned, on its own."""
+
+    def test_an_exact_split_sums_exactly(self):
+        from comfyui_pulse_studio.frames import _exact_split
+
+        for span in (345, 362, 707, 690, 1052):
+            with self.subTest(span=span):
+                windows = _exact_split(span, MAX_WINDOW_FRAMES, MIN_TRAINED_FRAMES)
+                if windows is None:
+                    continue
+                self.assertEqual(sum(windows), span)
+                for frames in windows:
+                    self.assertTrue(is_on_grid(frames))
+
+    def test_an_unreachable_span_returns_none_rather_than_an_approximation(self):
+        from comfyui_pulse_studio.frames import _exact_split
+
+        self.assertIsNone(_exact_split(240, MAX_WINDOW_FRAMES, MIN_TRAINED_FRAMES))
+
+    def test_a_span_below_the_floor_is_refused(self):
+        from comfyui_pulse_studio.frames import _exact_split
+
+        self.assertIsNone(_exact_split(100, MAX_WINDOW_FRAMES, MIN_TRAINED_FRAMES))
+
+    def test_it_prefers_windows_near_the_requested_length(self):
+        from comfyui_pulse_studio.frames import _exact_split
+
+        span = 17 * 40 + 5 * 4          # exactly four windows of ~181, or two of ~362
+        short = _exact_split(span, 200, MIN_TRAINED_FRAMES)
+        long_ = _exact_split(span, MAX_WINDOW_FRAMES, MIN_TRAINED_FRAMES)
+        self.assertEqual(sum(short), span)
+        self.assertEqual(sum(long_), span)
+        self.assertGreaterEqual(len(short), len(long_))

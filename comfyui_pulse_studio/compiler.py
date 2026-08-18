@@ -428,7 +428,8 @@ def compile_timeline(timeline, window_frames=None, policy="balanced",
     diagnostics = []
     total_frames = seconds_to_frames(timeline.duration_seconds, timeline.fps, "up")
     windows = partition_windows(total_frames, window_frames, policy=policy,
-                                diagnostics=diagnostics)
+                                diagnostics=diagnostics,
+                                boundaries=_shot_boundaries(timeline))
     bounds = window_bounds(windows, timeline.fps)
 
     requested = timeline.duration_seconds
@@ -741,9 +742,39 @@ def _compile_window(timeline, index, total, branch, frame_count, start, end, car
         retention_meta, shot_lines, shot_texts, anchors, frame_count, carry,
         extra_subject_lines, extra_retention_lines)
 
+
     return CompiledWindow(index, total, branch, frame_count, start, end, prompt,
                           files, tag_map, anchors, diagnostics, shot_ids, seed_offset=index,
                           resolved_shots=resolved_shots, unresolved_shots=unresolved_shots)
+
+
+def _shot_boundaries(timeline):
+    """Where the cuts are, in frames, for a boundary-aware partition policy.
+
+    Deliberately NOT snapped to the 17k+5 grid. A cut is at whatever frame the
+    user's durations put it at; snapping it here would move the target before the
+    partitioner ever got to try to hit it, and it would then "align" to a
+    boundary that is not where the shot actually ends.
+
+    `frames` takes this as a plain sequence of integers and imports nothing from
+    `timeline`, which is what keeps the partitioner testable on numbers alone.
+
+    The last shot's end is not a cut. It is where the film stops, and there is no
+    following window for a shot to spill into -- counting it would have the policy
+    report the end of the timeline as a boundary it failed to reach. It only stays
+    in when the timeline runs on past the shots, where it really is an interior
+    boundary.
+    """
+    fps = float(timeline.fps)
+    end_of_film = float(timeline.duration_seconds)
+    cuts = []
+    for shot in timeline.ordered_shots():
+        if shot.end >= end_of_film - 1e-6:
+            continue
+        position = int(round(shot.end * fps))
+        if position > 0 and position not in cuts:
+            cuts.append(position)
+    return cuts
 
 
 def _socket_sort_key(item):

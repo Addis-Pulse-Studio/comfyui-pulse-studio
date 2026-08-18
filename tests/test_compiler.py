@@ -623,3 +623,69 @@ class TestSocketNamesDoNotCollideWithTheBin(unittest.TestCase):
             {"id": "a", "kind": KIND_IMAGE, "name": "Image1", "file": "a.png"},
             {"id": "b", "kind": KIND_IMAGE, "name": "Image1", "file": "b.png"}])
         self.assertIsNone(bin_.find_by_name("Image1"))
+
+
+class TestShotAlignedWindowsEndToEnd(unittest.TestCase):
+    """The invariant the policy exists for: no shot compiled into two windows.
+
+    Asserted on the compiled plan rather than on the frame counts, because the
+    frame counts are not the point -- `Timeline.shots_in` deciding to hand the
+    same shot to two windows is.
+    """
+
+    @staticmethod
+    def _timeline(durations):
+        cursor = 0.0
+        shots = []
+        for index, duration in enumerate(durations):
+            shots.append({"id": "s%d" % index, "start": cursor,
+                          "duration": duration, "prompt": "shot %d" % index})
+            cursor += duration
+        return make_timeline(assets=[], shots=shots, duration_seconds=cursor)
+
+    @staticmethod
+    def _straddling(plan):
+        seen = {}
+        for window in plan.windows:
+            for shot_id in window.shot_ids:
+                seen.setdefault(shot_id, []).append(window.index)
+        return {k: v for k, v in seen.items() if len(v) > 1}
+
+    def test_solvable_durations_leave_nothing_straddling(self):
+        # 362 + 362 frames at 24fps: two whole legal windows, so both cuts land.
+        timeline = self._timeline([362 / 24.0, 362 / 24.0, 243 / 24.0])
+        self.assertTrue(self._straddling(compile_timeline(timeline, policy="balanced")),
+                        "the balanced baseline was expected to straddle")
+        plan = compile_timeline(timeline, policy="shot_aligned")
+        self.assertEqual(self._straddling(plan), {})
+
+    def test_unsolvable_durations_straddle_and_the_plan_says_so(self):
+        """Four equal 10s shots. No run of 17k+5 windows sums to frame 240.
+
+        The policy must not silently return balanced windows and imply it
+        aligned them -- it reports the cuts it could not reach.
+        """
+        timeline = self._timeline([10.0] * 4)
+        plan = compile_timeline(timeline, policy="shot_aligned")
+        self.assertTrue(self._straddling(plan))
+        self.assertTrue(any("could not be reached" in d for d in plan.diagnostics),
+                        plan.diagnostics)
+
+    def test_the_end_of_the_film_is_not_reported_as_a_missed_cut(self):
+        """The last shot ends where the film does; there is no seam there."""
+        timeline = self._timeline([362 / 24.0, 362 / 24.0, 243 / 24.0])
+        plan = compile_timeline(timeline, policy="shot_aligned")
+        self.assertTrue(any("every one of the 2 shot boundaries" in d
+                            for d in plan.diagnostics), plan.diagnostics)
+
+    def test_every_window_is_still_on_the_grid(self):
+        for durations in ([10.0] * 4, [362 / 24.0, 362 / 24.0, 243 / 24.0], [7.0, 8.0]):
+            with self.subTest(durations=durations):
+                plan = compile_timeline(self._timeline(durations), policy="shot_aligned")
+                for window in plan.windows:
+                    self.assertTrue(is_on_grid(window.frame_count))
+
+    def test_the_render_still_covers_the_whole_timeline(self):
+        timeline = self._timeline([10.0] * 4)
+        plan = compile_timeline(timeline, policy="shot_aligned")
+        self.assertGreaterEqual(plan.total_seconds, timeline.duration_seconds - 1e-6)

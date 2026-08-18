@@ -39,8 +39,14 @@ __all__ = [
     "video_latent_t",
     "last_anchor_index",
     "partition_windows",
+    "shot_aligned_windows",
     "window_bounds",
+    "POLICIES",
 ]
+
+#: How a long timeline is split. Surfaced verbatim as PulseSlate's
+#: `partition_strategy` widget, so the order here is the order in the combo.
+POLICIES = ("balanced", "fill", "shot_aligned")
 
 
 def is_on_grid(n):
@@ -188,9 +194,176 @@ def _merge_short_tail(windows, floor, notes):
     return windows
 
 
+def _exact_split(span, cap, floor, ceiling=MAX_WINDOW_FRAMES):
+    """Windows summing EXACTLY to `span`, all on grid and within [floor, ceiling].
+
+    Returns None when no such split exists, which is the common case and not an
+    error -- see `shot_aligned_windows` for why.
+
+    THE ARITHMETIC THAT MAKES THIS MOSTLY IMPOSSIBLE
+
+    Every window is 17k+5, so n of them sum to 17K + 5n. For that to equal `span`
+    exactly, `span - 5n` must be a non-negative multiple of 17 -- i.e. n has to
+    satisfy `span == 5n (mod 17)`. Five is invertible mod 17, so exactly one
+    residue class of n works, and only every 17th candidate count is even a
+    candidate. Whether any of those also lands inside [span/ceiling, span/floor]
+    is luck.
+
+    Candidates are tried nearest-to-`cap` first, so when several work the windows
+    come out closest to the length the user actually asked for.
+    """
+    span = int(span)
+    if span < floor:
+        return None
+    n_min = max(1, math.ceil(span / float(ceiling)))
+    n_max = span // floor
+    preferred = max(1, int(round(span / float(cap)))) if cap else n_min
+    for n in sorted(range(n_min, n_max + 1), key=lambda k: (abs(k - preferred), k)):
+        remainder = span - FRAME_GRID_REMAINDER * n
+        if remainder < 0 or remainder % FRAME_GRID_MODULUS:
+            continue
+        steps = remainder // FRAME_GRID_MODULUS
+        base, extra = divmod(steps, n)
+        windows = ([frames_from_step(base + 1)] * extra
+                   + [frames_from_step(base)] * (n - extra))
+        if min(windows) < floor or max(windows) > ceiling:
+            continue
+        return windows
+    return None
+
+
+def _balanced_split(total_frames, cap, floor, notes):
+    """Near-equal windows covering at least `total_frames`. The default policy."""
+    n_fewest = max(1, math.ceil(total_frames / cap))
+    n_most = max(1, total_frames // floor)
+
+    if n_fewest <= n_most:
+        n = n_fewest
+    else:
+        # Cap and floor cannot both hold. The floor is a property of how the
+        # model was trained; the cap is a preference. The floor wins.
+        n = n_most
+        stretched = _spread(total_frames, n)
+        notes.append(
+            "a window length of %d frames (~%.2fs) cannot hold alongside the %d-frame "
+            "trained floor; windows stretched to %d frames (~%.2fs) so none falls below it"
+            % (cap, frames_to_seconds(cap), floor, max(stretched),
+               frames_to_seconds(max(stretched))))
+
+    while True:
+        windows = _spread(total_frames, n)
+        if max(windows) > MAX_WINDOW_FRAMES:
+            n += 1
+            continue
+        if min(windows) < floor and n > 1:
+            n -= 1
+            continue
+        return windows
+
+
+def shot_aligned_windows(total_frames, boundaries, cap, floor, notes):
+    """Windows whose seams land on shot cuts wherever the grid allows it.
+
+    WHY THIS POLICY EXISTS
+
+    `Timeline.shots_in` is an overlap test, so a shot whose span crosses a seam is
+    compiled into *both* windows -- described twice, timestamped from zero in the
+    second, and hashed into both window seeds. That is the right behaviour once a
+    seam falls inside a shot (the alternative is a window with no direction, which
+    renders as a stall), but it is a cost, and until now the only way to avoid it
+    was to solve for shot durations by hand.
+
+    WHAT "ALIGNED" CAN AND CANNOT MEAN
+
+    Not "snap each seam to its nearest cut". Cumulative position after k windows
+    is 17K + 5k, so a seam can land on a cut at frame p only when p == 5k (mod
+    17) -- and k is effectively fixed by the timeline length. Landing *near* a cut
+    is worth nothing at all: `shots_in` is an overlap test, and a seam one frame
+    inside a shot straddles it exactly as much as a seam in the middle does.
+
+    So alignment is all-or-nothing per seam, and the question is which subset of
+    cuts can be hit at once. A seam lands on every chosen cut iff the gap between
+    each consecutive pair is itself a legal window run -- an exact split, which
+    `_exact_split` decides. This walks those spans and takes the subset that hits
+    the most cuts, then reports the cuts it could not honour.
+
+    The final span is the one exception: it may overshoot, exactly as every other
+    policy does, because nothing follows it to be pushed out of place.
+    """
+    cuts = sorted({int(p) for p in (boundaries or []) if 0 < int(p) < total_frames})
+    if not cuts:
+        notes.append(
+            "shot_aligned needs shot boundaries and none were supplied; windows were "
+            "balanced instead")
+        return _balanced_split(total_frames, cap, floor, notes)
+
+    positions = [0] + cuts + [total_frames]
+    last = len(positions) - 1
+
+    # best[j] = (cuts hit so far, previous index, windows spanning that edge)
+    best = [None] * len(positions)
+    best[0] = (0, None, None)
+    for j in range(1, len(positions)):
+        for i in range(j):
+            if best[i] is None:
+                continue
+            span = positions[j] - positions[i]
+            if j == last:
+                # Nothing follows, so this span may overshoot like any other.
+                windows = _balanced_split(span, cap, floor, []) if span >= floor else None
+                if windows and max(windows) > MAX_WINDOW_FRAMES:
+                    windows = None
+            else:
+                windows = _exact_split(span, cap, floor)
+            if windows is None:
+                continue
+            score = best[i][0] + 1
+            if best[j] is None or score > best[j][0]:
+                best[j] = (score, i, windows)
+
+    if best[last] is None:
+        notes.append(
+            "no window layout on the 17k+5 grid can put a seam on any shot boundary "
+            "of this timeline; windows were balanced instead. Adjusting a shot "
+            "duration by a few tenths of a second is usually enough to make one fit.")
+        return _balanced_split(total_frames, cap, floor, notes)
+
+    windows = []
+    anchors = []
+    index = last
+    while index:
+        _, previous, edge = best[index]
+        windows = list(edge) + windows
+        anchors.append(positions[index])
+        index = previous
+    anchors.reverse()
+
+    honoured = [p for p in anchors if p in set(cuts)]
+    missed = [p for p in cuts if p not in set(honoured)]
+    if missed:
+        notes.append(
+            "shot_aligned put a seam on %d of %d shot boundaries. %s could not be "
+            "reached: no run of 17k+5 windows sums to those positions, so the shots "
+            "there are still compiled into two windows each."
+            % (len(honoured), len(cuts),
+               "Frame " + ", ".join(str(p) for p in missed[:6])
+               + (" and %d more" % (len(missed) - 6) if len(missed) > 6 else "")))
+    elif honoured:
+        notes.append(
+            "shot_aligned put a seam on every one of the %d shot boundaries; no shot "
+            "is compiled into two windows." % len(cuts))
+    if max(windows) > cap:
+        notes.append(
+            "aligning to shot boundaries needed windows of up to %d frames (~%.2fs), "
+            "past the %d frames (~%.2fs) requested -- the cut positions decide the "
+            "lengths on this policy."
+            % (max(windows), frames_to_seconds(max(windows)), cap, frames_to_seconds(cap)))
+    return windows
+
+
 def partition_windows(total_frames, window_frames=MAX_WINDOW_FRAMES,
                       policy="balanced", min_window_frames=MIN_TRAINED_FRAMES,
-                      diagnostics=None):
+                      diagnostics=None, boundaries=None):
     """Split a total frame count into per-render windows, all on the grid.
 
     Returns a list of frame counts whose sum is >= the requested total (never
@@ -240,8 +413,9 @@ def partition_windows(total_frames, window_frames=MAX_WINDOW_FRAMES,
     cap = max(MIN_FRAMES, min(snap_frames_nearest(window_frames), MAX_WINDOW_FRAMES))
     floor = max(MIN_FRAMES, int(min_window_frames))
 
-    if policy not in ("balanced", "fill"):
-        raise ValueError("policy must be 'balanced' or 'fill', got %r" % (policy,))
+    if policy not in POLICIES:
+        raise ValueError("policy must be one of %s, got %r"
+                         % (", ".join(repr(p) for p in POLICIES), policy))
 
     # The exception: a total below the floor has nothing to merge into.
     if total_frames <= floor:
@@ -252,6 +426,15 @@ def partition_windows(total_frames, window_frames=MAX_WINDOW_FRAMES,
                 "it renders as one short window, outside the range the model was trained on"
                 % (window, floor, frames_to_seconds(floor)))
         return [window]
+
+    if policy == "shot_aligned":
+        # Before the single-window shortcut: a timeline that fits in one window
+        # has no seam to align, but one that fits in one window *at the cap* may
+        # still be worth splitting on a cut. shot_aligned_windows decides.
+        if total_frames <= cap and not [p for p in (boundaries or [])
+                                        if 0 < int(p) < total_frames]:
+            return [align_frame_count(total_frames)]
+        return shot_aligned_windows(total_frames, boundaries, cap, floor, notes)
 
     if total_frames <= cap:
         return [align_frame_count(total_frames)]
@@ -270,32 +453,7 @@ def partition_windows(total_frames, window_frames=MAX_WINDOW_FRAMES,
             % (floor, MAX_WINDOW_FRAMES))
 
     # ── balanced ────────────────────────────────────────────────────────────
-    # Fewest windows that respect the cap; most that respect the floor.
-    n_fewest = max(1, math.ceil(total_frames / cap))
-    n_most = max(1, total_frames // floor)
-
-    if n_fewest <= n_most:
-        n = n_fewest
-    else:
-        # Cap and floor cannot both hold. The floor is a property of how the
-        # model was trained; the cap is a preference. The floor wins.
-        n = n_most
-        stretched = _spread(total_frames, n)
-        notes.append(
-            "a window length of %d frames (~%.2fs) cannot hold alongside the %d-frame "
-            "trained floor; windows stretched to %d frames (~%.2fs) so none falls below it"
-            % (cap, frames_to_seconds(cap), floor, max(stretched),
-               frames_to_seconds(max(stretched))))
-
-    while True:
-        windows = _spread(total_frames, n)
-        if max(windows) > MAX_WINDOW_FRAMES:
-            n += 1
-            continue
-        if min(windows) < floor and n > 1:
-            n -= 1
-            continue
-        return windows
+    return _balanced_split(total_frames, cap, floor, notes)
 
 
 

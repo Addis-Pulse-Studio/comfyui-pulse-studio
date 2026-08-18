@@ -62,6 +62,7 @@ from .comfyui_pulse_studio.fingerprint import (
     patch_fingerprint,
     patch_warnings,
 )
+from .comfyui_pulse_studio.frames import POLICIES
 from .comfyui_pulse_studio.patches import check_model_patches, check_single_checkpoint
 from .comfyui_pulse_studio.pulse_timeline import (
     CONTINUITY_INHERIT,
@@ -413,11 +414,15 @@ class PulseSlate:
                     "The base seed. Each window's actual seed is derived from this and "
                     "from the set of shots in that window, so inserting a shot does not "
                     "reroll the windows that did not change."}),
-                "partition_strategy": (["balanced", "fill"], {"default": "balanced",
+                "partition_strategy": (list(POLICIES), {"default": "balanced",
                     "tooltip":
                     "How a long timeline is split. 'balanced' spreads it into near-equal "
                     "windows, avoiding a short trailing window below H3's 124-frame trained "
-                    "floor. 'fill' packs full windows and merges any short tail backwards."}),
+                    "floor. 'fill' packs full windows and merges any short tail backwards. "
+                    "'shot_aligned' puts window seams on shot boundaries wherever the "
+                    "17k+5 grid allows it, so fewer shots are compiled into two windows -- "
+                    "it reports which cuts it could not reach, and it gives up "
+                    "window_seconds to do it."}),
                 "window_seconds": ("FLOAT", {"default": 15.0, "min": 5.2, "max": 15.1,
                                              "step": 0.1, "tooltip":
                     "Length of each individual H3 call. The trained ceiling is ~15.08s "
