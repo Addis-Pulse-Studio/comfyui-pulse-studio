@@ -111,6 +111,73 @@ test("an empty or absent widget list is fine", () => {
   assert.equal(checkWidgetOrder(undefined).ok, true);
 });
 
+// ── the bin's own slot ──────────────────────────────────────────────────────
+//
+// ps_asset_bin is declared serialize:false and frontend 1.49.6 serialises it
+// regardless, so it occupies a real slot in widgets_values. That is harmless
+// only while the slot is the LAST one. Nothing checked that until 2026-08-17:
+// the append rule was enforced for natives following a custom widget, but a
+// custom widget that was merely not-last passed clean.
+
+test("the bin widget is fine when it is last and non-serialising", () => {
+  const widgets = [
+    { name: "global_prompt" },
+    { name: "ps_asset_bin", options: { serialize: false } },
+  ];
+  const report = checkWidgetOrder(widgets);
+  assert.equal(report.binError, null);
+  assert.equal(report.ok, true);
+});
+
+test("a widget appended after the bin is caught", () => {
+  // The exact future mistake: a new required widget appended to INPUT_TYPES
+  // lands after addDOMWidget has already run, so saved files feed the bin's
+  // JSON document into it.
+  const widgets = [
+    { name: "global_prompt" },
+    { name: "ps_asset_bin", options: { serialize: false } },
+    { name: "seam_treatment" },
+  ];
+  const report = checkWidgetOrder(widgets);
+  assert.ok(report.binError, "a trailing native widget was not detected");
+  assert.match(report.binError, /not last/);
+  assert.equal(report.ok, false);
+});
+
+test("a serialising bin widget is caught", () => {
+  const widgets = [
+    { name: "global_prompt" },
+    { name: "ps_asset_bin", options: { serialize: true } },
+  ];
+  const report = checkWidgetOrder(widgets);
+  assert.match(report.binError, /serialize: false/);
+  assert.equal(report.ok, false);
+});
+
+test("a second DOM widget is caught", () => {
+  const widgets = [
+    { name: "global_prompt" },
+    { name: "ps_asset_bin", options: { serialize: false } },
+    { name: "ps_something_else", options: { serialize: false } },
+  ];
+  const report = checkWidgetOrder(widgets);
+  assert.match(report.binError, /more than one/);
+  assert.equal(report.ok, false);
+});
+
+test("a node with no DOM widget at all is fine", () => {
+  // PulseShot, PulseRender and the rest have no panel.
+  const report = checkWidgetOrder([{ name: "label" }, { name: "visual" }]);
+  assert.equal(report.binError, null);
+  assert.equal(report.ok, true);
+});
+
+test("a bin widget with no options object is not reported as serialising", () => {
+  // The test fakes elsewhere in this file omit `options`; absence is not a claim.
+  const report = checkWidgetOrder([{ name: "global_prompt" }, { name: "ps_asset_bin" }]);
+  assert.equal(report.binError, null);
+});
+
 // ── the live node must match the name table ─────────────────────────────────
 
 test("live widget names matching the table pass the name check", () => {

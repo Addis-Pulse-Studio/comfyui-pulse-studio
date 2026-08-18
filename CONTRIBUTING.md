@@ -72,6 +72,25 @@ moment a workflow is saved.
   appended. `node.widgets.splice` is prohibited.
 - Node class names serialise into saved workflows and are not renamed.
 
+### `ps_asset_bin` occupies a real slot, and it must stay last
+
+`ps_asset_bin` is declared `serialize: false`. Frontend 1.49.6 serialises it
+anyway, so a saved `PulseSlate` carries one value for it after every
+`INPUT_TYPES` widget — 26 values for 25 widget names.
+
+That is harmless only while the slot is the *last* one. Append a new required
+widget to `PulseSlate.INPUT_TYPES` and it is created before `addDOMWidget` runs,
+so it lands **in front of** the bin's slot; every saved file then feeds the bin's
+JSON document into the new widget, and the file still loads without complaint.
+
+So, when appending a widget to `PulseSlate` specifically:
+
+- append to `INPUT_TYPES` and to `SPECS.PulseSlate` in `js/ps_widget_order.js` as
+  usual — the order between them is what `checkWidgetOrder` verifies at
+  construction, and it now fails loudly if the bin is no longer last;
+- re-save every graph in `example_workflows/` so the stored array matches;
+- do not move the `addDOMWidget` call. It is last on purpose.
+
 These rules are enforced by tests in both languages, including a cross-language
 check that compares the Python `INPUT_TYPES` against the JavaScript widget
 table. A change to one without the other fails CI.

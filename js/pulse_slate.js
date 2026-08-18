@@ -754,9 +754,10 @@ function buildFace(node) {
     node.psAssetBin = panel;
     node.psBinWidget = widget;
 
-    // Both invariants, checked at construction rather than merely intended:
-    // nothing custom ahead of a native widget, and the live native names still
-    // equal the table the loader reads workflows against.
+    // All three invariants, checked at construction rather than merely intended:
+    // nothing custom ahead of a native widget, the bin's own slot is the single
+    // last one, and the live native names still equal the table the loader reads
+    // workflows against.
     const order = checkWidgetOrder(node.widgets, undefined, NODE_ID);
     if (order.offenders.length) {
       console.error(
@@ -768,6 +769,13 @@ function buildFace(node) {
       console.error(`[PulseStudio] ${order.nameError}\n  ` +
         `Workflows will load values into the wrong widgets until ` +
         `js/ps_widget_order.js is updated to match INPUT_TYPES.`);
+    }
+    if (order.binError) {
+      console.error(
+        `[PulseStudio] the asset bin's widget slot is unsafe: ${order.binError}\n  ` +
+        `It is declared serialize: false, but the frontend serialises it anyway, so ` +
+        `its position is load-bearing. Append new widgets to INPUT_TYPES only, and ` +
+        `let addDOMWidget stay the last call.`);
     }
 
     node.size = [Math.max(node.size?.[0] ?? 0, 480), Math.max(node.size?.[1] ?? 0, 1020)];

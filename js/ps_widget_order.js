@@ -48,6 +48,14 @@
  *  comfyui_pulse_studio/constants.py -- tests/test_js_guard.py asserts it. */
 export const CURRENT = "3.0.0";
 
+/** How a widget this pack appended is told apart from one INPUT_TYPES declared.
+ *
+ *  Every DOM widget this pack adds is named `ps_*`. The pattern was written out
+ *  three times -- in checkWidgetOrder, in applySavedValues, and in a comment
+ *  promising an assertion that did not exist -- so it lives here now. */
+export const CUSTOM_WIDGET_RE = /^ps_/;
+export const isCustomWidget = (w) => CUSTOM_WIDGET_RE.test(w?.name ?? "");
+
 /**
  * Live widget layout, per node class, per schema version.
  *
@@ -299,24 +307,28 @@ export function validateWidgetValues(values, spec = NATIVE_WIDGETS) {
 }
 
 /**
- * Assert that no custom DOM widget sits before a native one, and -- when a node
- * class is named -- that the live native widget names are exactly
+ * Assert that no custom DOM widget sits before a native one, that any custom
+ * widget present is the single last entry and declares `serialize: false`, and
+ * -- when a node class is named -- that the live native widget names are exactly
  * WIDGET_NAMES[nodeId][CURRENT], in order.
  *
  * The first check keeps saving safe. The second is what catches a widget added
  * to INPUT_TYPES without updating this file, which would otherwise leave the
  * loader assigning values to the wrong names for the rest of the node's life.
  *
- * Returns { ok, offenders, firstCustom, nameError }.
+ * Returns { ok, offenders, firstCustom, nameError, binError }.
  */
-export function checkWidgetOrder(widgets, isCustom = (w) => /^ps_/.test(w?.name ?? ""),
-                                 nodeId = null) {
+export function checkWidgetOrder(widgets, isCustom = isCustomWidget, nodeId = null) {
   const offenders = [];
   let seenCustom = null;
   const liveNames = [];
-  for (const widget of widgets ?? []) {
+  const live = widgets ?? [];
+  const customs = [];
+  for (let i = 0; i < live.length; i++) {
+    const widget = live[i];
     if (isCustom(widget)) {
       if (seenCustom === null) seenCustom = widget.name;
+      customs.push({ widget, index: i });
       continue;
     }
     liveNames.push(widget?.name);
@@ -324,6 +336,29 @@ export function checkWidgetOrder(widgets, isCustom = (w) => /^ps_/.test(w?.name 
       // A native widget appearing AFTER a custom one means the custom widget
       // occupies a slot ahead of it, and every value from here on will shift.
       offenders.push(widget.name);
+    }
+  }
+
+  // The trailing DOM widget, asserted rather than assumed.
+  //
+  // ps_asset_bin is declared `serialize: false`, and frontend 1.49.6 serialises
+  // it regardless. That is benign only while it sits after every INPUT_TYPES
+  // widget: the next required widget appended to PulseSlate would land in front
+  // of it, and saved files would then feed the bin's JSON document into that new
+  // widget. Nothing checked any of this -- the doc comment on applySavedValues
+  // promised a "dead slot at the end" that nothing verified.
+  let binError = null;
+  if (customs.length > 1) {
+    binError = `more than one appended DOM widget: ${customs.map((c) => c.widget.name)
+      .join(", ")}. The slot contract allows exactly one.`;
+  } else if (customs.length === 1) {
+    const { widget, index } = customs[0];
+    if (index !== live.length - 1) {
+      binError =
+        `${widget.name} is at index ${index} of ${live.length} widgets, not last. ` +
+        `A widget appended after it will be saved into ${widget.name}'s slot.`;
+    } else if (widget.options && widget.options.serialize !== false) {
+      binError = `${widget.name} must be declared serialize: false.`;
     }
   }
 
@@ -350,8 +385,8 @@ export function checkWidgetOrder(widgets, isCustom = (w) => /^ps_/.test(w?.name 
     }
   }
 
-  return { ok: offenders.length === 0 && !nameError, offenders,
-           firstCustom: seenCustom, nameError };
+  return { ok: offenders.length === 0 && !nameError && !binError, offenders,
+           firstCustom: seenCustom, nameError, binError };
 }
 
 /**
@@ -390,7 +425,8 @@ export function readSavedValues(nodeId, savedArray) {
  * Positional assignment is never used. Names the live node has but the file
  * does not fall back to their declared default; names the file has but the live
  * node does not are dropped with a warning. Trailing slots beyond the native
- * widget count are the DOM widget's dead slot and are never assigned.
+ * widget count are the DOM widget's dead slot and are never assigned --
+ * checkWidgetOrder is what verifies that slot really is trailing.
  *
  * Returns { ok, version, applied, defaulted, dropped, reason }.
  */
@@ -405,7 +441,7 @@ export function applySavedValues(node, nodeId, savedArray, warn = console.warn) 
 
   for (const widget of node?.widgets ?? []) {
     const name = widget?.name;
-    if (!name || /^ps_/.test(name)) continue; // the appended DOM widget
+    if (!name || CUSTOM_WIDGET_RE.test(name)) continue; // the appended DOM widget
     live.add(name);
     if (read.values.has(name)) {
       widget.value = read.values.get(name);
