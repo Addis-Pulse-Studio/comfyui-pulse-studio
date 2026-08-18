@@ -4,6 +4,230 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+### The canvas is the shape it claims to be
+
+`16:9 landscape` resolved to **1344x736**: 4.2% under H3's 1,032,192 px budget, at
+an actual ratio of 1.826 against the 1.778 it promised. Neither as large as it
+could be nor the shape written on the widget.
+
+The cause was rounding each axis down to the /32 grid independently. Independent
+flooring loses up to a full grid step on *both* axes and the two losses compound
+rather than cancel. The long edge still floors; the short edge now takes whichever
+grid step is **nearest** the ratio-implied ideal and still inside the budget.
+
+| preset | was | is | budget |
+|---|---|---|---|
+| 16:9 landscape | 1344x736 | **1344x768** | 95.8% -> 100.0% |
+| 9:16 portrait | 736x1344 | **768x1344** | 95.8% -> 100.0% |
+| 21:9 ultrawide | 1536x640 | **1536x672** | 95.2% -> 100.0% |
+| 1:1 square | 992x992 | 992x992 | unchanged, exactly square |
+| 4:3 landscape | 1152x864 | 1152x864 | unchanged, exactly 4:3 |
+| 3:4 portrait | 864x1152 | 864x1152 | unchanged |
+
+Nearest, not simply the largest that fits: at 4:3 the largest short edge that fits
+is 896, which hits the budget exactly and turns 1.3333 into 1.2857, and taking the
+largest everywhere would make the 1:1 preset 992x1024. A preset is a promise about
+shape, so shape wins and the budget is filled only where filling it does not break
+the promise.
+
+- **This changes what renders.** Width and height are the latent size, so a
+  segment cached before this re-renders after it, and a 16:9 film continued across
+  the change would step resolution mid-cut if it did not.
+- `PulseStill`'s `canvas_from_reference` calls the same function now. The two
+  paths reach the same node, and until this landed a 1920x1080 reference and the
+  "16:9 landscape" preset resolved to different canvases — 1344x736 against
+  1344x768 — purely because each had its own rounding.
+- The `height` widget's default moved 736 -> 768 with it, and the shipped graphs
+  were re-saved. They were storing 1344x736 for a preset that resolves to
+  1344x768: the widgets disagreed with the node, and nothing said so, because the
+  two are only compared at queue time. `tests/test_workflow.py` now compares them.
+- The arithmetic lives in `comfyui_pulse_studio/canvas.py` rather than in
+  `nodes.py`, because `nodes.py` imports torch and that made the canvas — which
+  sets every render's latent size — unreachable from the headless suite.
+
+### New — `shot_aligned` windows
+
+A third `partition_strategy`, beside `balanced` and `fill`. It puts window seams
+**on shot cuts** wherever the frame grid allows it.
+
+`Timeline.shots_in` is an overlap test, so a shot crossing a seam is compiled into
+*both* windows: described twice, timestamped from zero in the second, and hashed
+into both window seeds, so editing it rerolls two windows. That is the right
+behaviour once a seam falls inside a shot — the alternative is a window with no
+direction, which renders as a stall — but it is a cost, and until now the only way
+to avoid it was to solve for shot durations by hand.
+
+Alignment is all-or-nothing per seam, never "snap to the nearest cut". Cumulative
+position after k windows is 17K + 5k, so a seam can land on a cut at frame p only
+when p == 5k (mod 17), and landing *near* a cut is worth exactly nothing: a seam
+one frame inside a shot straddles it as much as a seam in the middle does. So the
+policy walks the spans between cuts, takes the subset it can hit at once, and
+**names the cuts it could not honour** in the report rather than reporting success.
+It gives up `window_seconds` to do it, and falls back to `balanced` — saying so —
+when no shot boundaries were supplied.
+
+### New — `seam_treatment` on Pulse Render
+
+The container-level seam has been solved since 3.0.0: segment placement is
+computed from frame counts, never measured from timestamps, so the picture is
+gapless by construction. What was never addressed is that the two sides of a seam
+are two *independently generated takes* — a score that restarts, a level that
+steps, a grade that drifts. None of that is a timestamp problem.
+
+- **`audio+colour`** (default) — level-matches and tapers each audio join, and
+  grades a window's opening towards the frame the previous window ended on,
+  decaying over 12 frames. A flat correction across a whole window does not remove
+  a cut; it moves it to the next seam.
+- **`audio`** — the audio join only.
+- **`off`** — both joins untreated. Offered because a treatment that changes
+  rendered output should be A/B-able against the untreated join, and because
+  colour matching is the kind of correction that occasionally makes things worse.
+
+A window that follows a **cached** segment is never colour-matched: the segment
+before it is already encoded, so only one side of that seam can still move, and
+grading half a boundary is worse than grading none of it. The report says so and
+names the window rather than quietly doing half the job.
+
+### New — descriptions and retention, from the bin panel
+
+`compiler._build_subjects` promotes an image or video to a `<Subject N>`
+definition only if it carries a description — which is the shape MiniMax's own
+reference format asks for, and what identity consistency is built on. Nothing in
+the panel could write one, so the whole mechanism was reachable only by
+hand-editing `timeline_data`.
+
+Both fields are now edited on the row, through the same server-side evaluate-and-
+apply route as every other bin edit, so the numbering rule keeps one home.
+
+- **description** — empty is accepted rather than refused; clearing one demotes
+  the asset back to a plain `<Picture i>` citation, which is a legitimate edit.
+  Refused on audio, which has no `<Subject N>` form.
+- **retention** — `fully_preserved` or `partially_copy`, sent to the panel from
+  `constants.py` rather than hardcoded in JavaScript. The document schema still
+  says `"retention": "string"`, because a project with a better phrase for MiniMax
+  should be able to use it; the *selector* is closed, because the value is written
+  verbatim into a sentence the model reads literally, and a misspelled retention
+  instruction is not an error — it is a slightly worse render, which is the
+  hardest kind of failure to notice.
+
+### A checkpoint nobody samples with is not free
+
+`check_single_checkpoint` returns `(warnings, notes)` — the only two-tier finding
+in the pack, because these two cases differ in severity and collapsing them would
+either hide the cheap one or cry wolf about it.
+
+- **Warning, unchanged** — *sampling* through both DiT checkpoints in one
+  execution forces an evict-and-reload mid-render on a 32 GB card.
+- **Note, new** — `model_fl2va` connected while no window uses it was silent, on
+  the reasoning that it is "just a graph ready for either path". That assumed a
+  checkpoint nobody samples with is free. It is not: with Spectrum offloading
+  history to system RAM on a 32 GB box, a 20 GB checkpoint nobody samples with is
+  20 GB the render wanted. Not a mistake — keeping the socket wired is a
+  reasonable way to work — so it is a note, it reaches the report rather than the
+  node face, and it says what it costs instead of telling anyone what to do.
+
+**`PulseSlate_LongForm.json` was the first thing it caught.** The graph wired the
+fl2va checkpoint beside a `continuity` of `none`, which is precisely the
+combination that never reaches the anchored branch, so the flagship example
+shipped a graph its own report told the user to change. The loader is gone from
+it; `PulseSlate_Retake.json` is where fl2va is demonstrated now, and it uses it on
+every queue. A test asserts no shipped graph can drift back into that state.
+
+### A mode with nothing to apply it to
+
+`ref_audio_mode` on a `PulseShot` is inert with nothing wired to `ref_audio`: the
+compiler emits a lip-sync directive only when there is an audio asset to name, so
+the widget read `lip_sync` on the node face and the render came back with a mouth
+doing whatever H3 felt like.
+
+Reporting every such shot would have put three warnings on the long-form graph,
+which is doing nothing wrong — the widget *defaults* to `lip_sync`, so "lip_sync
+and no audio" is the resting state of every shot in every film that uses no
+reference audio. The two cases are separated by what the rest of the timeline is
+doing: `voice_timbre` with no audio is always reported, because somebody chose it;
+`lip_sync` with no audio is reported only when some *other* shot does connect one,
+which is a film doing per-shot audio with a shot missed.
+
+### The report answers two more questions
+
+- **Shots across a seam.** Which shots were compiled into two windows, and which
+  windows those are. With equal shot durations some shot almost always straddles,
+  because N windows sum to a grid total only when N == 1 (mod 17) — and until now
+  nothing said which one, so "why did editing that shot re-render two windows"
+  had no answer in the report.
+- **Per window, after carry-over.** What is left of each per-type reference budget
+  once carry-over has taken its slots. The budget meter on the node face counts
+  the bin; carry-over spends from the same per-window ceilings, and the difference
+  only appeared as a dropped reference at compile time.
+
+Uncited references — a reference occupying a socket that no prompt names — are
+listed too. They cost a slot in every window they are attached to.
+
+### Three more example workflows
+
+One graph has shipped since 2026-08-11. Four do now, and none of them needs a
+third-party pack to open clean:
+
+- **`PulseSlate_Single.json`** — the short path returns. `PulseSlate` hands back
+  `positive` and `latent`, `ModelSamplingMiniMaxH3` carries the flow schedule, and
+  the graph's own `SamplerCustomAdvanced` does the rest. It is the only shipped
+  graph where those two outputs are live, and the only one carrying a model patch.
+- **`PulseSlate_Cast.json`** — the Asset Bin, which is the feature the pack is
+  named for: three named references with descriptions and retention values, cited
+  by `@Name` and never by ordinal, plus per-shot `ref_audio` demonstrating
+  `lip_sync` against `voice_timbre`, and a `PulseStill` feeding a generated
+  opening frame into shot 1.
+- **`PulseSlate_Retake.json`** — a finished film in, one bad span out. The graph
+  that shows why `PulseRetake` takes `model_fl2va` and not the reference
+  checkpoint.
+
+The Cast graph opens on a populated bin, which means the files it names have to be
+in ComfyUI's `input/` folder — a workflow addresses a reference by filename, so
+shipping them inside the pack is not enough. Four placeholders (flat tones and a
+sine tone, generated by `tools/make_example_assets.py`) are copied there the first
+time the pack loads. Never overwritten: a file already sitting under one of those
+names is the user's. The copy is best-effort, so a read-only or headless install
+degrades to "Cast opens with unresolved references" rather than to a pack that
+fails to load, and it says which.
+
+`tests/test_shipped_assets.py` keeps the exemption narrow — placeholder names,
+flat directory, small enough that a photograph could not fit — and regenerates
+them from the script to prove the committed bytes and the generator have not
+drifted.
+
+### The asset bin's serialised slot must stay last
+
+`ps_asset_bin` is declared `serialize: false`. Frontend 1.49.6 serialises it
+anyway, so a saved `PulseSlate` carries one value for it after every
+`INPUT_TYPES` widget. That is harmless only while the slot is last: append a
+required widget to `PulseSlate` and it is created before `addDOMWidget` runs, so
+it lands *in front of* the bin's slot, and every saved file then feeds the bin's
+JSON document into the new widget — loading without complaint. `checkWidgetOrder`
+now fails loudly when the bin is not last, and CONTRIBUTING.md says what to do
+when appending a widget to that node specifically.
+
+### Tests
+
+Every structural check in `tests/test_workflow.py` now runs over all four shipped
+graphs. It claimed to already: the tuple existed so that restoring a graph would
+be a one-line change, but three tests iterated a fresh `(LONG_FORM,)` literal and
+two read `LONG_FORM` directly, so a restored graph would have skipped exactly the
+assertions written to catch a bad one. The day the tuple grew, two more
+assertions written around the long-form graph's own shape — five loaders, a
+director in every graph — failed on the graphs they were meant to cover, and are
+stated as rules now.
+
+`test_sigma_shift_is_upstream_of_the_sampler_not_the_director` and
+`test_the_short_graph_has_no_render_node` are **restored**, dropped on 2026-08-11
+with the graph that was their subject. §1.1's "model patches stay upstream" is
+asserted by a test again. §12.3's Sol-after-Sage ordering is still documented
+rather than enforced; that needs the Spectrum+Sage graph back, and it is not.
+
+New rules, each of which failed on a real shipped graph the day it was written:
+the stored canvas must match the preset the graph selects; the two DiT sockets
+must never share a loader; no graph may wire a checkpoint nothing in it samples
+with.
+
 ### Removed — two of the three example workflows
 
 `PulseSlate_Starter.json` and `PulseSlate_Starter_SpectrumSage.json` are gone.
@@ -25,9 +249,16 @@ What went with them, stated plainly because none of it is free:
   reached the sampler without going through the director. Both graphs are gone, so
   both tests are gone. The rules still hold and are still documented — in the
   README and in the long-form graph's own note — but nothing checks them now.
+
+  **Half of this was undone on 2026-08-17.** `PulseSlate_Single.json` carries a
+  sampler and a model patch, so the sigma-shift test has a subject again and is
+  restored. §12.3's Sol-after-Sage ordering is still unasserted: it needs the
+  Spectrum+Sage graph, which has not come back.
 - **The short path has no example.** `PulseSlate` still hands back `positive` and
   `latent` for a ≤15 s timeline; you now wire your own sampler from the README's
   description rather than from a graph.
+
+  **Undone on 2026-08-17** — `PulseSlate_Single.json` is that graph.
 - **The patch chain is wired by hand.** The order, the both-inputs detail and the
   `exact_kv_and_rows` setting moved into `PulseSlate_LongForm.json`'s note so the
   §12.3 knowledge survives its graph.

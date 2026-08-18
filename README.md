@@ -50,7 +50,20 @@ against. It has to be a build carrying `comfy_extras/nodes_minimax_h3.py` and
 is no mechanism for a custom node to enforce a host version, so this is
 documentation rather than a check.
 
-Then load `example_workflows/PulseSlate_LongForm.json`.
+Then load one of the four graphs in `example_workflows/`:
+
+| graph | what it shows |
+|---|---|
+| `PulseSlate_Single.json` | The short path: one window, sampled by your own graph. Start here. |
+| `PulseSlate_LongForm.json` | The long path: many windows, `PulseRender`, the segment cache. |
+| `PulseSlate_Cast.json` | The Asset Bin — named references, descriptions, retention, per-shot audio. |
+| `PulseSlate_Retake.json` | Re-render a bad span of a finished film, in place. |
+
+Every one of them opens with no third-party pack installed. The placeholder
+references `PulseSlate_Cast.json` cites are copied into ComfyUI's `input/` folder
+the first time this pack loads, so its bin opens resolved rather than pointing at
+files you have not got — they are flat colour and a sine tone, and the point is
+to replace them.
 
 ## Models
 
@@ -101,12 +114,12 @@ case that makes it worse, is in [The tag problem](#the-tag-problem-and-why-this-
 
 ## Two paths, by duration
 
-Two graphs, not one graph with a muted branch. Pick the file that matches the
-length you are making.
+Two paths and a graph for each, never one graph with a muted branch. Pick the
+file that matches the length you are making.
 
 | duration | graph | what happens | status |
 |---|---|---|---|
-| **≤ 15 s** — one window | *(no graph ships)* | `PulseSlate` hands back `positive` and `latent`. Your graph carries sampler → decode → mux. | **Verified on hardware.** |
+| **≤ 15 s** — one window | `PulseSlate_Single.json` | `PulseSlate` hands back `positive` and `latent`. The graph carries sampler → decode → mux. | **Verified on hardware.** |
 | **> 15 s** — many windows | `PulseSlate_LongForm.json` | `PulseSlate` hands a `PULSE_TIMELINE` to `PulseRender`, which renders one window per H3 call, caches each to disk, and stitches. | **Runs on hardware** — a >15 s multi-window render completed 2026-08-10. The seam-by-seam listening pass is still not written down, so treat seam quality as unconfirmed. |
 
 That last column is stated plainly because a stitched seam is the kind of thing
@@ -273,6 +286,19 @@ Each drop gets a short alias (`Image1`, `Video1`, `Audio1`) you rename inline �
 you never type a filename. The meter refuses a drop that would break the budget
 rather than failing at queue time.
 
+Two fields on each row decide how much the model is told about a reference:
+
+- **description** — a one-line description promotes the reference from a bare
+  `<Picture i>` citation to a `<Subject N>` definition, which is the shape
+  MiniMax's own reference format asks for and what identity consistency is built
+  on. Clear it and the same image is cited plainly; both are legal. Audio has no
+  `<Subject N>` form, so the field is refused there rather than written where it
+  can never reach the model.
+- **retention** — `fully_preserved` or `partially_copy`, written *verbatim* into
+  the prompt's retention section. A closed list rather than free text: the value
+  is a sentence the model reads literally, and a typo in one is not an error, it
+  is a slightly worse render.
+
 ---
 
 ## The tag problem, and why this node exists
@@ -400,7 +426,18 @@ does not sample.
 Windows are partitioned `balanced` by default: 16s at a 15s ceiling becomes two
 ~8s windows, not 15s + 1s. A 1s trailing window is below H3's trained floor and
 reliably looks broken. `fill` is available when you mean windows of a literal
-length.
+length, and `shot_aligned` puts the seams **on shot cuts** wherever the frame
+grid allows it — a shot that straddles a seam is compiled into *both* windows,
+described twice and hashed into both window seeds, so aligning is what stops that
+happening. It cannot hit every cut: cumulative position after k windows is
+17K + 5k, so a seam lands on a cut at frame p only when p ≡ 5k (mod 17). It takes
+the largest subset it can hit, gives up `window_seconds` to hit them, and names
+the cuts it could not reach in the report.
+
+`aspect_ratio` picks the canvas, and each preset is fitted to H3's 1,032,192 px
+budget at load time rather than hardcoded, so the table cannot drift from the
+budget: 16:9 is 1344×768, 9:16 is 768×1344, 21:9 is 1536×672, 1:1 is 992×992,
+4:3 is 1152×864. `custom` uses the `width`/`height` widgets instead.
 
 `continuity` chooses how windows join: `none`, `last_frame_carry`, or
 `keyframe_pairs`. The latter two pin a frame, which is the fl2va checkpoint
@@ -471,6 +508,19 @@ Executes a `PULSE_TIMELINE`, reusing every window already on disk. See
   twelve-window film is never held in RAM.
 - `prune_unused` — off by default. Segments from earlier edits are what make
   flipping back to an earlier edit free, so nothing is ever deleted automatically.
+- `seam_treatment` — what to do where two windows meet. The container-level seam
+  is solved by construction (placement is computed from frame counts, never
+  measured from timestamps), but the two sides are two independently generated
+  takes: a score that restarts, a level that steps, a grade that drifts.
+  `audio+colour`, the default, level-matches and tapers each audio join and grades
+  a window's opening towards the frame the previous one ended on, decaying over 12
+  frames — a flat correction across a whole window does not remove a cut, it moves
+  it to the next seam. `audio` does the first only. `off` leaves both untreated,
+  which is what you want when you are A/B-ing it, and colour matching is the kind
+  of correction that occasionally makes things worse. A window following a
+  *cached* segment is never colour-matched — the segment either side of it is
+  already encoded, so only one side of that seam can move — and the report says so
+  rather than quietly doing half the job.
 
 Every approximation patched onto the incoming model is detected and folded into
 the cache key. Sol-Attn, Spectrum and EasyCache all change what the same prompt at
@@ -507,9 +557,13 @@ same compiler, same reference marshalling.
 - `frame_pick` (0–4): your source is pinned at frame 0, so 0 hugs the original
   and 4 drifts furthest. This is the edit-strength dial, exposed rather than
   hidden.
-- `canvas_from_reference`: fits the source's aspect into H3's 1,032,192 px budget,
-  rounding **down** to multiples of 32 — rounding down is what guarantees the
-  result stays inside the budget.
+- `canvas_from_reference`: fits the source's aspect into H3's 1,032,192 px budget
+  on the /32 grid. The long edge rounds down; the short edge takes whichever grid
+  step is *nearest* the true ratio and still inside the budget. Flooring both axes
+  independently loses up to a step on each and the two losses compound rather than
+  cancel — 16:9 came out 1344×736, 4% under budget at an actual ratio of 1.826.
+  It is the same function the `aspect_ratio` presets use, so a 1920×1080 reference
+  and the "16:9 landscape" preset cannot resolve to different canvases.
 
 Deliberately a mode, not a second product. No layers, no masks, no inpainting.
 The moment it grows a brush it has become a different application.
@@ -623,10 +677,14 @@ retake geometry over an exhaustive sweep of reachable cuts, canvas fitting, and
 end-to-end invariants such as *every tag cited in a prompt must correspond to a
 socket that window actually carries*.
 
-Also asserted: the shipped workflows' stored widget values stay aligned with
-`INPUT_TYPES` (a widget inserted in the middle would silently shift every value
-after it), every emitted window is at least 124 frames, and no shipped graph
-carries a muted branch.
+Also asserted, over all four shipped graphs rather than over one of them: stored
+widget values stay aligned with `INPUT_TYPES` (a widget inserted in the middle
+would silently shift every value after it), the stored canvas matches the preset
+the graph selects, every link is backfilled in both directions, every emitted
+window is at least 124 frames, no graph carries a muted branch or a floating
+`PulseShot`, no graph cites a reference file the pack does not ship, and no graph
+wires a DiT checkpoint nothing in it ever samples with — ~20 GB resident for a
+model no window uses.
 
 The segment cache gets its own file, covering each acceptance behaviour in the
 spec's §7.5 — resume after a kill, one-shot edits invalidating one window, seed
