@@ -26,20 +26,14 @@ when it's wrong.
 
 ## Install
 
-Through the ComfyUI registry:
-
-```bash
-comfy node install comfyui-pulse-studio
-```
-
-Or by hand:
+Clone into your ComfyUI installation:
 
 ```bash
 cd ComfyUI/custom_nodes
 git clone https://github.com/Addis-Pulse-Studio/comfyui-pulse-studio
 ```
 
-Restart ComfyUI either way. There is nothing to `pip install`: the pack has no
+Restart ComfyUI. There is nothing to `pip install`: the pack has no
 dependencies of its own, and the tensor layer uses `torch`, `numpy`, `Pillow`
 and `av`, all of which a working ComfyUI already has. See
 [requirements.txt](requirements.txt) for why that stays true.
@@ -64,6 +58,21 @@ references `PulseSlate_Cast.json` cites are copied into ComfyUI's `input/` folde
 the first time this pack loads, so its bin opens resolved rather than pointing at
 files you have not got — they are flat colour and a sine tone, and the point is
 to replace them.
+
+## Updating
+
+New work lands on `main`, so updating is a pull in place:
+
+```bash
+cd ComfyUI/custom_nodes/comfyui-pulse-studio
+git pull
+```
+
+Restart ComfyUI afterwards — the pack is read at startup, and a running server
+goes on serving the code it loaded. Nothing else is needed: there are still no
+dependencies to reinstall, and workflows you have already saved keep loading,
+since widget values migrate by name and a slot that changed type is dropped
+rather than silently mis-wired.
 
 ## Models
 
