@@ -286,6 +286,8 @@ class AssetBinPanel {
     // are the fallback for the first paint, before any response has arrived.
     this.retentionValues = ["fully_preserved", "partially_copy"];
     this.retentionDefault = "fully_preserved";
+    this.audioRoles = ["lip_sync", "voice_timbre"];
+    this.cast = [];
     this.render();
   }
 
@@ -359,6 +361,12 @@ class AssetBinPanel {
       this.retentionValues = state.retention_values;
     }
     if (state.retention_default) this.retentionDefault = state.retention_default;
+    if (Array.isArray(state.audio_roles) && state.audio_roles.length) {
+      this.audioRoles = state.audio_roles;
+    }
+    // Who a voice can belong to, as (id, name). Offered as a name and stored as
+    // an id, so a rename cannot desynchronise a binding.
+    this.cast = Array.isArray(state.cast) ? state.cast : [];
     this.root.appendChild(this.buildMeter(state.budget));
     for (const problem of state.name_problems) {
       const warn = document.createElement("div");
@@ -544,6 +552,7 @@ class AssetBinPanel {
     // Images and videos only. Audio carries an audio_role instead, and has no
     // <Subject N> form for a description or a retention note to appear in.
     if (row.kind !== "audio") el.appendChild(this.buildSubjectRow(row));
+    else el.appendChild(this.buildVoiceRow(row));
 
     this.wireReorder(el, row.id);
     return el;
@@ -604,6 +613,75 @@ class AssetBinPanel {
     }
 
     sub.append(description, retention);
+    return sub;
+  }
+
+  /** What a recording is for, and whose voice it is.
+   *
+   * The audio half of the same problem the subject row solves. H3's text encoder
+   * emits the marker `<Audio j>: ` and never sees the waveform, so a recording
+   * reaches the model as an ordinal with no job and no owner. On a film with one
+   * speaker that is survivable; on a two-hander the voices drift between
+   * characters, which is a known upstream bug (Comfy-Org/ComfyUI#15454) and not
+   * something a sampler setting fixes.
+   *
+   * Both controls store what the compiler reads: a role from a closed
+   * vocabulary, and an owner by asset id.
+   */
+  buildVoiceRow(row) {
+    const sub = document.createElement("div");
+    sub.className = "ps-sub ps-subject";
+
+    const role = document.createElement("select");
+    role.className = "ps-retention";
+    role.title =
+      "What this recording is for. 'lip_sync': the character's mouth matches it, " +
+      "and the clip is trimmed to each window's exact span. 'voice_timbre': the " +
+      "model speaks the shot's own dialogue and borrows only the voice.";
+    for (const value of this.audioRoles) {
+      const option = document.createElement("option");
+      option.value = value;
+      option.textContent = value;
+      role.appendChild(option);
+    }
+    role.value = row.audio_role || this.audioRoles[0];
+    role.addEventListener("change", () =>
+      this.apply("set_audio_role", { asset_id: row.id, audio_role: role.value }));
+
+    const owner = document.createElement("select");
+    owner.className = "ps-retention ps-voiceof";
+    owner.title =
+      "Whose voice this is. Bound, the prompt names the character and gives them " +
+      "a speaker id that holds across the whole film. Unbound, it reaches the " +
+      "model as a voice belonging to nobody in particular.";
+    const none = document.createElement("option");
+    none.value = "";
+    none.textContent = "(nobody)";
+    owner.appendChild(none);
+    for (const member of this.cast) {
+      const option = document.createElement("option");
+      option.value = member.id;
+      option.textContent = member.name;
+      owner.appendChild(option);
+    }
+    owner.value = row.voice_of || "";
+    // Nothing to bind to yet. Disabled rather than silently offering only
+    // "(nobody)", which reads as a broken control rather than an empty cast.
+    owner.disabled = this.cast.length === 0;
+    if (owner.disabled) {
+      owner.title = "Add an image or video reference first -- a voice belongs to " +
+                    "somebody the model can see.";
+    }
+    owner.addEventListener("change", () =>
+      this.apply("set_voice_of", { asset_id: row.id, voice_of: owner.value }));
+
+    for (const el of [role, owner]) {
+      for (const ev of ["mousedown", "pointerdown", "keydown"]) {
+        el.addEventListener(ev, (e) => e.stopPropagation());
+      }
+    }
+
+    sub.append(role, owner);
     return sub;
   }
 

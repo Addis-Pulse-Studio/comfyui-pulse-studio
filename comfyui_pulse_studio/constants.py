@@ -199,6 +199,39 @@ AUDIO_ROLE_LIP_SYNC = "lip_sync"
 AUDIO_ROLE_TIMBRE = "voice_timbre"
 AUDIO_ROLES = (AUDIO_ROLE_LIP_SYNC, AUDIO_ROLE_TIMBRE)
 
+# ── Binding a voice to a face ───────────────────────────────────────────────
+# Which recording belongs to which character is the other half of the same
+# problem, and it has the same answer: prose. The sockets carry a waveform and
+# an ordinal, and MiniMax's reference format binds them to a person with two
+# pieces of text -- a <Subject N> definition, and a *global* speaker id.
+#
+# The speaker id is the part that is easy to get wrong. It is assigned at a
+# character's first vocal appearance and then never changes, across every shot
+# and every window of the film, because it is what tells the model that the
+# person speaking in shot 7 is the person who spoke in shot 2. Numbering it per
+# window -- the obvious implementation, since a window is what gets compiled --
+# would silently make every character a new person at each seam.
+#
+# The failure this prevents is documented upstream as Comfy-Org/ComfyUI#15454:
+# with two characters and no per-subject binding, the visual assignment stays
+# correct (the right mouth moves) while voice and accent leak from one speaker
+# to the other. An unbound <Audio j> says only "here is a voice"; it never says
+# whose.
+SPEAKER_ID_FORMAT = "S%d"
+
+# MiniMax's retention vocabulary for an audio reference is not the same word
+# list as for a picture, so `audio_role` maps onto it here rather than being
+# stored in it. Keeping the widget's two values means no saved graph changes
+# meaning and no cache key moves; emitting MiniMax's words means the
+# retention_analysis section says what that format expects to read.
+#
+#   lip_sync     -> fully_copy  ("use this exact track, match the mouth to it")
+#   voice_timbre -> reference   ("clone the voice, speak the shot's own words")
+AUDIO_ROLE_RETENTION = {
+    AUDIO_ROLE_LIP_SYNC: "fully_copy",
+    AUDIO_ROLE_TIMBRE: "reference",
+}
+
 # ── How much of a visual reference to hold on to ────────────────────────────
 # These strings are written *verbatim* into the prompt's retention_analysis
 # section, which the model reads literally -- they are content, not an enum the

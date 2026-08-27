@@ -17,7 +17,7 @@ from .assets import (
     AssetBin,
     BudgetError,
 )
-from .constants import RETENTION_DEFAULT, RETENTION_VALUES
+from .constants import AUDIO_ROLES, RETENTION_DEFAULT, RETENTION_VALUES
 
 __all__ = [
     "bin_state",
@@ -57,7 +57,16 @@ def bin_state(bin_, limits=None):
             row["soundtrack_tag"] = tm.by_id.get(asset.asset_id + "#soundtrack")
             row["trim_start"] = asset.trim_start
             row["trim_end"] = asset.trim_end
+        if asset.kind == KIND_AUDIO:
+            row["audio_role"] = asset.audio_role
+            row["voice_of"] = asset.voice_of
         rows.append(row)
+    # Who a voice can belong to: the visual references, which are the only things
+    # in a bin that a character can be. Sent as (id, name) so the panel offers a
+    # name and stores an id -- a picker that stored the name would break on the
+    # next rename, which is the whole reason nothing here is addressed by label.
+    cast = [{"id": a.asset_id, "name": a.name}
+            for a in bin_ if a.kind != KIND_AUDIO and not a.synthetic]
     return {
         "assets": rows,
         "budget": report.to_dict(),
@@ -66,6 +75,8 @@ def bin_state(bin_, limits=None):
         # home. The panel renders whatever options it is given.
         "retention_values": list(RETENTION_VALUES),
         "retention_default": RETENTION_DEFAULT,
+        "audio_roles": list(AUDIO_ROLES),
+        "cast": cast,
     }
 
 
@@ -155,6 +166,10 @@ def apply_operation(bin_, operation, limits=None, **kwargs):
         return _set_description(bin_, kwargs["asset_id"], kwargs["description"])
     if operation == "set_retention":
         return _set_retention(bin_, kwargs["asset_id"], kwargs["retention"])
+    if operation == "set_audio_role":
+        return _set_audio_role(bin_, kwargs["asset_id"], kwargs["audio_role"])
+    if operation == "set_voice_of":
+        return _set_voice_of(bin_, kwargs["asset_id"], kwargs.get("voice_of"))
     raise ValueError("unknown bin operation %r" % (operation,))
 
 
@@ -199,6 +214,60 @@ def _set_retention(bin_, asset_id, retention):
         raise ValueError("retention must be one of %s, got %r"
                          % (", ".join(sorted(RETENTION_VALUES)), retention))
     asset.retention = value
+    return asset
+
+
+def _set_audio_role(bin_, asset_id, audio_role):
+    """What a bin recording is for: match a mouth to it, or borrow its voice.
+
+    The panel had no way to say this, so every bin audio compiled as a timbre
+    reference by default and only a PulseShot's own `ref_audio` could ever ask
+    for lip sync. The role also drives the trim to the window's span, so setting
+    it here is not cosmetic -- it changes which samples reach the model.
+    """
+    asset = bin_.get(asset_id)
+    if asset is None:
+        raise KeyError(asset_id)
+    if asset.kind != KIND_AUDIO:
+        raise ValueError("an audio_role describes a recording; %s references carry "
+                         "a retention instead" % asset.kind)
+    value = (audio_role or "").strip()
+    if value not in AUDIO_ROLES:
+        raise ValueError("audio_role must be one of %s, got %r"
+                         % (", ".join(AUDIO_ROLES), audio_role))
+    asset.audio_role = value
+    return asset
+
+
+def _set_voice_of(bin_, asset_id, voice_of):
+    """Bind a bin recording to the character it is the voice of. Pass None to unbind.
+
+    By asset id, never by ordinal and never by position. A voice bound to
+    "reference 3" would follow whatever landed in slot 3 after the next bin edit
+    and report nothing; a voice bound to an id follows the character.
+
+    Refused against another recording: a voice belongs to somebody the model can
+    see, and `<Audio 2> is the voice of <Audio 1>` is not a sentence H3's format
+    has a meaning for.
+    """
+    asset = bin_.get(asset_id)
+    if asset is None:
+        raise KeyError(asset_id)
+    if asset.kind != KIND_AUDIO:
+        raise ValueError("only an audio reference is the voice of someone; "
+                         "%r is a %s" % (asset.name, asset.kind))
+    target = (voice_of or "").strip()
+    if not target:
+        asset.voice_of = None
+        return asset
+    owner = bin_.get(target)
+    if owner is None:
+        raise ValueError("no asset %r to be the voice of -- bind by id, and the id "
+                         "has to be in this bin" % (target,))
+    if owner.kind == KIND_AUDIO:
+        raise ValueError("%r is another recording; a voice belongs to a character"
+                         % (owner.name,))
+    asset.voice_of = owner.asset_id
     return asset
 
 

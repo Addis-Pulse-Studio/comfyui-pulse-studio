@@ -189,6 +189,22 @@ class Timeline:
                     problems.append("shot %r names speaker %r, which is not in the bin"
                                     % (s.shot_id, spk))
 
+        # A bin voice names its owner by asset id, and the same rule applies: an
+        # id pointing at nothing binds a voice to nobody, silently. Pointing it at
+        # another recording is refused too -- a voice belongs to a character, and
+        # a character is something the model can see.
+        for a in self.assets.by_kind(KIND_AUDIO):
+            if not a.voice_of:
+                continue
+            owner = self.assets.get(a.voice_of)
+            if owner is None:
+                problems.append("audio %r is the voice of %r, which is not in the bin"
+                                % (a.name, a.voice_of))
+            elif owner.kind == KIND_AUDIO:
+                problems.append("audio %r is the voice of %r, which is another audio "
+                                "reference; a voice belongs to a character"
+                                % (a.name, owner.name))
+
         report = self.assets.budget()
         problems.extend(report.errors)
 

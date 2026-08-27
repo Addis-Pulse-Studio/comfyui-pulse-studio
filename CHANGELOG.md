@@ -4,6 +4,172 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+### A voice is bound to a face
+
+`PulseShot` gains a `speaker` widget, appended after `ref_audio_mode`. Type the
+character's `@Name` — a bin asset, or the shot's own `@Ref1` — and the compiler
+emits the binding MiniMax's reference format actually specifies.
+
+The sockets never carried this. `comfy/text_encoders/minimax.py` emits the
+literal marker `<Audio j>: ` and the waveform never reaches Qwen, so a reference
+audio arrives at the model as an ordinal with no owner. On a one-hander that is
+enough — there is one mouth. On a two-hander it is the shape of
+[Comfy-Org/ComfyUI#15454](https://github.com/Comfy-Org/ComfyUI/issues/15454):
+the intended character's lips move, and the other character's accent comes out
+of them. `Shot.speakers` has been in the data model and validated since 2.0.0
+with nothing writing to it, and `README` said per-character binding "lands in
+1.1". This is it.
+
+What a named speaker changes:
+
+- a **global speaker id**, `(S1)`, `(S2)`, assigned at that character's first
+  line **on the clock** and unchanged for the rest of the film. Assigned once
+  across the whole timeline, deliberately not inside `_compile_window`: the id is
+  what tells the model that the person talking after a cut is the person who
+  talked before it, and per-window numbering would turn every character into a
+  new person at every seam while looking correct in any single-window test;
+- the id is stamped only in the shots that character speaks in —
+  `<Subject 1> (S1) crosses to the counter`. A character standing silently in
+  another shot stays unstamped, because an id there reads as a cue to give them
+  a line;
+- the shot's `ref_audio` is named as theirs: `` `<Audio 1>` is the speech
+  <Subject 1> (S1) is saying `` for `lip_sync`, `` `<Audio 2>` is the
+  voice-timbre reference for <Subject 2> (S2) `` for `voice_timbre`;
+- a `retention_analysis` line per bound audio, in MiniMax's audio vocabulary
+  rather than the picture words — `fully_copy` for `lip_sync`, `reference` for
+  `voice_timbre`. `AUDIO_ROLES` keeps its two values, so no saved graph changes
+  meaning; the mapping lives in `AUDIO_ROLE_RETENTION`.
+
+Deliberately narrow:
+
+- **naming nobody produces the prompt this pack produced before the field
+  existed**, byte for byte, and `speaker_binding` is omitted from the document
+  rather than written as `""`. A project that does not use speakers keeps every
+  cache key already on disk.
+- **bin audio is left unbound.** It is shared across the film, so there is no
+  shot to read a speaker off, and guessing one would bind the voice to whoever
+  happened to talk first.
+- **a name that matches nothing is reported, never guessed at.** Binding a voice
+  to the wrong face is worse than leaving it unbound. Scene-local references are
+  searched before the bin, so two shots may each name their own `@Ref1` and mean
+  different people (§10).
+- a speaker whose reference was pushed out of this window's budget by carry-over
+  loses the id for that window and is diagnosed, rather than emitting `(S1)`
+  against a picture that is not there.
+
+`speaker_binding` — the *resolved* `"<Subject 2> (S1)"`, not the asset id —
+joins the shot's cache key, appended only when set. The asset id alone would not
+move when an earlier shot gains a character and renumbers everyone downstream,
+and the number is what reaches the model. Same hole `audio_role` had to be
+plugged for: the binding sentence lives in the window's subject definitions,
+which no shot's `resolved_prompt` covers.
+
+`PulseSlate_Cast.json` now demonstrates it — `@Mimi` is `(S1)` with a `lip_sync`
+take, `@Kade` is `(S2)` with a `voice_timbre` one. `tests/test_speakers.py`
+covers the assignment, the seam, the two audio roles, the unbound prompt, the
+cache key and the name resolution.
+
+### More than one voice in the bin
+
+`speaker` answers "whose voice is this" for a shot's own `ref_audio` — the node
+carrying the recording also carries the character. A recording dropped in the
+Asset Bin has no shot to read a speaker off, so a film with three characters and
+three voice files could bind none of them. `Asset.voice_of` closes that.
+
+- **bound by asset id**, never by ordinal or slot. A binding to "reference 3"
+  follows whatever lands in slot 3 after the next bin edit and reports nothing —
+  the failure the whole asset module exists to prevent. Refused against an id
+  that is not in the bin, and against another recording: a voice belongs to
+  somebody the model can see.
+- **two new bin operations**, `set_voice_of` and `set_audio_role`, with controls
+  on the panel's audio rows. `audio_role` on a bin recording had no control at
+  all, so every one of them compiled as a timbre reference and only a
+  `PulseShot` socket could ever ask for lip sync. `bin_state` now serves the
+  cast as `(id, name)` — the picker offers a name and stores an id, so a rename
+  cannot desynchronise a binding.
+- **supplying a voice makes its owner a speaker**, numbered after everyone who
+  has a line, so adding a voice reference cannot renumber a character already on
+  screen.
+- **an explicit `voice_of` outranks the shot that carries the recording.** The
+  author naming a character beats the wiring implying one.
+
+`voice_of` joins the reference cache key, appended after `audio_role` and only
+when set. While fixing that: the *global* reference descriptor never passed
+`audio_role` either, so a bin recording's role changed the prompt and not the
+key. Survivable only while nothing could set it; both are passed now.
+
+### Carry-over stops evicting whichever voice was last
+
+A continuation window's carry-over claims the front of the audio group, and the
+overflow was dropped by bin position. On a three-voice cast that is a coin flip:
+a character keeps their picture, keeps their lines, and loses their voice from
+window 2 onward — which reads as drift, not as a missing reference.
+
+Eviction is role-aware now: unbound clips go first, then `voice_timbre`, then
+`lip_sync`. Losing an alignment desynchronises a mouth, which is visible; losing
+a timbre reference only changes how a voice sounds. The drop is still reported,
+and the **survivors keep their bin order** — ordinals are bin order, and
+re-sorting them would renumber a window that is not over budget at all.
+
+### The §12.6 sink warning was counting the wrong thing
+
+`_paired_audio_count` returned `len(by_kind(KIND_AUDIO))`, and the warning it
+feeds asserts "this timeline pairs N audio references with separate characters".
+That assertion was never true: three ambience beds or three narration takes
+tripped a per-character voice-drift warning at a film where no character had a
+voice at all. A warning channel that cries wolf is worth less than no channel —
+the rule `_inert_audio_modes` is built around.
+
+It counts distinct characters carrying a bound voice now, from both paths — a
+bin recording's `voice_of` and a shot's `speaker`. Two recordings bound to one
+character count once; any number of unbound clips count for nothing, because
+there is no pairing for a cheaper `sink_conditioning` to damage. The warning
+text was reworded to match what it now measures.
+
+### Not done, and why
+
+- **`(Sx)` in fl2va.** Base mode has no `<Subject N>` layer and
+  `_window_bin` returns an empty bin for it, so a speaker there cannot be cited
+  by any tag — the id would have to be appended to the shot's `<d>` block
+  instead. MiniMax's placement for that is not something this repo can verify
+  against ComfyUI source the way the ref2va tags were, and guessing where a
+  literal goes in a prompt format is how silent wrong output happens. Left
+  alone, deliberately.
+- **A retention line for an *unbound* recording.** MiniMax's worked example
+  lists every reference in both sections, and this emits an audio retention line
+  only when the voice is bound. `fully_copy` against an unattributed recording
+  tells the model to reproduce a voice without saying whose mouth it comes out
+  of, which is the leak the binding exists to close — and the window prompt is
+  not itself hashed (§7.1 hashes shot text and reference descriptors), so
+  emitting it unconditionally would change what every existing project is told
+  without moving a single cache key.
+- **Transcript-driven shot timing.** `audio_span` puts the waveform on the right
+  span, but the `[Shot N] At MM:SS.mmm` breaks are still hand-authored, so a
+  `lip_sync` shot can be asked to match words that land elsewhere in the clip.
+  The fix is a sidecar transcript parsed with stdlib — SRT/VTT/JSON, arithmetic
+  testable on a GPU-less box like `concat.audio_span_bounds` already is. Not
+  started; it is a feature, not a correction.
+
+`PulseSlate_Cast.json` is now the worked example for all of it, and shrank to a
+single 12-second window to be one: at 16 seconds it spanned a seam, and
+carry-over then claimed an audio slot that the three voice references could not
+spare. It also exposed the eviction bug in the shipped graph — window 2 dropped
+`@Kade`'s voice, not the unbound recording, so a character kept his picture and
+his lines and lost his voice at the cut. The bin recording is bound to `@Mimi` as
+her film-wide timbre reference; `@Mimi` also carries a per-shot lip-sync take and
+`@Kade` a per-shot timbre one, so every audio reference in the graph now names a
+character and every one carries a stable speaker id. Its `lip_sync` shot stopped
+carrying a quoted line as well — the compiler reported that conflict, and a
+shipped example should demonstrate the fix the README prescribes rather than the
+conflict. Seams and the segment cache stay LongForm's job.
+
+`tests/test_voice_binding.py` covers the field, two voices in one bin, the
+speaker grant, the refusals, both bin operations, the cache key, the eviction
+order and the count. It also asserts the case that renumbers everything —
+enabling a video's soundtrack claims an `<Audio j>` ordinal ahead of every
+standalone recording, so every bound sentence moves and must still name the same
+character.
+
 ### The canvas is the shape it claims to be
 
 `16:9 landscape` resolved to **1344x736**: 4.2% under H3's 1,032,192 px budget, at
@@ -300,6 +466,18 @@ until somebody writes down what they saw.
 - [ ] **The bin panel's new fields in the frontend.** `description` and
       `retention` are covered on the server side, where the rule lives. The row
       that edits them is JavaScript in a real browser and has not been clicked.
+- [ ] **A two-hander rendered with speaker ids.** The binding is asserted against
+      the compiled prompt — the ids, the seam, the two audio roles — and the
+      prompt is the entire mechanism, so what is untested is whether H3 acts on
+      it: whether `@Mimi` and `@Kade` in `PulseSlate_Cast.json` come back with
+      two different voices instead of the leak
+      [#15454](https://github.com/Comfy-Org/ComfyUI/issues/15454) describes.
+      Nobody has listened to it.
+- [ ] **Three voices in one bin, rendered.** `voice_of` makes a multi-character
+      cast expressible, and every assertion behind it is against the compiled
+      prompt. Whether H3 keeps three bound voices apart in one call — and whether
+      `sink_conditioning=exact_kv_and_rows` is in fact what makes it — is the
+      measurement §12.6 has always asserted and nobody has taken.
 
 ## [3.0.0] — 2026-08-10
 

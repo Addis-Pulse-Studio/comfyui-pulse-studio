@@ -262,7 +262,6 @@ Everything you drop in the bin stays on your machine.
   reasoning is in [CHANGELOG.md](CHANGELOG.md).
 - **Path B's seams are unconfirmed** — the render runs; nobody has written down
   how the window boundaries sound. See the duration table above.
-- Per-character voice binding is specified but not shipped; it lands in 1.1.
 
 ---
 
@@ -502,6 +501,80 @@ compiler names it in the report rather than refusing, because a quote that *is*
 the recording's transcript is legitimate and only you know that. Otherwise drop
 the quote and let the audio carry the words; keep the `@Voice` tag in the line,
 which is what tells the model whose shot the recording belongs to.
+
+#### `speaker`, and why a two-hander needs it
+
+The socket carries a waveform and an ordinal. It does not carry an owner — the
+tokenizer emits `<Audio j>: ` and the waveform never reaches the language model
+— so on a shot with one character there is nothing to confuse and on a shot with
+two there is nothing to go on. ComfyUI ships a known bug of exactly that shape
+([Comfy-Org/ComfyUI#15454](https://github.com/Comfy-Org/ComfyUI/issues/15454)):
+the intended character's lips move, and the other character's accent comes out
+of them.
+
+MiniMax's reference format binds a voice to a face with a **global speaker id**.
+Type the character's `@Name` into `speaker` — a bin asset, or this shot's own
+`@Ref1` — and the compiler:
+
+- assigns that character `(S1)`, `(S2)`, … **at their first line in the film**,
+  and keeps it for every later shot and every later window. The id is what tells
+  the model that the person talking after a cut is the person who talked before
+  it, so it is assigned once across the whole timeline rather than per window;
+- stamps it on that character in the shots they actually speak in, and nowhere
+  else — `<Subject 1> (S1) crosses to the counter`. A silent character in the
+  background stays unstamped; an id there reads as a cue to give them a line;
+- binds this shot's `ref_audio` to them by name, so the prompt says
+  `` `<Audio 1>` is the speech <Subject 1> (S1) is saying `` rather than "this
+  character";
+- adds a `retention_analysis` line in MiniMax's audio vocabulary —
+  `fully_copy` for `lip_sync`, `reference` for `voice_timbre`.
+
+A character with a description in the bin becomes `<Subject N> (S1)`. One
+without becomes `<Picture N> (S1)`, which is much weaker and still binds the
+voice to a face.
+
+Leave it blank on a shot where nobody speaks, and on a one-hander where there is
+nothing to confuse — the prompt is then byte-for-byte what it was before the
+field existed, and your cache is not invalidated. A name that matches nothing is
+reported, never guessed at: binding a voice to the wrong face is worse than
+leaving it unbound.
+
+#### A voice in the Asset Bin
+
+A recording dropped in the bin has no shot to read a speaker off, so it says who
+it belongs to itself. The audio row in the panel carries two controls:
+
+- **role** — `lip_sync` or `voice_timbre`, the same two jobs `ref_audio_mode`
+  picks between. Until this shipped there was no way to say it on a bin
+  recording, so every one of them compiled as a timbre reference and only a
+  `PulseShot`'s own socket could ask for lip sync.
+- **whose voice** — the character, picked by name and **stored as an asset id**.
+  A binding to "reference 3" would follow whatever landed in slot 3 after the
+  next bin edit and report nothing; a binding to an id follows the character
+  through renames, reorders and renumbering.
+
+That is what makes a film with three characters and three voice files work:
+each recording names its own owner, each owner keeps one speaker id, and the
+prompt says which is which. Supplying somebody's voice makes them a speaker even
+if no shot ever named them — they are numbered after everyone who has a line, so
+adding a voice reference cannot renumber a character already on screen.
+
+Binding to a picture that is not in the bin, or to another recording, is refused
+rather than written into the prompt. A voice belongs to somebody the model can
+see.
+
+Where both apply — a shot's own `ref_audio` that also carries an explicit
+`voice_of` — the explicit binding wins. The author naming a character beats the
+wiring implying one.
+
+**Carry-over will not evict a bound voice first.** A continuation window's
+carry-over claims the front of the audio group, so the last user recording is
+dropped when the group is full. Chosen by bin position that is a coin flip, and
+a character keeping their picture and their lines while losing their voice from
+window 2 onward reads as drift rather than as a missing reference. Unbound clips
+go first, then `voice_timbre`, then `lip_sync` — losing an alignment
+desynchronises a mouth, which is visible. The drop is still reported either way,
+and the survivors keep their bin order so nothing renumbers that did not have to.
 
 ### Pulse Render
 

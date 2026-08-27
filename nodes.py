@@ -282,6 +282,13 @@ class PulseShot:
                     "'voice_timbre': the model speaks this shot's own dialogue and "
                     "only borrows the voice's character. Ignored when nothing is "
                     "connected to ref_audio."}),
+                "speaker": ("STRING", {"default": "", "multiline": False, "tooltip":
+                    "Who is talking in this shot, as an @Name from the Asset Bin or "
+                    "from this node's own reference sockets -- @Ref1 for the picture "
+                    "that defines them. That character gets a speaker id, (S1), (S2), "
+                    "stable across the whole film, and this shot's ref_audio is bound "
+                    "to it by name. Leave blank on a shot with nobody speaking, or on "
+                    "a one-hander where there is nothing to confuse."}),
                 # ── append new widgets HERE, at the end, and nowhere else ────
             },
             "optional": optional,
@@ -298,7 +305,7 @@ class PulseShot:
 
     def execute(self, schema_version, shot_id, label, visual, audio_line,
                 duration_seconds, continuity, ref_audio_mode=AUDIO_ROLE_LIP_SYNC,
-                start_image=None, end_image=None,
+                speaker="", start_image=None, end_image=None,
                 ref_audio=None, unique_id=None, **kwargs):
         # A shot_id is normally written into the widget by the frontend when the
         # node is created. Deriving one here from the text covers the headless
@@ -322,6 +329,9 @@ class PulseShot:
             "ref_images": refs,
             "ref_audio": ref_audio,
             "ref_audio_mode": ref_audio_mode or AUDIO_ROLE_LIP_SYNC,
+            # Carried as the author typed it. Resolving a name needs the bin,
+            # and the bin does not exist until every shot has been walked.
+            "speaker": (speaker or "").strip(),
         },)
 
 
@@ -770,11 +780,52 @@ def _apply_shot_nodes(timeline, side, payloads, project_continuity):
             if following.get("first"):
                 anchors["last"] = following["first"]
 
+    notes.extend(_bind_speakers(timeline, shots, payloads))
+
     timeline.shots = shots
     timeline.duration_seconds = cursor
     notes.extend(_inert_audio_modes(inert_modes, audio_connected))
     if not shots:
         notes.append("every connected PulseShot is empty; there is nothing to render.")
+    return notes
+
+
+def _bind_speakers(timeline, shots, payloads):
+    """Resolve each shot's `speaker` name to the asset it points at. Spec §3.
+
+    A second pass rather than work done inside the shot loop, because a name is
+    resolved against the finished bin: `@Kaleb` may be a picture the author drops
+    in the Asset Bin, or `@Ref1` on this shot's own sockets, and the scene-local
+    ones do not exist until every shot has been walked. Scoping is the same rule
+    the prose gets (§10) -- a shot may name its own `@Ref1` and its neighbour's
+    `@Ref1` is a different person -- so the local set is searched first and the
+    bin only after.
+
+    Failure is reported, never guessed at. Binding a voice to the wrong face is
+    worse than leaving it unbound, and an unbound shot still compiles: it just
+    gets the anonymous phrasing the pack has always emitted.
+    """
+    notes = []
+    unresolved = []
+    for shot, payload in zip(shots, payloads):
+        name = (payload.get("speaker") or "").strip().lstrip("@")
+        if not name:
+            continue
+        local = timeline.local_refs.get(shot.shot_id) or []
+        hit = next((a for a in local if a.name.strip().casefold() == name.casefold()), None)
+        if hit is None:
+            hit = timeline.assets.find_by_name(name)
+        if hit is None:
+            unresolved.append(payload.get("label") or shot.shot_id)
+            continue
+        shot.speakers = [hit.asset_id]
+
+    if unresolved:
+        notes.append(
+            "the speaker named on %s does not match any reference in the Asset Bin or "
+            "on that shot's own sockets, so those lines are compiled with no speaker "
+            "id. Type the character's @Name exactly as the bin shows it."
+            % (_shot_list(unresolved),))
     return notes
 
 
@@ -871,8 +922,28 @@ def _shot_blocks(timeline, payloads, continuity):
 
 
 def _paired_audio_count(timeline):
-    """How many standalone audio references this timeline carries (§12.6)."""
-    return len(timeline.assets.by_kind(KIND_AUDIO))
+    """How many distinct characters carry a bound voice reference (§12.6).
+
+    Not how many audio assets exist, which is what this counted and which made
+    the §12.6 warning fire at films it does not describe: three ambience beds or
+    three narration takes tripped a per-character voice-drift warning when no
+    character had a voice at all. A warning channel that cries wolf is worth less
+    than no channel -- the same rule `_inert_audio_modes` is built around.
+
+    The sink-conditioning concern is per-character query-row density, so two
+    recordings bound to one character count once, and any number of unbound clips
+    count for nothing: there is no pairing for a cheaper setting to damage.
+    """
+    bound = {a.voice_of for a in timeline.assets.by_kind(KIND_AUDIO) if a.voice_of}
+    # A shot's own ref_audio is bound by the `speaker` on the PulseShot carrying
+    # it, so the pairing lives on the shot rather than on the asset.
+    for shot in timeline.shots:
+        if not shot.speakers:
+            continue
+        local = (timeline.local_refs or {}).get(shot.shot_id) or []
+        if any(a.kind == KIND_AUDIO for a in local):
+            bound.add(shot.speakers[0])
+    return len(bound)
 
 
 def _build_document(timeline, plan, shot_blocks, side, global_prompt, width, height, steps,
@@ -893,7 +964,11 @@ def _build_document(timeline, plan, shot_blocks, side, global_prompt, width, hei
             ordinal, kind, asset.name,
             source="socket" if socket_slot_of(base_id) else "bin",
             file=asset.file or None,
-            sha256=_digest_for(asset, side)))
+            sha256=_digest_for(asset, side),
+            # A bin audio's role and its owner both reach the prompt, so both
+            # have to reach the key. Neither was passed here before, which was
+            # survivable only while nothing could set them on a bin asset.
+            audio_role=asset.audio_role, voice_of=asset.voice_of))
 
     # Per-shot resolved text and unresolved aliases, from whichever window
     # compiled each shot. A shot spanning a window boundary is compiled into
@@ -915,13 +990,24 @@ def _build_document(timeline, plan, shot_blocks, side, global_prompt, width, hei
             entries.append(ref_descriptor(
                 base + counters[asset.kind], asset.kind, asset.name,
                 source="socket", sha256=_digest_for(asset, side),
-                audio_role=asset.audio_role))
+                audio_role=asset.audio_role, voice_of=asset.voice_of))
         local_by_shot[shot_id] = entries
+
+    # The speaker binding as the compiler resolved it -- "<Subject 2> (S1)", not
+    # the asset id. The id alone would not move when an earlier shot gains a
+    # character and renumbers everyone downstream, and the number is what reaches
+    # the model.
+    bindings = {}
+    for window in plan.windows:
+        for shot_id, binding in window.speaker_bindings.items():
+            bindings.setdefault(shot_id, binding)
 
     for block in shot_blocks:
         block["resolved_prompt"] = resolved.get(block["shot_id"], "")
         block["unresolved_aliases"] = unresolved.get(block["shot_id"], [])
         block["local_refs"] = local_by_shot.get(block["shot_id"], [])
+        if bindings.get(block["shot_id"]):
+            block["speaker_binding"] = bindings[block["shot_id"]]
 
     windows = []
     for window in plan.windows:

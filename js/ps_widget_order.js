@@ -144,6 +144,7 @@ const SPECS = {
       // saved before this existed simply has no value for it and takes the
       // default, which is what name-based loading is for.
       { name: "ref_audio_mode", kind: "string" },
+      { name: "speaker", kind: "string" },
     ],
   },
   PulseRender: {

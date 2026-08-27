@@ -70,11 +70,12 @@ class Asset:
     """
 
     __slots__ = ("asset_id", "kind", "name", "file", "description", "retention",
-                 "trim_start", "trim_end", "include_audio", "synthetic", "audio_role")
+                 "trim_start", "trim_end", "include_audio", "synthetic", "audio_role",
+                 "voice_of")
 
     def __init__(self, asset_id, kind, name="", file="", description="",
                  retention=None, trim_start=0.0, trim_end=None, include_audio=False,
-                 synthetic=False, audio_role=None):
+                 synthetic=False, audio_role=None, voice_of=None):
         if kind not in KINDS:
             raise ValueError("unknown asset kind %r (expected one of %r)" % (kind, KINDS))
         self.asset_id = str(asset_id)
@@ -99,6 +100,17 @@ class Asset:
         # sentence and, for lip_sync, the trim to the window's own span. None on
         # everything else, and on carry-over audio, which is neither.
         self.audio_role = audio_role if kind == KIND_AUDIO else None
+        # Only meaningful on an audio asset: the asset id of the cast member this
+        # voice belongs to. An id, never an ordinal and never a socket position --
+        # binding by position is the failure this whole module exists to prevent,
+        # because it goes stale on a bin edit with nothing to report. Resolved
+        # against the bin at compile time like every other reference, so a rename
+        # or a reorder cannot desynchronise it.
+        #
+        # This is what a shot's own `ref_audio` gets for free from the PulseShot
+        # that carries it. A voice dropped in the Asset Bin has no shot to read a
+        # speaker off, so it has to say who it belongs to itself.
+        self.voice_of = voice_of if kind == KIND_AUDIO else None
 
     @property
     def duration(self):
@@ -123,6 +135,8 @@ class Asset:
             d["synthetic"] = True
         if self.audio_role:
             d["audio_role"] = self.audio_role
+        if self.voice_of:
+            d["voice_of"] = self.voice_of
         return d
 
     @classmethod
@@ -139,6 +153,7 @@ class Asset:
             include_audio=d.get("include_audio", False),
             synthetic=d.get("synthetic", False),
             audio_role=d.get("audio_role"),
+            voice_of=d.get("voice_of"),
         )
 
     def __repr__(self):

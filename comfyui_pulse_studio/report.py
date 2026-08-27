@@ -234,12 +234,20 @@ def _ordinal_map(timeline):
                                               _tag(ref)))
     for shot in timeline.get("shots") or []:
         local = shot.get("local_refs") or []
-        if not local:
+        binding = shot.get("speaker_binding") or ""
+        if not local and not binding:
             continue
         lines.append("shot %s:" % (shot.get("label") or shot.get("shot_id")))
         for ref in local:
             lines.append("    %-22s -> %s  (scene-local)"
                          % (ref.get("alias") or "(unnamed)", _tag(ref)))
+        # The speaker binding belongs here for the same reason the aliases do:
+        # this is where an author checks that what they typed reached the model
+        # as the thing they meant. A voice bound to nobody is invisible in the
+        # prompt -- it just reads "this character" -- so the only way to see the
+        # binding took is to be shown it.
+        if binding:
+            lines.append("    %-22s -> %s  (speaker)" % ("speaker", binding))
     return lines or ["    (no references)"]
 
 

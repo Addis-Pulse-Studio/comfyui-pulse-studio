@@ -111,12 +111,31 @@ def _ref_descriptor_key(ref):
     # a distinction their film does not make would be a poor trade.
     if ref.get("audio_role"):
         key.append(ref["audio_role"])
+    # And `voice_of` is a sixth, for the same reason again: it decides whether
+    # this recording's definition line names a character or says "this
+    # character", and it decides whether a retention line is emitted for it at
+    # all. Both live in the window's subject definitions, which no shot's
+    # `resolved_prompt` covers. Appended after `audio_role` and only when set, so
+    # neither a role-less nor an unbound reference moves the key it already has.
+    if ref.get("voice_of"):
+        key.append(ref["voice_of"])
     return key
 
 
 def _shot_key(shot):
-    """The seven shot fields §7.1 names, in its order."""
-    return [
+    """The seven shot fields §7.1 names, in its order.
+
+    `speaker_binding` is an eighth, appended for the same reason `audio_role` is
+    appended to a reference descriptor: it changes what the model is told and it
+    lives somewhere `resolved_prompt` does not reach. The binding sentence that
+    names this shot's voice sits in the window's subject definitions, and the
+    (Sx) number in it moves whenever an earlier shot gains a speaker -- so the
+    resolved string is hashed, not the asset id behind it.
+
+    Appended only when set, so every timeline that names no speaker keeps the
+    keys already on disk.
+    """
+    key = [
         shot.get("shot_id"),
         shot.get("label", ""),
         shot.get("visual", ""),
@@ -125,6 +144,9 @@ def _shot_key(shot):
         shot.get("continuity"),
         shot.get("resolved_prompt", ""),
     ]
+    if shot.get("speaker_binding"):
+        key.append(shot["speaker_binding"])
+    return key
 
 
 def cache_key_material(timeline, window, model_fingerprint, patch_fingerprint):

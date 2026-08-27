@@ -358,7 +358,13 @@ def patch_chain_summary(descriptor):
 
 
 def patch_warnings(descriptor, paired_audio_count=0):
-    """Everything §12 wants said about a detected chain. Warnings only, never fatal."""
+    """Everything §12 wants said about a detected chain. Warnings only, never fatal.
+
+    `paired_audio_count` is the number of *characters* carrying a bound voice, not
+    the number of audio files -- see `nodes._paired_audio_count`. The §12.6
+    warning below asserts that this timeline pairs voices with separate
+    characters, and that assertion has to be true before it is worth printing.
+    """
     descriptor = descriptor or {}
     warnings = []
 
@@ -379,7 +385,8 @@ def patch_warnings(descriptor, paired_audio_count=0):
         # §12.6. This is the one setting whose wrong value damages precisely what
         # this pack is for.
         warnings.append(
-            "This timeline pairs %d audio references with separate characters, but "
+            "This timeline binds a voice reference to each of %d separate "
+            "characters, but "
             "the upstream Sol-Attn node reports sink_conditioning=%s. Only "
             "'exact_kv_and_rows' runs the conditioning query rows dense, and those "
             "are the rows that carry per-character audio sync. Expect the voices to "

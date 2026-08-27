@@ -306,7 +306,7 @@ def socket_slot_of(asset_id):
 
 
 def ref_descriptor(ordinal, kind, alias, source, file=None, sha256=None,
-                   audio_role=None):
+                   audio_role=None, voice_of=None):
     """One entry in `refs.global` or in a shot's `local_refs`. Spec §3.
 
     `source` is `bin` for a file dragged onto the Asset Bin and `socket` for a
@@ -321,19 +321,25 @@ def ref_descriptor(ordinal, kind, alias, source, file=None, sha256=None,
         entry["file"] = file
     if audio_role:
         entry["audio_role"] = audio_role
+    if voice_of:
+        entry["voice_of"] = voice_of
     return entry
 
 
 def shot_block(shot_id, index, label="", visual="", audio_line="",
                duration_seconds=5.0, continuity=CONTINUITY_INHERIT,
                start_image_ref=None, end_image_ref=None, local_refs=None,
-               resolved_prompt="", unresolved_aliases=None):
+               resolved_prompt="", unresolved_aliases=None, speaker_binding=""):
     """One entry in `shots`. Spec §3.
 
     Field order in the returned dict is irrelevant -- everything that hashes this
     goes through `canonical_json`, which sorts.
+
+    `speaker_binding` is omitted entirely when empty rather than written as "".
+    Every document produced before speakers existed has no such key, and a
+    timeline that names nobody should still hash to what it hashed yesterday.
     """
-    return {
+    block = {
         "shot_id": str(shot_id),
         "index": int(index),
         "label": label or "",
@@ -347,6 +353,9 @@ def shot_block(shot_id, index, label="", visual="", audio_line="",
         "resolved_prompt": resolved_prompt or "",
         "unresolved_aliases": list(unresolved_aliases or []),
     }
+    if speaker_binding:
+        block["speaker_binding"] = speaker_binding
+    return block
 
 
 def window_block(window_index, shot_ids, frames, fps=FPS, width=1344, height=768,

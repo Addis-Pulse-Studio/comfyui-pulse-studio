@@ -364,9 +364,10 @@
         "The arrival",
         "@Mimi pushes through the door of @Cafe, shaking rain off her scarf. She matches @Ref1 exactly as she stops just inside.",
         "",
-        6.0,
+        4.0,
         "inherit",
-        "lip_sync"
+        "lip_sync",
+        ""
       ],
       "title": "Shot 1 — The arrival"
     },
@@ -428,10 +429,11 @@
         "",
         "The counter",
         "@Mimi crosses to the counter where @Kade is drying a glass.",
-        "@Mimi: \"you're still open, thank god\"",
-        5.0,
+        "@Mimi speaks the line carried in @Voice, close to the counter; the espresso machine hisses behind her.",
+        4.0,
         "inherit",
-        "lip_sync"
+        "lip_sync",
+        "@Mimi"
       ],
       "title": "Shot 2 — The counter"
     },
@@ -494,9 +496,10 @@
         "The answer",
         "@Kade sets the glass down and shrugs, half a smile.",
         "@Kade: \"for you, always\"",
-        5.0,
+        4.0,
         "inherit",
-        "voice_timbre"
+        "voice_timbre",
+        "@Kade"
       ],
       "title": "Shot 3 — The answer"
     },
@@ -635,10 +638,10 @@
       },
       "widgets_values": [
         "3.0.0",
-        "{\"schema\": 2, \"assets\": [{\"id\": \"asset_mimi\", \"kind\": \"image\", \"name\": \"Mimi\", \"file\": \"example_pulse_subject_a.png\", \"description\": \"a woman in her thirties with dark hair and a red scarf\", \"retention\": \"fully_preserved\"}, {\"id\": \"asset_kade\", \"kind\": \"image\", \"name\": \"Kade\", \"file\": \"example_pulse_subject_b.png\", \"description\": \"a man in his fifties in a blue work coat, greying beard\", \"retention\": \"fully_preserved\"}, {\"id\": \"asset_cafe\", \"kind\": \"image\", \"name\": \"Cafe\", \"file\": \"example_pulse_place.png\", \"description\": \"the cafe interior: green tiles, brass fittings, rain on the glass\", \"retention\": \"partially_copy\"}, {\"id\": \"asset_voice\", \"kind\": \"audio\", \"name\": \"Take\", \"file\": \"example_pulse_voice.wav\", \"audio_role\": \"lip_sync\"}], \"cast\": []}",
+        "{\"schema\": 2, \"assets\": [{\"id\": \"asset_mimi\", \"kind\": \"image\", \"name\": \"Mimi\", \"file\": \"example_pulse_subject_a.png\", \"description\": \"a woman in her thirties with dark hair and a red scarf\", \"retention\": \"fully_preserved\"}, {\"id\": \"asset_kade\", \"kind\": \"image\", \"name\": \"Kade\", \"file\": \"example_pulse_subject_b.png\", \"description\": \"a man in his fifties in a blue work coat, greying beard\", \"retention\": \"fully_preserved\"}, {\"id\": \"asset_cafe\", \"kind\": \"image\", \"name\": \"Cafe\", \"file\": \"example_pulse_place.png\", \"description\": \"the cafe interior: green tiles, brass fittings, rain on the glass\", \"retention\": \"partially_copy\"}, {\"id\": \"asset_voice\", \"kind\": \"audio\", \"name\": \"MimiVoice\", \"file\": \"example_pulse_voice.wav\", \"audio_role\": \"voice_timbre\", \"voice_of\": \"asset_mimi\"}], \"cast\": []}",
         "style: Shot on 35mm, warm practical light, shallow depth of field.\nidentity: @Mimi keeps the red scarf in every shot; @Kade keeps the blue work coat.\nretention: the scarf is never removed or recoloured.\nsoundscape: Rain outside, low espresso-machine hiss, quiet room tone.\nmusic: Sparse piano, no percussion.",
         "",
-        16.0,
+        12.0,
         "16:9 landscape",
         1344,
         768,

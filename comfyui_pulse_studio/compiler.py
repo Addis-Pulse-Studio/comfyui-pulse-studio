@@ -39,6 +39,7 @@ from .assets import (
 )
 from .constants import (
     AUDIO_ROLE_LIP_SYNC,
+    AUDIO_ROLE_RETENTION,
     BRANCH_FL2VA,
     BRANCH_REF2VA,
     DEFAULT_AUDIO_CARRY_SECONDS,
@@ -47,6 +48,7 @@ from .constants import (
     RETENTION_DEFAULT,
     RETENTION_FULL,
     RETENTION_PARTIAL,
+    SPEAKER_ID_FORMAT,
 )
 from .frames import (
     align_frame_count,
@@ -289,11 +291,11 @@ class CompiledWindow:
     __slots__ = ("index", "total", "branch", "frame_count", "start_seconds",
                  "end_seconds", "prompt", "files", "tag_map", "anchors",
                  "diagnostics", "shot_ids", "seed_offset",
-                 "resolved_shots", "unresolved_shots")
+                 "resolved_shots", "unresolved_shots", "speaker_bindings")
 
     def __init__(self, index, total, branch, frame_count, start_seconds, end_seconds,
                  prompt, files, tag_map, anchors, diagnostics, shot_ids, seed_offset=0,
-                 resolved_shots=None, unresolved_shots=None):
+                 resolved_shots=None, unresolved_shots=None, speaker_bindings=None):
         # shot_id -> the shot's own text after reference resolution, and the
         # aliases in it that did not resolve. Both are per shot rather than per
         # window because §7.1 hashes the resolved prompt of each shot into the
@@ -301,6 +303,11 @@ class CompiledWindow:
         # written in -- a window-level string can answer neither.
         self.resolved_shots = dict(resolved_shots or {})
         self.unresolved_shots = dict(unresolved_shots or {})
+        # shot_id -> "<Subject 2> (S1)", the character this shot's dialogue and
+        # reference audio are bound to. Carried out of the compiler because the
+        # binding sentence lives in the window's subject definitions, which no
+        # shot's `resolved_prompt` covers -- §7.1 has to hash it from somewhere.
+        self.speaker_bindings = dict(speaker_bindings or {})
         self.index = index
         self.total = total
         self.branch = branch
@@ -451,11 +458,17 @@ def compile_timeline(timeline, window_frames=None, policy="balanced",
                 "partitioner emitted a %d-frame window (%d of %d), below the %d-frame floor"
                 % (f, i + 1, len(windows), MIN_TRAINED_FRAMES))
 
+    # Assigned across the whole film before any window is compiled -- see
+    # assign_speaker_ids for why per-window numbering is the wrong answer.
+    speaker_ids = assign_speaker_ids(timeline.ordered_shots(),
+                                     timeline.assets.by_kind(KIND_AUDIO))
+
     compiled = []
     for i, (frame_count, (start, end)) in enumerate(zip(windows, bounds)):
         branch = timeline.branch if i == 0 else timeline.continuation_branch
         compiled.append(_compile_window(
-            timeline, i, len(windows), branch, frame_count, start, end, carry))
+            timeline, i, len(windows), branch, frame_count, start, end, carry,
+            speaker_ids=speaker_ids))
 
     return CompiledPlan(compiled, diagnostics, problems)
 
@@ -506,18 +519,54 @@ def _window_bin(timeline, index, branch, carry, shots=()):
             audios.append(Asset(CARRY_AUDIO_ID, KIND_AUDIO, name="Previous window, audio tail",
                                 retention=RETENTION_PARTIAL, synthetic=True))
 
-    def _take(dst, src, limit, label):
+    # Which recordings belong to a named character. A voice that is bound is the
+    # one thing in the audio group that carries information nothing else can
+    # replace: drop it and that character keeps their picture, keeps their lines,
+    # and loses their voice from this window onward -- which reads as drift, not
+    # as a missing reference. See _audio_keep_rank.
+    bound_audio = {a.asset_id for a in user_audios if a.voice_of}
+    for shot in shots:
+        if not shot.speakers:
+            continue
+        for a in (getattr(timeline, "local_refs", {}).get(shot.shot_id) or []):
+            if a.kind == KIND_AUDIO:
+                bound_audio.add(a.asset_id)
+
+    def _take(dst, src, limit, label, rank=None):
+        room = max(0, limit - len(dst))
+        dropped = set()
+        if len(src) > room:
+            # Choose what to drop by rank, then emit the survivors in their
+            # original bin order -- ordinals are bin order, and re-sorting the
+            # survivors would renumber a window that is not over budget at all.
+            order = sorted(range(len(src)),
+                           key=lambda i: ((rank(src[i]) if rank else 0), i))
+            dropped = {src[i].asset_id for i in order[room:]}
         for a in src:
-            if len(dst) >= limit:
+            if a.asset_id in dropped:
                 diagnostics.append(
                     "%s %r dropped from window %d: only %d %s socket(s) exist and "
-                    "carry-over holds the first" % (label, a.name, index + 1, limit, label))
+                    "carry-over holds the first%s"
+                    % (label, a.name, index + 1, limit, label,
+                       "" if rank is None else
+                       ". Bound voices are kept ahead of unbound ones"))
                 continue
             dst.append(a)
 
+    def _audio_keep_rank(asset):
+        """Lower survives. Bound before unbound, lip_sync before voice_timbre.
+
+        A lip_sync reference is a temporal alignment -- losing it desynchronises a
+        mouth, which is visible. A timbre reference only shifts how a voice
+        sounds. An unbound clip belongs to nobody, so nothing about the film
+        changes identity when it goes.
+        """
+        return ((0 if asset.asset_id in bound_audio else 1),
+                (0 if asset.audio_role == AUDIO_ROLE_LIP_SYNC else 1))
+
     _take(images, user_images, timeline.limits.images, "image")
     _take(videos, user_videos, timeline.limits.videos, "video")
-    _take(audios, user_audios, timeline.limits.audios, "audio")
+    _take(audios, user_audios, timeline.limits.audios, "audio", _audio_keep_rank)
 
     # Built under the project's ceiling: this bin has just been trimmed to it,
     # so validating it against the documented default would reject the very
@@ -552,6 +601,61 @@ def _build_subjects(bin_, tag_map):
         retention_meta.append((n, tag, asset.retention or RETENTION_DEFAULT))
 
     return subject_lines, subject_tag, retention_meta
+
+
+def assign_speaker_ids(shots, audio_assets=()):
+    """Asset id -> "S1", "S2", ... in first-vocal-appearance order.
+
+    Computed once over the *whole* timeline, deliberately not per window. A
+    speaker id is what tells H3 that the person talking in shot 9 is the person
+    who talked in shot 2, so it has to survive the seam between them. Numbering
+    per window is the obvious implementation -- a window is the unit that gets
+    compiled -- and it would quietly turn every character into a new person at
+    each cut, which is the failure the ids exist to prevent.
+
+    Order is first appearance rather than bin order for the same reason MiniMax
+    specifies it that way: the ids read as a cast list in the order the audience
+    meets them, and adding a character to the end of the film does not renumber
+    the ones already on screen. "First" is measured on the clock, so pass
+    `Timeline.ordered_shots()` -- a shot list is not required to be sorted, and
+    numbering by list order would hand out ids in the order the nodes happened to
+    be wired.
+    """
+    ids = {}
+    for shot in shots:
+        for asset_id in (shot.speakers or []):
+            if asset_id not in ids:
+                ids[asset_id] = SPEAKER_ID_FORMAT % (len(ids) + 1)
+    # A bin voice names its own owner, and supplying somebody's voice makes them
+    # a speaker whether or not a shot ever named them. They are numbered after
+    # everyone who actually has a line, so adding a voice reference cannot
+    # renumber a character who does.
+    for asset in audio_assets:
+        owner = getattr(asset, "voice_of", None)
+        if owner and owner not in ids:
+            ids[owner] = SPEAKER_ID_FORMAT % (len(ids) + 1)
+    return ids
+
+
+def _speaker_tags(tag_map, subject_tag, speaker_ids):
+    """Asset id -> the citation naming both the character and their speaker id.
+
+    "<Subject 2> (S1)" for a described character, "<Picture 3> (S1)" for one
+    dropped in without a description. Both are legal in MiniMax's format and the
+    second is much weaker, but a speaker id on a bare picture still binds the
+    voice to a face, which is the whole job.
+
+    An id whose asset carries no tag in this window is dropped rather than
+    emitted against nothing: the reference was pushed out of the budget to make
+    room for carry-over, and "(S1)" pointing at an absent picture is worse than
+    no binding at all. The caller reports it.
+    """
+    tags = {}
+    for asset_id, speaker_id in speaker_ids.items():
+        base = subject_tag.get(asset_id) or tag_map.by_id.get(asset_id)
+        if base is not None:
+            tags[asset_id] = "%s (%s)" % (base, speaker_id)
+    return tags
 
 
 def _resolve_note_block(text, tag_map, bin_, subject_tag):
@@ -589,7 +693,8 @@ def _presence_clause(subject_tag, shot_texts):
     return "(appears in " + ", ".join("[Shot %d]" % s for s in hits) + ")"
 
 
-def _compile_window(timeline, index, total, branch, frame_count, start, end, carry):
+def _compile_window(timeline, index, total, branch, frame_count, start, end, carry,
+                    speaker_ids=None):
     diagnostics = []
     shots = timeline.shots_in(start, end)
     shot_ids = [s.shot_id for s in shots]
@@ -612,6 +717,64 @@ def _compile_window(timeline, index, total, branch, frame_count, start, end, car
             scope_by_shot[shot.shot_id] = shared | {
                 a.asset_id for a in (local_refs.get(shot.shot_id) or [])}
 
+    # ── who is speaking, and with which voice ──────────────────────────────
+    # The sockets say nothing about this. An <Audio j> reference reaches the
+    # model as a bare ordinal and a waveform the text encoder never sees, so on
+    # a two-hander it carries no clue whose voice it is -- which is the shape of
+    # Comfy-Org/ComfyUI#15454, where the right mouth moves and the wrong accent
+    # comes out of it. The binding is prose or it does not exist.
+    speaker_tag = _speaker_tags(tag_map, subject_tag, speaker_ids or {})
+
+    audio_bindings = {}      # audio asset id -> "<Subject 2> (S1)"
+    speaker_bindings = {}    # shot id -> the same, for the document and the key
+
+    # A bin voice says who it belongs to itself. Resolved before the shot pass so
+    # that an explicit `voice_of` outranks the owner a shot would have inferred
+    # for it -- the author naming the character wins over the wiring implying one.
+    for asset in bin_.by_kind(KIND_AUDIO):
+        owner = asset.voice_of
+        if not owner:
+            continue
+        if owner in speaker_tag:
+            audio_bindings[asset.asset_id] = speaker_tag[owner]
+        else:
+            other = bin_.get(owner)
+            diagnostics.append(
+                "audio %r is the voice of %r, which carries no reference in this "
+                "window -- dropped to make room for carry-over. That voice compiles "
+                "unbound rather than naming a character who is not here."
+                % (asset.name, other.name if other is not None else owner))
+
+    for shot in shots:
+        named = list(shot.speakers or [])
+        missing = [a for a in named if a not in speaker_tag]
+        if missing:
+            def _who(asset_id):
+                asset = bin_.get(asset_id)
+                return asset.name if asset is not None else asset_id
+
+            diagnostics.append(
+                "shot %r names speaker(s) %s, which carry no reference in this window "
+                "-- dropped to make room for carry-over. Those lines compile without a "
+                "speaker id rather than pointing (S1) at a picture that is not here."
+                % (shot.shot_id, ", ".join(repr(_who(a)) for a in missing)))
+        bound = [a for a in named if a in speaker_tag]
+        if not bound:
+            continue
+        # Every named speaker is stamped in this shot's prose; the *first* is the
+        # one its reference audio belongs to. A shot with two speakers and one
+        # voice recording has to choose, and choosing the one the author wrote
+        # first is the only ordering the data carries. `PulseShot.speaker` is a
+        # single field, so this only arises in hand-written timeline_data.
+        speaker_bindings[shot.shot_id] = speaker_tag[bound[0]]
+        # A shot's own reference audio belongs to that shot's speaker. Bin audio
+        # is deliberately left unbound: it is shared across the film, so there is
+        # no shot to read a speaker off, and guessing one would bind a voice to
+        # whoever happened to talk first.
+        for asset in (local_refs.get(shot.shot_id) or []):
+            if asset.kind == KIND_AUDIO:
+                audio_bindings.setdefault(asset.asset_id, speaker_tag[bound[0]])
+
     # ── shot lines, with strictly increasing timestamps ─────────────────────
     shot_lines = []
     shot_texts = []
@@ -624,8 +787,14 @@ def _compile_window(timeline, index, total, branch, frame_count, start, end, car
         if not text:
             continue
         ordinal += 1
+        # A speaker's id is stamped only in the shots they actually speak in.
+        # Stamping every mention would put "(S1)" on a character standing
+        # silently in the background, which reads to the model as a cue to give
+        # them a line.
+        speaking = {a: speaker_tag[a] for a in (shot.speakers or []) if a in speaker_tag}
         resolved, ref_diags = resolve_references(
-            text, tag_map, bin_, subject_tag, scope_ids=scope_by_shot.get(shot.shot_id))
+            text, tag_map, bin_, dict(subject_tag, **speaking) if speaking else subject_tag,
+            scope_ids=scope_by_shot.get(shot.shot_id))
         diagnostics.extend("shot %r: %s" % (shot.shot_id, d) for d in ref_diags)
         # Whatever still matches the reference syntax after substitution is, by
         # definition, exactly what failed to resolve -- every hit that resolved
@@ -743,13 +912,14 @@ def _compile_window(timeline, index, total, branch, frame_count, start, end, car
               else _assemble_base_prompt)(
         timeline, index, total, bin_, tag_map, subject_lines, subject_tag,
         retention_meta, shot_lines, shot_texts, anchors, frame_count, carry,
-        extra_subject_lines, extra_retention_lines)
+        extra_subject_lines, extra_retention_lines, audio_bindings)
 
     diagnostics.extend(_uncited_references(bin_, tag_map, prompt))
 
     return CompiledWindow(index, total, branch, frame_count, start, end, prompt,
                           files, tag_map, anchors, diagnostics, shot_ids, seed_offset=index,
-                          resolved_shots=resolved_shots, unresolved_shots=unresolved_shots)
+                          resolved_shots=resolved_shots, unresolved_shots=unresolved_shots,
+                          speaker_bindings=speaker_bindings)
 
 
 def _shot_boundaries(timeline):
@@ -846,7 +1016,8 @@ def _socket_sort_key(item):
 def _assemble_reference_prompt(timeline, index, total, bin_, tag_map, subject_lines,
                                subject_tag, retention_meta, shot_lines, shot_texts,
                                anchors, frame_count, carry,
-                               extra_subject_lines=(), extra_retention_lines=()):
+                               extra_subject_lines=(), extra_retention_lines=(),
+                               audio_bindings=None):
     """ref2va: MiniMax's six-section reference-mode format, in its required order."""
     subject_lines = list(subject_lines)
     retention_lines = [
@@ -858,6 +1029,10 @@ def _assemble_reference_prompt(timeline, index, total, bin_, tag_map, subject_li
     # Audio definitions always follow every visual one, per MiniMax's own worked
     # example, regardless of the order the sockets happened to fill.
     audio_lines = []
+    # Kept separate so every visual retention line still precedes every audio
+    # one, the order MiniMax's worked example uses, whatever order the sockets
+    # happened to fill.
+    audio_retention_lines = []
     continuity_bits = []
 
     carry_image = bin_.get(CARRY_IMAGE_ID)
@@ -892,21 +1067,46 @@ def _assemble_reference_prompt(timeline, index, total, bin_, tag_map, subject_li
             "`%s` (previous window's tail): partially_copy - the same score and ambience "
             "continues into this window rather than restarting." % (tag,))
 
+    audio_bindings = audio_bindings or {}
     for asset in bin_.by_kind(KIND_AUDIO):
         if asset.synthetic:
             continue
         tag = tag_map.by_id[asset.asset_id]
         detail = (": " + asset.description.rstrip(".")) if asset.description else ""
+        # Who the voice belongs to, when a shot named a speaker for it. Without
+        # one the sentences fall back to the anonymous phrasing they have always
+        # had -- correct on a one-hander, and the only honest thing to say when
+        # nothing in the graph identifies the speaker.
+        who = audio_bindings.get(asset.asset_id)
         if asset.audio_role == AUDIO_ROLE_LIP_SYNC:
             # The directive *is* the mechanism. The tokenizer only ever emits the
             # marker "<Audio j>: " -- the waveform never reaches Qwen -- so the
             # sockets alone say nothing about what the audio is for. Asking for
             # the match in prose is what makes the DiT track those rows.
             audio_lines.append(
-                "`%s` is the speech this character is saying%s. Their lip movements "
-                "match `%s` precisely, in time with it." % (tag, detail, tag))
+                "`%s` is the speech %s is saying%s. Their lip movements "
+                "match `%s` precisely, in time with it."
+                % (tag, who or "this character", detail, tag))
+        elif who:
+            audio_lines.append(
+                "`%s` is the voice-timbre reference for %s%s." % (tag, who, detail))
         else:
             audio_lines.append("`%s` is a voice-timbre reference%s." % (tag, detail))
+
+        # A retention line for an audio reference, in MiniMax's own vocabulary
+        # rather than the picture words. Emitted only when the voice is bound to
+        # someone: "fully_copy" against an unattributed recording tells the model
+        # to reproduce a voice without saying whose mouth it comes out of, which
+        # is the leak this whole binding exists to close.
+        retention = AUDIO_ROLE_RETENTION.get(asset.audio_role)
+        if retention and who:
+            audio_retention_lines.append(
+                "`%s` (the voice of %s): %s - %s"
+                % (tag, who, retention,
+                   "this exact recording is what is heard, and that mouth moves with it."
+                   if asset.audio_role == AUDIO_ROLE_LIP_SYNC else
+                   "borrow this voice's timbre and delivery; the words spoken are the "
+                   "ones written in this window's shots."))
 
     summary = _summary_line(subject_tag, continuity_bits, index, total)
 
@@ -920,7 +1120,7 @@ def _assemble_reference_prompt(timeline, index, total, bin_, tag_map, subject_li
     # generated. They go last so a generated <Subject N> line is never displaced
     # by prose that has no socket behind it.
     subject_lines = subject_lines + list(extra_subject_lines)
-    retention_lines = retention_lines + list(extra_retention_lines)
+    retention_lines = retention_lines + audio_retention_lines + list(extra_retention_lines)
 
     sections = []
     if subject_lines or audio_lines:
@@ -954,8 +1154,14 @@ def _summary_line(subject_tag, continuity_bits, index, total):
 def _assemble_base_prompt(timeline, index, total, bin_, tag_map, subject_lines,
                           subject_tag, retention_meta, shot_lines, shot_texts,
                           anchors, frame_count, carry,
-                          extra_subject_lines=(), extra_retention_lines=()):
+                          extra_subject_lines=(), extra_retention_lines=(),
+                          audio_bindings=None):
     """fl2va / t2va: MiniMax's three-section base-mode format.
+
+    `audio_bindings` is accepted and ignored: fl2va takes no references at all
+    (constants.BRANCH_ACCEPTS_REFERENCES), so there is no <Audio j> here to bind
+    anything to. It is in the signature so both assemblers stay callable through
+    the one call site.
 
     Base mode has no <Subject N> layer and no reference tags -- only the keyframe
     images, which MiniMaxH3ImageToVideo appends in the order (first_frame,
