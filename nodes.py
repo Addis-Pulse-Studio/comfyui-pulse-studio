@@ -50,11 +50,13 @@ from .comfyui_pulse_studio.constants import (
     AUDIO_ROLES,
     BRANCH_FL2VA,
     DEFAULT_AUDIO_CARRY_SECONDS,
+    FPS,
     MAX_REF_AUDIOS,
     MAX_REF_AUDIOS_CEILING,
     MAX_REF_FILES_TOTAL,
     MAX_REF_IMAGES,
     MAX_REF_VIDEOS,
+    MAX_WINDOW_FRAMES,
     REF_IMAGE_SIZE_OPTIONS,
     SCHEMA_VERSION,
     SEAM_DEFAULT,
@@ -195,6 +197,10 @@ RESIZE_METHODS = ["crop", "pad", "stretch"]
 MAX_SHOT_SOCKETS = 24
 MAX_SLATE_REF_IMAGES = 8   # §4: refs.ref_image_1..8 on PulseSlate
 MAX_SHOT_REF_IMAGES = 4    # per-shot scene-local references
+# Global PulseVoice sockets. Three, matching MAX_REF_AUDIOS: a fourth could never
+# fit the documented audio budget alongside carry-over, and offering a socket that
+# is always dropped is worse than not offering it.
+MAX_SLATE_VOICES = 3
 
 
 def _numbered(kwargs, prefix, count):
@@ -211,6 +217,117 @@ def _numbered(kwargs, prefix, count):
         if value is not None:
             found.append((i, value))
     return found
+
+
+# ── Pulse Voice ─────────────────────────────────────────────────────────────
+
+#: `aligns_to` on PulseVoice. A recording's first sample sits somewhere on the
+#: film clock, and until this node there was no way to say where -- the trim
+#: assumed the film's own zero and documented that nowhere, so a per-shot take was
+#: cut at an offset past its own end and the window was handed silence.
+VOICE_ALIGN_FILM = "film_clock"
+VOICE_ALIGN_SHOT = "shot_start"
+VOICE_ALIGNMENTS = (VOICE_ALIGN_FILM, VOICE_ALIGN_SHOT)
+
+
+class PulseVoice:
+    """One recording, and where on the film clock it belongs.
+
+    A lip-sync reference is cut to the window it rides in, which makes *which
+    seconds of the file* the question the whole feature turns on -- and it was a
+    question nothing in the graph could answer. An AUDIO socket carries a waveform
+    and nothing else: not a role, not an owner, and not a position in time. This
+    node is the three of them, said once, next to the file they describe.
+
+    It also collapses the pattern the socket forced. A whole-film narration used
+    to be wired into every shot's `ref_audio` separately -- four identical wires
+    to one LoadAudio on a four-window film -- because a shot's socket was the only
+    route to `lip_sync`. One PulseVoice on PulseSlate is visible to every window.
+    """
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                # ── the frozen prefix — widget index 0 ──────────────────────
+                "schema_version": schema_widget(),
+
+                "name": ("STRING", {"default": "Voice", "multiline": False, "tooltip":
+                    "The @handle for this recording. Cite it in a shot as @Voice so "
+                    "the prompt names it; the ordinal is computed, never typed."}),
+                "role": (list(AUDIO_ROLES), {"default": AUDIO_ROLE_LIP_SYNC, "tooltip":
+                    "'lip_sync': the character's mouth matches this recording, and the "
+                    "clip is cut to each window's exact span so the two describe the "
+                    "same seconds. 'voice_timbre': the model speaks the shot's own "
+                    "written dialogue and borrows only the character of the voice. No "
+                    "alignment, no trim."}),
+                "aligns_to": (list(VOICE_ALIGNMENTS), {"default": VOICE_ALIGN_FILM,
+                    "tooltip":
+                    "Where this recording's first sample sits. 'film_clock': at the "
+                    "start of the film -- what a single narration track covering the "
+                    "whole timeline does, and what every project written before this "
+                    "node existed means. 'shot_start': at the start of the shot it is "
+                    "connected to, which is what a per-shot take does. On PulseSlate "
+                    "there is no shot, so 'shot_start' is reported and read as "
+                    "'film_clock'."}),
+                "offset_seconds": ("FLOAT", {"default": 0.0, "min": -3600.0,
+                                             "max": 3600.0, "step": 0.01, "tooltip":
+                    "Added on top of whatever `aligns_to` chose. Use it when the "
+                    "recording begins a little before or after that point -- a take "
+                    "with two seconds of room tone in front of it wants -2.0."}),
+                "trim_start": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 3600.0,
+                                         "step": 0.01, "tooltip":
+                    "Skip this many seconds of the file before anything else. Applies "
+                    "to a file on disk; a recording arriving through the `audio` socket "
+                    "is already whatever the upstream node handed over."}),
+                "trim_end": ("FLOAT", {"default": -1.0, "min": -1.0, "max": 3600.0,
+                                       "step": 0.01, "tooltip":
+                    "Stop at this many seconds into the file. -1 means run to the end."}),
+                "speaker": ("STRING", {"default": "", "multiline": False, "tooltip":
+                    "Whose voice this is, as an @Name from the Asset Bin. That "
+                    "character gets a speaker id -- (S1), (S2) -- stable across the "
+                    "whole film, and the prompt says this recording is theirs rather "
+                    "than 'this character'. Leave blank on a one-hander, where there "
+                    "is nothing to confuse."}),
+                "description": ("STRING", {"default": "", "multiline": False, "tooltip":
+                    "What this recording is, in a few words. Rides into the prompt's "
+                    "subject_definitions beside the reference itself."}),
+                # ── append new widgets HERE, at the end, and nowhere else ────
+            },
+            "optional": {
+                "audio": ("AUDIO", {"tooltip":
+                    "The recording. Without it this node describes nothing and is "
+                    "ignored, with a note saying so."}),
+            },
+            "hidden": HIDDEN_INPUTS,
+        }
+
+    RETURN_TYPES = ("PULSE_VOICE",)
+    RETURN_NAMES = ("voice",)
+    FUNCTION = "execute"
+    CATEGORY = "AddisPulse/H3"
+    DESCRIPTION = ("A recording plus what it is for, whose it is, and where on the film "
+                   "clock it starts. Wire it into PulseSlate to reach every window, or "
+                   "into one PulseShot's `voice` input for that shot alone.")
+
+    def execute(self, schema_version, name, role, aligns_to, offset_seconds,
+                trim_start, trim_end, speaker, description, audio=None,
+                unique_id=None, **kwargs):
+        return ({
+            "name": (name or "").strip() or "Voice",
+            "role": role or AUDIO_ROLE_LIP_SYNC,
+            "aligns_to": aligns_to or VOICE_ALIGN_FILM,
+            "offset_seconds": float(offset_seconds or 0.0),
+            "trim_start": max(0.0, float(trim_start or 0.0)),
+            # -1 is the widget's "to the end"; the asset model spells that None,
+            # and a float widget has no way to say None.
+            "trim_end": (None if float(trim_end) < 0.0 else float(trim_end)),
+            # Carried as typed. Resolving a name needs the finished bin, which
+            # does not exist until every shot and every voice has been walked.
+            "speaker": (speaker or "").strip(),
+            "description": (description or "").strip(),
+            "audio": audio,
+        },)
 
 
 # ── Pulse Shot ──────────────────────────────────────────────────────────────
@@ -234,8 +351,18 @@ class PulseShot:
                 "final frame and nowhere else, so this pins the end of the window "
                 "this shot lands in."}),
             "ref_audio": ("AUDIO", {"tooltip":
-                "A voice or effect sample for this scene only. Not visible to any "
-                "other shot -- put shared references in the Asset Bin instead."}),
+                "A voice or effect sample scoped to this scene -- not visible to any "
+                "other shot, so put shared references in the Asset Bin instead.\n\n"
+                "Scope is not timing. On 'lip_sync' the clip is cut to each window's "
+                "span starting at that window's position on the FILM clock, so this "
+                "socket expects a recording that runs alongside the whole film. A take "
+                "recorded for this shot alone begins at the shot, not at the film, and "
+                "wants a PulseVoice on the `voice` input to say so."}),
+            "voice": ("PULSE_VOICE", {"tooltip":
+                "A PulseVoice for this shot alone. Supersedes ref_audio when both are "
+                "connected, and unlike ref_audio it says where on the film clock the "
+                "recording starts -- set its aligns_to to 'shot_start' for a take "
+                "recorded for this shot."}),
         }
         for i in range(1, MAX_SHOT_REF_IMAGES + 1):
             optional["refs.ref_image_%d" % i] = ("IMAGE", {"tooltip":
@@ -265,7 +392,8 @@ class PulseShot:
                 "audio_line": ("STRING", {"multiline": True, "dynamicPrompts": False,
                                           "default": "", "tooltip":
                     "What is heard. Quoted \"text\" becomes dialogue."}),
-                "duration_seconds": ("FLOAT", {"default": 5.0, "min": 0.5, "max": 15.08,
+                "duration_seconds": ("FLOAT", {"default": 5.0, "min": 0.5,
+                                               "max": MAX_WINDOW_FRAMES / FPS,
                                                "step": 0.01, "tooltip":
                     "How long this shot runs. The ceiling is H3's trained window "
                     "length; longer stories are built from more shots, not longer ones."}),
@@ -306,7 +434,7 @@ class PulseShot:
     def execute(self, schema_version, shot_id, label, visual, audio_line,
                 duration_seconds, continuity, ref_audio_mode=AUDIO_ROLE_LIP_SYNC,
                 speaker="", start_image=None, end_image=None,
-                ref_audio=None, unique_id=None, **kwargs):
+                ref_audio=None, voice=None, unique_id=None, **kwargs):
         # A shot_id is normally written into the widget by the frontend when the
         # node is created. Deriving one here from the text covers the headless
         # case -- an API run, a workflow built by script -- where no frontend ever
@@ -329,6 +457,7 @@ class PulseShot:
             "ref_images": refs,
             "ref_audio": ref_audio,
             "ref_audio_mode": ref_audio_mode or AUDIO_ROLE_LIP_SYNC,
+            "voice": voice,
             # Carried as the author typed it. Resolving a name needs the bin,
             # and the bin does not exist until every shot has been walked.
             "speaker": (speaker or "").strip(),
@@ -365,6 +494,15 @@ class PulseSlate:
             optional["shots.shot_%d" % i] = ("PULSE_SHOT", {"tooltip":
                 "Shot %d. Connecting any shot socket makes the shot text box "
                 "inactive." % i})
+        # Appended after the shot group rather than inserted beside the reference
+        # one: js/ps_sockets.js rebuilds this tail in GROUPS order, and a group
+        # inserted ahead of an existing one would land a saved graph's wires on
+        # the wrong sockets.
+        for i in range(1, MAX_SLATE_VOICES + 1):
+            optional["voices.voice_%d" % i] = ("PULSE_VOICE", {"tooltip":
+                "Global voice %d, visible to every window -- one wire instead of one "
+                "per shot. Numbered ahead of ref_music, which is always the last "
+                "audio ordinal." % i})
 
         return {
             "required": {
@@ -533,12 +671,17 @@ class PulseSlate:
                 "sampling steps." % (timeline.limits.audios, steps))
 
         # ── global socket references (§4, §10.1) ────────────────────────────
-        notes.extend(_attach_global_refs(timeline, side, kwargs,
-                                         ref_video, ref_video_audio, ref_music))
+        notes.extend(_attach_global_refs(
+            timeline, side, kwargs, ref_video, ref_video_audio, ref_music,
+            voices=_numbered(kwargs, "voices.voice_", MAX_SLATE_VOICES)))
 
         # Drop unloadable bin references BEFORE tags are assigned, so ordinals
         # stay dense by construction rather than developing a hole at render time.
         notes.extend(drop_missing(timeline, lambda f: bool(media.resolve_path(f))))
+        # And measure whatever survived, so the compiler can say which windows a
+        # recording does not reach. After drop_missing, because a file that is not
+        # there has no length to read.
+        _measure_bin_audio(timeline)
 
         # ── shots: sockets win outright over the text box (§5) ──────────────
         shot_payloads = [payload for _, payload in
@@ -647,7 +790,86 @@ class PulseSlate:
 
 # ── PulseSlate helpers ──────────────────────────────────────────────────────
 
-def _attach_global_refs(timeline, side, kwargs, ref_video, ref_video_audio, ref_music):
+def _measure_bin_audio(timeline):
+    """Give every file-backed audio reference its own length, in seconds.
+
+    Only so the compiler can report a recording that does not cover the window it
+    is trimmed to. It reads the container header rather than decoding, so it costs
+    an open and a seek per audio asset -- and there are at most nine of those.
+
+    Socket-borne audio is already measured where its tensor is stored; a bin asset
+    is a path, and `compiler.py` imports no torch and no PyAV, so this is the only
+    layer that can answer. A length that cannot be read stays None, which every
+    reader treats as "do not diagnose" rather than as zero.
+    """
+    for asset in timeline.assets.by_kind(KIND_AUDIO):
+        if asset.synthetic or not asset.file or asset.source_seconds is not None:
+            continue
+        seconds = media.audio_seconds(asset.file)
+        if seconds is None:
+            continue
+        # The trim is what the window sees, so it is what gets measured -- the
+        # same rule `_voice_asset` follows for a socket.
+        end = seconds if asset.trim_end is None else min(seconds, asset.trim_end)
+        asset.source_seconds = max(0.0, end - asset.trim_start)
+
+
+def _voice_asset(payload, slot, name, base_seconds=0.0):
+    """One PulseVoice payload as a bin/local Asset, plus the note it earned.
+
+    `base_seconds` is what `aligns_to` resolves to for this connection point: a
+    shot's own start when the voice is wired to a shot, and zero on the slate,
+    where there is no shot to start at. The recording's position on the film clock
+    is that plus the author's own `offset_seconds`, and it is the number the whole
+    feature turns on -- it is what the executor subtracts to convert a window's
+    film-clock start into this recording's own.
+
+    Returns (asset, tensor, notes). The tensor is the *trimmed* recording, not the
+    one on the socket: a trim asked for on a socket-borne clip has nowhere else to
+    happen -- `media.load_audio` only ever trimmed a file on disk -- and storing
+    the trimmed one keeps the offset, the measured length and the muxed track all
+    describing the same seconds.
+
+    A voice with nothing connected to `audio` describes no recording, so it
+    produces no asset and says so rather than occupying a socket with a hole in it.
+    """
+    audio = payload.get("audio")
+    if audio is None:
+        return None, None, ["voice %r has nothing connected to its `audio` input, so "
+                            "it describes no recording and was ignored." % (name,)]
+
+    notes = []
+    aligns_to = payload.get("aligns_to") or VOICE_ALIGN_FILM
+    if aligns_to == VOICE_ALIGN_SHOT and base_seconds is None:
+        notes.append(
+            "voice %r is set to align to 'shot_start', but it is connected to "
+            "PulseSlate, where there is no shot to start at. It was read as "
+            "'film_clock'. Wire it to one shot's `voice` input to align it to that "
+            "shot." % (name,))
+        base_seconds = 0.0
+    elif aligns_to != VOICE_ALIGN_SHOT:
+        base_seconds = 0.0
+
+    audio, trim_note = media.audio_trim(
+        audio, payload.get("trim_start"), payload.get("trim_end"))
+    if trim_note:
+        notes.append("voice %r: %s" % (name, trim_note))
+
+    asset = Asset(
+        socket_asset_id(slot), KIND_AUDIO, name=name, file="",
+        description=payload.get("description") or "",
+        audio_role=payload.get("role") or AUDIO_ROLE_LIP_SYNC,
+        audio_offset=float(base_seconds or 0.0) + float(payload.get("offset_seconds") or 0.0),
+        # Measured here rather than in the compiler, which imports no torch and
+        # must not. It is what lets the report say "your narration runs out 4.5s
+        # before the film does" instead of the render coming back quietly silent.
+        # Measured *after* the trim, because the trim is what the window sees.
+        source_seconds=media.audio_length_seconds(audio))
+    return asset, audio, notes
+
+
+def _attach_global_refs(timeline, side, kwargs, ref_video, ref_video_audio, ref_music,
+                        voices=()):
     """Add socket-borne global references to the bin. Spec §4, §10.1.
 
     They join the bin *after* whatever the Asset Bin panel holds, so a project
@@ -687,12 +909,66 @@ def _attach_global_refs(timeline, side, kwargs, ref_video, ref_video_audio, ref_
     elif ref_video_audio is not None:
         notes.append("ref_video_audio is connected but ref_video is not; a soundtrack "
                      "is index-paired to its own video, so it was ignored.")
+    # Global voices, before ref_music and after every visual reference. A voice on
+    # the slate is visible to every window, which is the whole reason this socket
+    # exists: a narration covering the whole film used to need one wire per shot.
+    pending_owners = []
+    for i, payload in voices:
+        name = timeline.assets.unique_name(payload.get("name") or "Voice", KIND_AUDIO)
+        slot = "slate.voice_%d" % i
+        asset, tensor, voice_notes = _voice_asset(payload, slot, name,
+                                                  base_seconds=None)
+        notes.extend(voice_notes)
+        if asset is None:
+            continue
+        ok, reason = timeline.assets.can_add(asset, limits=timeline.limits)
+        if not ok:
+            notes.append("voice %r did not fit the budget and was dropped: %s"
+                         % (name, reason))
+            continue
+        timeline.assets.add(asset, limits=timeline.limits)
+        side.put(slot, tensor, digest=media.audio_digest(tensor))
+        if payload.get("speaker"):
+            pending_owners.append((asset, payload["speaker"], name))
+
     if ref_music is not None:
         # §10.1: always the last audio ordinal. It is added last, and the tag map
         # numbers standalone audio in bin order, so "last" is structural here
         # rather than a rule someone has to remember.
         _add(KIND_AUDIO, "slate.ref_music", ref_music, "Music",
              description="the non-diegetic score for the whole film")
+
+    # Resolved after every global reference is in, and against the global bin
+    # only: a slate voice must not be able to name a shot's own @Ref1, which
+    # belongs to that shot and to nothing else (§10).
+    notes.extend(_bind_voice_owners(timeline, pending_owners))
+    return notes
+
+
+def _bind_voice_owners(timeline, pending):
+    """Resolve each global voice's `speaker` name to the asset it points at.
+
+    The same rule `_bind_speakers` applies to a shot, and for the same reason: a
+    binding to a name is resolved against the finished bin at compile time, so a
+    rename or a reorder cannot leave it pointing at somebody else. Failure is
+    reported and never guessed at -- an unbound voice still compiles, with the
+    anonymous phrasing the pack has always emitted, and binding it to the wrong
+    face would be worse than that.
+    """
+    notes = []
+    unresolved = []
+    for asset, speaker, label in pending:
+        owner = timeline.assets.find_by_name(speaker.lstrip("@"))
+        if owner is None or owner.kind == KIND_AUDIO:
+            unresolved.append(label)
+            continue
+        asset.voice_of = owner.asset_id
+    if unresolved:
+        notes.append(
+            "the speaker named on %s does not match any character in the Asset Bin, "
+            "so %s compiled without an owner and the prompt says 'this character' "
+            "rather than naming one. Type the @Name exactly as the bin shows it."
+            % (_shot_list(unresolved), "they" if len(unresolved) > 1 else "it"))
     return notes
 
 
@@ -733,13 +1009,59 @@ def _apply_shot_nodes(timeline, side, payloads, project_continuity):
             local.append(Asset(socket_asset_id(slot), KIND_IMAGE,
                                name="Ref%d" % j, file=""))
             side.put(slot, tensor, digest=media.tensor_digest(tensor))
-        if payload.get("ref_audio") is not None:
+        voice = payload.get("voice")
+        if voice is not None and voice.get("audio") is None:
+            # Connected but empty. Said here rather than left to fall through to
+            # `ref_audio`, because a wired PulseVoice looks like a working one.
+            notes.append(
+                "the voice connected to %r has nothing on its own `audio` input, so "
+                "it describes no recording and was ignored."
+                % (payload.get("label") or shot_id,))
+        if voice is not None and voice.get("audio") is not None:
+            # A PulseVoice supersedes the raw socket. It says everything the socket
+            # does and one thing the socket cannot: where on the film clock the
+            # recording starts, which is what decides whether this window is handed
+            # the seconds it expects or a span of silence.
+            audio_connected = True
+            slot = "shot.%s.voice" % shot_id
+            asset, tensor, voice_notes = _voice_asset(
+                voice, slot, voice.get("name") or "Voice",
+                base_seconds=shots[-1].start)
+            notes.extend(voice_notes)
+            if asset is not None:
+                local.append(asset)
+                side.put(slot, tensor, digest=media.audio_digest(tensor))
+                if voice.get("speaker") and not payload.get("speaker"):
+                    # A voice naming its owner speaks for the shot it is wired to:
+                    # `_bind_speakers` resolves the shot's own field against the
+                    # same scope, so borrowing it here binds the pair in one place
+                    # instead of two that could disagree.
+                    #
+                    # A copy, never a mutation: `payload` is the dict PulseShot
+                    # returned, and writing to it would follow that node's cached
+                    # output into whatever else reads it.
+                    payload = dict(payload, speaker=voice["speaker"])
+                    payloads[index] = payload
+            if payload.get("ref_audio") is not None:
+                notes.append(
+                    "%r has both a `voice` and a `ref_audio` connected. The PulseVoice "
+                    "won -- it is the one that can say where the recording sits on the "
+                    "clock. Disconnect ref_audio to silence this."
+                    % (payload.get("label") or shot_id,))
+        elif payload.get("ref_audio") is not None:
             audio_connected = True
             slot = "shot.%s.ref_audio" % shot_id
             local.append(Asset(socket_asset_id(slot), KIND_AUDIO,
                                name="Voice", file="",
                                audio_role=payload.get("ref_audio_mode")
-                               or AUDIO_ROLE_LIP_SYNC))
+                               or AUDIO_ROLE_LIP_SYNC,
+                               # No offset: this socket has always meant "a
+                               # recording running alongside the whole film", and
+                               # changing that under a saved graph would slide
+                               # every take it holds. A PulseVoice is how a
+                               # per-shot recording says otherwise.
+                               source_seconds=media.audio_length_seconds(
+                                   payload["ref_audio"])))
             side.put(slot, payload["ref_audio"],
                      digest=media.audio_digest(payload["ref_audio"]))
         else:
@@ -1563,6 +1885,7 @@ class PulseStill:
 NODE_CLASS_MAPPINGS = {
     "PulseSlate": PulseSlate,
     "PulseShot": PulseShot,
+    "PulseVoice": PulseVoice,
     "PulseRender": PulseRender,
     "PulseBench": PulseBench,
     "PulseRetake": PulseRetake,
@@ -1572,6 +1895,7 @@ NODE_CLASS_MAPPINGS = {
 NODE_DISPLAY_NAME_MAPPINGS = {
     "PulseSlate": "Pulse Slate · MiniMax H3",
     "PulseShot": "Pulse Shot",
+    "PulseVoice": "Pulse Voice",
     "PulseRender": "Pulse Render",
     "PulseBench": "Pulse Bench",
     "PulseRetake": "Pulse Retake · MiniMax H3",

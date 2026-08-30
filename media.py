@@ -12,6 +12,30 @@ import os
 import numpy as np
 import torch
 
+# `comfyui_pulse_studio.concat`, imported the one way that works in both worlds.
+#
+# ComfyUI loads this pack as a package, so this module is `<pack>.media` and a
+# relative import into the pure core resolves. The test suite imports `media`
+# top-level -- it has to: pyproject declares it a py-module beside `nodes` and
+# `render` (the flat layout exists because those three need torch and comfy,
+# which the stdlib-only core must never see), and the pack directory's own name
+# is not a valid Python identifier. There a relative import raises "attempted
+# relative import with no known parent package".
+#
+# Three functions below did the relative form lazily, inside the function body.
+# The consequence was invisible in the worst way: importing this module worked
+# and *calling* those functions did not. The tests that call them skip when torch
+# is absent, which is every CI runner and every developer box without a GPU, so
+# the suite was green while nine of them had never once executed. They fail the
+# moment the suite is run where it actually matters -- inside a working ComfyUI.
+#
+# Branching on `__package__` rather than catching ImportError, so a genuine
+# breakage inside `concat` still raises instead of being swallowed by a fallback.
+if __package__:
+    from .comfyui_pulse_studio import concat as _concat
+else:  # imported top-level, which is what the test suite does
+    from comfyui_pulse_studio import concat as _concat
+
 log = logging.getLogger(__name__)
 
 try:  # ComfyUI runtime
@@ -183,6 +207,40 @@ def load_audio(path, trim_start=0.0, trim_end=None, sample_rate=44100):
         return None
 
 
+def audio_trim(audio, trim_start=0.0, trim_end=None):
+    """[trim_start, trim_end) of an AUDIO dict already in memory.
+
+    `load_audio` does this for a file on disk. A recording arriving through a
+    socket never touched that path -- it is a tensor an upstream node handed over
+    -- so a trim asked for on one had nowhere to happen, and the widget quietly
+    did nothing. Applied where the tensor is stored, so everything downstream
+    (the window trim, the measured length, the muxed track) sees one recording
+    rather than a clip and a pair of numbers that have to be remembered together.
+
+    An empty result is refused: returning zero samples would put a hole in the
+    socket dict and renumber every tag behind it. The whole clip comes back
+    instead, and the caller reports it.
+    """
+    if audio is None:
+        return None, None
+    rate = int(audio.get("sample_rate") or 0)
+    waveform = audio.get("waveform")
+    if rate <= 0 or waveform is None:
+        return audio, None
+    total = waveform.shape[-1]
+    a = max(0, min(int(round(float(trim_start or 0.0) * rate)), total))
+    b = total if trim_end is None else max(a, min(int(round(float(trim_end) * rate)), total))
+    if a == 0 and b == total:
+        return audio, None
+    if b - a <= 0:
+        return audio, ("its trim keeps no audio at all (%.2f-%s of a %.2fs recording), "
+                       "so the whole recording was used instead"
+                       % (float(trim_start or 0.0),
+                          "end" if trim_end is None else "%.2f" % float(trim_end),
+                          total / float(rate)))
+    return {"waveform": waveform[..., a:b], "sample_rate": rate}, None
+
+
 def audio_tail(audio, seconds):
     """The last `seconds` of an AUDIO dict -- the window carry-over signal.
 
@@ -201,26 +259,80 @@ def audio_span(audio, start_seconds, seconds):
     """`seconds` of an AUDIO dict beginning at `start_seconds`, zero-padded if short.
 
     A lip-sync reference has to describe the same span of time as the window it
-    rides in. The DiT packs the reference audio rows against the target audio
-    grid, so a clip of a different length is asking the model to align two
-    different stretches of time -- which is the failure that reads as "lip sync
-    does not work" rather than as any kind of error.
+    rides in. `PackedLayout` packs each reference block ahead of the target and
+    advances its cursor by that block's own span, so a reference exactly as long
+    as the window puts every reference row a *constant* distance from the target
+    row it belongs to. A clip of a different length makes that distance vary,
+    which is the failure that reads as "lip sync does not work" rather than as
+    any kind of error.
 
-    Padding rather than truncating the window is deliberate: a recording that
-    runs out mid-window should leave the mouth still, not shorten the shot.
+    `start_seconds` is on the recording's own clock and may be negative, meaning
+    the recording has not started yet when the window opens; that leads in with
+    silence rather than sliding the take forward. Padding rather than truncating
+    the window is deliberate at both ends: a recording that runs out mid-window
+    should leave the mouth still, not shorten the shot.
     """
-    from .comfyui_pulse_studio.concat import audio_span_bounds
-
     if audio is None:
         return None
     sr = int(audio["sample_rate"])
     waveform = audio["waveform"]
-    start, stop, pad = audio_span_bounds(waveform.shape[-1], sr, start_seconds, seconds)
+    start, stop, head, tail = _concat.audio_span_bounds(
+        waveform.shape[-1], sr, start_seconds, seconds)
     piece = waveform[..., start:stop]
-    if pad:
+    if head:
         piece = torch.cat(
-            [piece, piece.new_zeros(piece.shape[:-1] + (pad,))], dim=-1)
+            [piece.new_zeros(piece.shape[:-1] + (head,)), piece], dim=-1)
+    if tail:
+        piece = torch.cat(
+            [piece, piece.new_zeros(piece.shape[:-1] + (tail,))], dim=-1)
     return {"waveform": piece, "sample_rate": sr}
+
+
+def audio_length_seconds(audio):
+    """How long an AUDIO dict runs, or None when there is nothing to measure.
+
+    None rather than 0.0 for an absent clip: the compiler treats unknown as "do
+    not diagnose" and zero as "this recording is empty", and reporting the second
+    when the first is true would put a silence warning on a perfectly good render.
+    """
+    if audio is None:
+        return None
+    rate = float(audio.get("sample_rate") or 0)
+    waveform = audio.get("waveform")
+    if rate <= 0 or waveform is None:
+        return None
+    return waveform.shape[-1] / rate
+
+
+def audio_seconds(path):
+    """How long an audio (or video) file's first audio stream runs, without decoding it.
+
+    Read from the container header, so this costs an open and a seek rather than
+    a full decode -- which matters because it is asked once per audio reference
+    on every queue, purely so the compiler can say "your narration is 14.8s short
+    of the film" before the render is spent finding out.
+
+    Returns None when the length cannot be established. None means "unknown" and
+    every caller treats it as "do not diagnose", never as zero: a file this
+    cannot measure is not a file that is empty.
+    """
+    import av
+
+    resolved = resolve_path(path)
+    if not resolved:
+        return None
+    try:
+        with av.open(resolved) as container:
+            if not container.streams.audio:
+                return None
+            stream = container.streams.audio[0]
+            if stream.duration is not None and stream.time_base:
+                return float(stream.duration * stream.time_base)
+            if container.duration:
+                return float(container.duration) / float(av.time_base)
+    except Exception as exc:
+        log.warning("[PulseStudio] could not measure %s: %s", path, exc)
+    return None
 
 
 def concat_audio(chunks, seam_treatment=False, fade_ms=None):
@@ -254,14 +366,7 @@ def treat_audio_seams(chunks, fade_ms=None):
 
     Order matters: the gain match runs first, so the taper has less to cover.
     """
-    from .comfyui_pulse_studio.concat import (
-        SEAM_FADE_MS_DEFAULT,
-        seam_dip_gains,
-        seam_dip_samples,
-        seam_gain_match,
-    )
-
-    fade_ms = SEAM_FADE_MS_DEFAULT if fade_ms is None else fade_ms
+    fade_ms = _concat.SEAM_FADE_MS_DEFAULT if fade_ms is None else fade_ms
     out = [{"waveform": chunks[0]["waveform"].clone(),
             "sample_rate": chunks[0]["sample_rate"]}]
 
@@ -274,7 +379,7 @@ def treat_audio_seams(chunks, fade_ms=None):
         # the gains applied twice in the middle. Real windows are seconds long,
         # so this only bites on a degenerate chunk -- which is exactly when a
         # silent double-attenuation would be hardest to notice.
-        half = seam_dip_samples(rate, fade_ms,
+        half = _concat.seam_dip_samples(rate, fade_ms,
                                 before=previous.shape[-1] // 2,
                                 after=following.shape[-1] // 2)
         if half <= 0:
@@ -284,14 +389,15 @@ def treat_audio_seams(chunks, fade_ms=None):
         # Measured over the same span the taper covers, so the two agree about
         # what "the seam" is.
         tail, head = previous[..., -half:], following[..., :half]
-        gain = seam_gain_match(_rms(tail), _rms(head), head_peak=float(head.abs().max()))
+        gain = _concat.seam_gain_match(_rms(tail), _rms(head),
+                                      head_peak=float(head.abs().max()))
         if gain != 1.0:
             following = following * gain
             head = following[..., :half]
 
-        falling = torch.as_tensor(seam_dip_gains(half), dtype=previous.dtype,
+        falling = torch.as_tensor(_concat.seam_dip_gains(half), dtype=previous.dtype,
                                   device=previous.device)
-        rising = torch.as_tensor(seam_dip_gains(half, rising=True),
+        rising = torch.as_tensor(_concat.seam_dip_gains(half, rising=True),
                                  dtype=following.dtype, device=following.device)
         previous[..., -half:] = tail * falling
         following[..., :half] = head * rising
@@ -305,6 +411,47 @@ def _rms(waveform):
     if waveform.numel() == 0:
         return 0.0
     return float(torch.sqrt(torch.mean(waveform.to(torch.float32) ** 2)))
+
+
+def mix_audio(clips):
+    """Sum AUDIO dicts of the same length into one, clamped to full scale.
+
+    Two characters speaking in one window are two recordings covering the same
+    seconds, and the film's own track has to carry both. Concatenating them would
+    play one after the other and double the window's length; taking only the first
+    -- which is what this did before it mixed -- silently dropped the second
+    speaker from the finished film while the render report said nothing.
+
+    Every clip is already exactly the window's length, because `audio_span` pads
+    rather than shortens. Rate and channel count are reconciled against the first
+    clip: a mix is one buffer, and buffers at two rates are not addable.
+
+    Clamped rather than normalised. Normalising would make one loud window quieter
+    than its neighbours, which is a level step at a seam -- the exact artefact
+    `concat.seam_gain_match` exists to remove.
+    """
+    clips = [c for c in clips if c is not None]
+    if not clips:
+        return None
+    if len(clips) == 1:
+        return clips[0]
+    rate = int(clips[0]["sample_rate"])
+    channels = clips[0]["waveform"].shape[1]
+    total = None
+    for clip in clips:
+        if int(clip["sample_rate"]) != rate:
+            clip = resample_audio(clip, rate)
+        waveform = clip["waveform"]
+        if waveform.shape[1] != channels:
+            # Mono into stereo, or a stray 5.1 bed down to what the rest carries.
+            waveform = (waveform[:, :1].expand(-1, channels, -1)
+                        if waveform.shape[1] == 1 else waveform[:, :channels])
+        if total is None:
+            total = waveform.clone()
+            continue
+        length = min(total.shape[-1], waveform.shape[-1])
+        total[..., :length] = total[..., :length] + waveform[..., :length]
+    return {"waveform": total.clamp(-1.0, 1.0), "sample_rate": rate}
 
 
 def resample_audio(audio, sample_rate):
@@ -767,8 +914,6 @@ def _remux_concat(paths, out_path, frame_counts, fps=24, audio=None):
     """
     import av
 
-    from .comfyui_pulse_studio.concat import video_is_gapless, video_shifts
-
     if not frame_counts or len(frame_counts) != len(paths):
         raise RuntimeError("a frame count is required per segment to place it exactly")
 
@@ -796,10 +941,11 @@ def _remux_concat(paths, out_path, frame_counts, fps=24, audio=None):
                         pass
 
                     time_base = float(video_out.time_base or video_in.time_base)
-                    shifts = video_shifts(frame_counts, fps, time_base)
+                    shifts = _concat.video_shifts(frame_counts, fps, time_base)
                     frame_duration = int(round((1.0 / float(fps)) / time_base))
-                    if not video_is_gapless(frame_counts, fps, time_base, shifts,
-                                            frame_duration):  # pragma: no cover
+                    gapless = _concat.video_is_gapless(
+                        frame_counts, fps, time_base, shifts, frame_duration)
+                    if not gapless:  # pragma: no cover
                         raise RuntimeError(
                             "the computed segment placement would leave a gap at a "
                             "seam; refusing to write a stuttering assembly")

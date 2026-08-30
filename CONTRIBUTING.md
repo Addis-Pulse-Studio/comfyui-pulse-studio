@@ -8,10 +8,30 @@ opening a pull request.
 ```bash
 git clone https://github.com/Addis-Pulse-Studio/comfyui-pulse-studio
 cd comfyui-pulse-studio
-pip install -r requirements.txt
-pytest
-node --test tests/js
+python run_tests.py
+node tests/js/test_widget_guard.mjs
+node tests/js/test_widget_order.mjs
+node tests/js/test_sockets.mjs
 ```
+
+Nothing is installed first. The suite is stdlib-only by design, and
+`requirements.txt` is empty of packages on purpose — see the comment in it.
+
+**`pytest` does not work on this repository, and cannot.** A ComfyUI custom node
+must expose a package `__init__.py` at its root, and that file imports `nodes.py`,
+which imports `torch` and `comfy`. pytest builds a `Package` node for any
+directory holding an `__init__.py` and imports it, so pointing pytest at `tests/`
+imports the pack's entry point as a side effect — outside ComfyUI that fails on
+the relative import, and inside it fails on the ComfyUI imports. Every test then
+errors at *setup* before its own code runs: one root cause, reported once per
+test. `--import-mode=importlib`, `--ignore=__init__.py`, dropping
+`tests/__init__.py` and combinations of the three were all tried against pytest
+9.1.1; the package import survives all of them.
+
+`run_tests.py` is unittest discovery, which does not model directories as
+packages, and it collects the same TestCases pytest would. It is what CI runs and
+what the README documents. Run it from the pack root — not from
+`comfyui_pulse_studio/`, which holds no tests.
 
 The full suite must pass on Python 3.10, 3.11 and 3.12. CI runs all three.
 

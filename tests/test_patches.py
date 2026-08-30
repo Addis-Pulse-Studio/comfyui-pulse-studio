@@ -337,7 +337,7 @@ class TestTheWarningIsActuallyWired(unittest.TestCase):
                           "%s declares no hidden inputs, so a warning raised by it "
                           "has no node to attach to" % node.name)
             declared += 1
-        self.assertEqual(declared, 6)
+        self.assertEqual(declared, 7)
         self.assertIn('HIDDEN_INPUTS = {"unique_id": "UNIQUE_ID"}', source)
         self.assertIn('HIDDEN_INPUTS_WITH_PROMPT = {"unique_id": "UNIQUE_ID", '
                       '"prompt": "PROMPT"}', source)

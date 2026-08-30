@@ -28,6 +28,8 @@ It is behaviour that was observed on real renders rather than derived, and it is
 reproduced here on that basis. See NOTICE.
 """
 
+import re
+
 from .assets import (
     KIND_AUDIO,
     KIND_IMAGE,
@@ -43,6 +45,9 @@ from .constants import (
     BRANCH_FL2VA,
     BRANCH_REF2VA,
     DEFAULT_AUDIO_CARRY_SECONDS,
+    LIP_SYNC_COVERAGE_TOLERANCE_SECONDS,
+    LIP_SYNC_END_OF_FILM_TOLERANCE_SECONDS,
+    MAX_DIALOGUE_WPM,
     MAX_WINDOW_FRAMES,
     MIN_TRAINED_FRAMES,
     RETENTION_DEFAULT,
@@ -50,6 +55,7 @@ from .constants import (
     RETENTION_PARTIAL,
     SPEAKER_ID_FORMAT,
 )
+from .concat import audio_span_report
 from .frames import (
     align_frame_count,
     frames_to_seconds,
@@ -61,6 +67,7 @@ from .frames import (
 from .timeline import Timeline
 
 __all__ = [
+    "DIALOGUE_BLOCK_RE",
     "CompiledWindow",
     "CompiledPlan",
     "CarryPolicy",
@@ -86,6 +93,14 @@ def format_timestamp(seconds):
     seconds = max(0.0, float(seconds))
     minutes = int(seconds // 60)
     return "%02d:%06.3f" % (minutes, seconds - minutes * 60)
+
+
+# The inverse of `wrap_dialogue` below, and kept beside it so the two cannot
+# drift: anything that reads a <d> block back out has to match what wrote it. The
+# language tag is skipped rather than captured -- "[English]" is markup the model
+# reads, not words anybody says, and counting it would inflate every speech-rate
+# measurement by two words a line.
+DIALOGUE_BLOCK_RE = re.compile(r"<d>\s*(?:\[[^\]]*\]\s*)?(.*?)</d>", re.DOTALL)
 
 
 def wrap_dialogue(text, language):
@@ -258,10 +273,12 @@ class FileRef:
     """
 
     __slots__ = ("socket", "kind", "asset_id", "name", "file", "tag",
-                 "trim_start", "trim_end", "synthetic", "audio_role")
+                 "trim_start", "trim_end", "synthetic", "audio_role",
+                 "audio_offset", "source_seconds")
 
     def __init__(self, socket, kind, asset_id, name, file, tag,
-                 trim_start=0.0, trim_end=None, synthetic=False, audio_role=None):
+                 trim_start=0.0, trim_end=None, synthetic=False, audio_role=None,
+                 audio_offset=0.0, source_seconds=None):
         self.socket = socket
         self.kind = kind
         self.asset_id = asset_id
@@ -274,12 +291,20 @@ class FileRef:
         # Carried from the asset so the executor can trim a lip-sync clip to the
         # window without re-reading the bin. See constants.AUDIO_ROLE_LIP_SYNC.
         self.audio_role = audio_role
+        # Where this recording's first sample sits on the film clock, and how long
+        # it runs. Carried for the same reason `audio_role` is: the executor cuts
+        # the clip to the window and must not have to go back to the bin to learn
+        # which seconds of it to take. See Asset.audio_offset.
+        self.audio_offset = float(audio_offset or 0.0)
+        self.source_seconds = source_seconds
 
     def to_dict(self):
         return {"socket": self.socket, "kind": self.kind, "asset_id": self.asset_id,
                 "name": self.name, "file": self.file, "tag": self.tag,
                 "trim_start": self.trim_start, "trim_end": self.trim_end,
-                "synthetic": self.synthetic, "audio_role": self.audio_role}
+                "synthetic": self.synthetic, "audio_role": self.audio_role,
+                "audio_offset": self.audio_offset,
+                "source_seconds": self.source_seconds}
 
     def __repr__(self):
         return "FileRef(%s -> %s %r)" % (self.socket, self.tag, self.name)
@@ -807,21 +832,28 @@ def _compile_window(timeline, index, total, branch, frame_count, start, end, car
         resolved_shots[shot.shot_id] = resolved
         shot_texts.append(resolved)
 
-        # A lip-sync reference and a quoted line are two different answers to
-        # "what is this character saying": the <d> block instructs the model to
-        # speak those words, and the recording says whatever it says. The model
-        # will pick one, and nothing about the output reveals which. Reported
-        # rather than resolved -- a quote that *is* the transcript of the
-        # recording is legitimate and even helpful, and only the author knows.
+        # A lip-sync reference and a quoted line are two answers to "what is this
+        # character saying": the <d> block instructs the model to speak those
+        # words, and the recording says whatever it says.
+        #
+        # Which way round this reads matters, and it used to read backwards. The
+        # note told the author to drop the quote -- but a quote that *is* the
+        # recording's transcript is not a conflict, it is the recommended shape:
+        # it hands the text encoder the words the waveform it cannot hear is
+        # carrying. Every narration film does this, so the old wording fired on
+        # every shot of a graph doing exactly what the documentation asks for, and
+        # a warning channel that cries wolf is worth less than no channel. Say the
+        # correct case first, and keep the warning for the one that is not.
         if "<d>" in resolved:
             lip_sync = [a for a in (local_refs.get(shot.shot_id) or [])
                         if a.kind == KIND_AUDIO and a.audio_role == AUDIO_ROLE_LIP_SYNC]
             if lip_sync:
                 diagnostics.append(
-                    "shot %r: has quoted dialogue and a lip_sync reference (%s). The "
-                    "quote tells the model what to say and the recording says what it "
-                    "says; unless the quote is that recording's transcript, drop it and "
-                    "let the audio carry the words."
+                    "shot %r: has quoted dialogue and a lip_sync reference (%s). If the "
+                    "quote is that recording's transcript this is right, and the words "
+                    "help -- the text encoder never hears the waveform. If it is not, "
+                    "the two say different things and only one can come out; drop the "
+                    "quote and let the audio carry the words."
                     % (shot.shot_id, ", ".join("@" + a.name for a in lip_sync)))
 
         if ordinal == 1:
@@ -860,7 +892,7 @@ def _compile_window(timeline, index, total, branch, frame_count, start, end, car
                if socket.startswith("ref_video_audio_") else tag_map.by_id.get(asset_id))
         files.append(FileRef(socket, asset.kind, asset.asset_id, asset.name, asset.file,
                              tag, asset.trim_start, asset.trim_end, asset.synthetic,
-                             asset.audio_role))
+                             asset.audio_role, asset.audio_offset, asset.source_seconds))
 
     # ── anchors (fl2va only) ───────────────────────────────────────────────
     anchors = {}
@@ -915,11 +947,142 @@ def _compile_window(timeline, index, total, branch, frame_count, start, end, car
         extra_subject_lines, extra_retention_lines, audio_bindings)
 
     diagnostics.extend(_uncited_references(bin_, tag_map, prompt))
+    diagnostics.extend(_lip_sync_diagnostics(
+        index, total, start, end, frames_to_seconds(frame_count, timeline.fps),
+        files, shot_texts))
 
     return CompiledWindow(index, total, branch, frame_count, start, end, prompt,
                           files, tag_map, anchors, diagnostics, shot_ids, seed_offset=index,
                           resolved_shots=resolved_shots, unresolved_shots=unresolved_shots,
                           speaker_bindings=speaker_bindings)
+
+
+def _lip_sync_diagnostics(index, total, start, end, window_seconds, files,
+                          shot_texts):
+    """What is wrong with this window's lip sync, said out loud.
+
+    Everything here is reported and nothing is repaired. Each failure has an
+    obvious-looking automatic fix -- drop the duplicate reference, trim the
+    dialogue, slide the recording -- and every one of them is wrong: the compiler
+    cannot tell which of two references the author meant, silently shortening
+    somebody's script is not a thing a renderer gets to do, and moving a take is
+    the one edit that would hide the mistake it is meant to expose. What it can do
+    is name the number that makes the fix obvious, which is a count of seconds in
+    every case.
+
+    Deliberately last in the window, after `_uncited_references`: these read as
+    conclusions about the finished window rather than as notes from assembling it.
+    """
+    out = []
+    lip = [f for f in files
+           if f.kind == KIND_AUDIO
+           and f.audio_role == AUDIO_ROLE_LIP_SYNC
+           and not f.synthetic]
+
+    # ── a recording that does not cover the window ──────────────────────────
+    # THE FAILURE THIS FUNCTION EXISTS FOR
+    #
+    # A lip-sync clip is cut to the window it rides in, starting at this window's
+    # position on the recording's own clock (`start - audio_offset`). When the
+    # recording does not reach that far the span is made up of silence -- padded,
+    # deliberately, so the track does not shorten and desynchronise every window
+    # after it. The render then succeeds and the mouth does not move, and until
+    # this check nothing anywhere said why.
+    #
+    # The usual cause is a per-shot recording on a film-clock offset: shot 3 is
+    # handed its own 12-second take and asked for the seconds from 24.50 onward,
+    # which are all past its end. `source_seconds` is None whenever nothing has
+    # measured the file, and unknown is never reported as a problem.
+    # A trailing gap on the final window is the film ending, not a mistake, so it
+    # is held to a whole second. Everywhere else -- and lead-in silence anywhere,
+    # which means a recording that starts late -- keeps the quarter-second rule.
+    tail_floor = (LIP_SYNC_END_OF_FILM_TOLERANCE_SECONDS if index == total - 1
+                  else LIP_SYNC_COVERAGE_TOLERANCE_SECONDS)
+
+    # What an uncovered span actually looks like depends on whether the shots
+    # still ask for speech, and the two cases send the author somewhere different.
+    #
+    # With no dialogue the mouth is genuinely still: nothing told the model to
+    # speak and no recording is driving it. With dialogue it is not still at all
+    # -- the <d> block instructs the model to say those words, so it generates
+    # speech and the mouth moves, while `use_reference_audio` mixes the
+    # reference's silence over the top. A talking head on a dead track, which is
+    # worse than a still one and is fixed by editing the words rather than by
+    # finding a longer recording. Observed on a real render: a 7.6s narration in
+    # a 13.88s film, mouth moving through every second of the silence.
+    speaking = any("<d>" in text for text in shot_texts)
+    if speaking:
+        consequence = ("That much of the window has no recording behind it, and the "
+                       "shots there still carry written dialogue -- so the model "
+                       "speaks those words while the supplied track is silent, and "
+                       "the mouth moves over dead air. Cover the window, or take the "
+                       "quoted lines out of the shots it does not reach.")
+    else:
+        consequence = "That much of the window is silence, and the mouth is still through it."
+    measured = 0.0
+    for ref in lip:
+        if ref.source_seconds is None:
+            continue
+        head, tail = audio_span_report(
+            ref.source_seconds, start - ref.audio_offset, window_seconds)
+        measured = max(measured, ref.source_seconds)
+        covers = ("`@%s` covers %.2f-%.2fs on the film clock and window %d covers "
+                  "%.2f-%.2fs"
+                  % (ref.name, ref.audio_offset,
+                     ref.audio_offset + ref.source_seconds, index + 1, start, end))
+        # A window made entirely of silence is reported wherever it falls. It is
+        # never a film ending a moment early -- it is a recording and a window
+        # that do not overlap at all.
+        if head + tail >= window_seconds - 1e-6:
+            out.append(
+                "%s. The two do not meet, so nothing of this recording reaches this "
+                "window. %s Either it belongs at a different offset -- a per-shot take "
+                "needs one, a whole-film narration does not -- or it does not reach "
+                "this far into the film." % (covers, consequence))
+            continue
+        parts = []
+        if head >= LIP_SYNC_COVERAGE_TOLERANCE_SECONDS:
+            parts.append("starts %.2fs after the window opens" % (head,))
+        if tail >= tail_floor:
+            parts.append("runs out %.2fs before it ends" % (tail,))
+        if not parts:
+            continue
+        out.append("%s, so it %s. %s" % (covers, " and ".join(parts), consequence))
+
+    # ── two recordings describing the same seconds ──────────────────────────
+    # Each lip-sync reference is trimmed to *this window's* span, so a second one
+    # is not extra information -- it is the same seconds a second time, and the
+    # prose ends up carrying two "lip movements match" directives that cannot both
+    # be obeyed. Nothing is dropped to fix it: choosing which copy to discard means
+    # guessing which shot the author meant, and guessing wrong desynchronises the
+    # mouth that was right.
+    if len(lip) > 1:
+        out.append(
+            "window %d carries %d lip-sync references (%s). Each is trimmed to this "
+            "window's span, so the model is handed the same seconds more than once "
+            "and the mouth has more than one answer. Give each window one speaking "
+            "shot, or make the others voice_timbre."
+            % (index + 1, len(lip), ", ".join("@" + f.name for f in lip)))
+
+    # ── more words than the window has time for ─────────────────────────────
+    # Only the <d> blocks count: prose about the scene is direction, not speech.
+    # This is the estimate, and it is consulted only when no recording's length
+    # answered the question exactly -- a measured take that fits its window is not
+    # improved by second-guessing how fast the words in it read.
+    spoken = sum(len(said.split())
+                 for text in shot_texts
+                 for said in DIALOGUE_BLOCK_RE.findall(text))
+    if spoken and window_seconds > 0.0 and not measured:
+        wpm = spoken / window_seconds * 60.0
+        if wpm > MAX_DIALOGUE_WPM:
+            fits = int(MAX_DIALOGUE_WPM * window_seconds / 60.0)
+            out.append(
+                "window %d holds %d words of dialogue in %.2fs, about %.0f words per "
+                "minute. They cannot be spoken in the time the window has, so the take "
+                "either rushes or overruns and the mouth is wrong either way. Roughly "
+                "%d words fit here; this is %d over."
+                % (index + 1, spoken, window_seconds, wpm, fits, spoken - fits))
+    return out
 
 
 def _shot_boundaries(timeline):
@@ -1094,17 +1257,30 @@ def _assemble_reference_prompt(timeline, index, total, bin_, tag_map, subject_li
             audio_lines.append("`%s` is a voice-timbre reference%s." % (tag, detail))
 
         # A retention line for an audio reference, in MiniMax's own vocabulary
-        # rather than the picture words. Emitted only when the voice is bound to
-        # someone: "fully_copy" against an unattributed recording tells the model
-        # to reproduce a voice without saying whose mouth it comes out of, which
-        # is the leak this whole binding exists to close.
+        # rather than the picture words.
+        #
+        # The two roles are bound differently on purpose. "reference" against an
+        # unattributed recording tells the model to reproduce a voice without
+        # saying whose mouth it comes out of, which is the leak the whole binding
+        # exists to close -- so a timbre line waits for an owner. `fully_copy` on
+        # a lip-sync reference says something else entirely: use this exact track
+        # and move the mouth with it. That instruction is true whether or not
+        # anybody has named the speaker, and withholding it was a real loss on the
+        # commonest graph there is -- a one-hander, where there is nothing to
+        # confuse and so nobody fills in `speaker`. Those films were asking for
+        # lip sync in the subject definitions and saying nothing about it in
+        # retention_analysis, which is half the instruction.
         retention = AUDIO_ROLE_RETENTION.get(asset.audio_role)
-        if retention and who:
+        if asset.audio_role == AUDIO_ROLE_LIP_SYNC:
+            audio_retention_lines.append(
+                "`%s`%s: %s - this exact recording is what is heard, and %s moves "
+                "with it."
+                % (tag, (" (the voice of %s)" % who) if who else "", retention,
+                   "that mouth" if who else "the speaking character's mouth"))
+        elif retention and who:
             audio_retention_lines.append(
                 "`%s` (the voice of %s): %s - %s"
                 % (tag, who, retention,
-                   "this exact recording is what is heard, and that mouth moves with it."
-                   if asset.audio_role == AUDIO_ROLE_LIP_SYNC else
                    "borrow this voice's timbre and delivery; the words spoken are the "
                    "ones written in this window's shots."))
 

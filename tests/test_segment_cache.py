@@ -466,21 +466,35 @@ class TestAssemblySurvivesItsOwnFailure(unittest.TestCase):
     def test_the_placement_arithmetic_lives_where_it_can_be_tested(self):
         """It was wrong once and shipped, because nothing without PyAV could
         reach it. It is now a pure module driven by timestamps read out of real
-        segment files -- see tests/test_concat.py."""
+        segment files -- see tests/test_concat.py.
+
+        The import itself is asserted at module scope rather than inside this
+        function. It used to be a lazy relative import in the body, which meant
+        `media` imported fine and calling it raised "attempted relative import
+        with no known parent package" -- because the test suite imports `media`
+        top-level, as pyproject declares it. That failed only where torch is
+        installed, which is nowhere the suite usually runs.
+        """
         media = self.source("media.py")
+        self.assertIn("from comfyui_pulse_studio import concat as _concat", media)
         block = media.split("def _remux_concat", 1)[1]
-        self.assertIn(
-            "from .comfyui_pulse_studio.concat import video_is_gapless, video_shifts",
-            block)
-        self.assertIn("video_shifts(frame_counts, fps, time_base)", block)
+        self.assertIn("_concat.video_shifts(frame_counts, fps, time_base)", block)
+        self.assertNotIn("from .comfyui_pulse_studio.concat import", block,
+                         "the arithmetic must not be imported relatively inside a "
+                         "function: `media` is a top-level module and the import "
+                         "raises when it is called rather than when it is loaded")
 
     def test_a_placement_that_would_stutter_is_never_written(self):
         """Checked before a byte is muxed, so the failure is a message rather
         than a file that freezes at every seam."""
         media = self.source("media.py")
         block = media.split("def _remux_concat", 1)[1]
-        self.assertIn("if not video_is_gapless(", block)
+        self.assertIn("_concat.video_is_gapless(", block)
+        self.assertIn("if not gapless:", block)
         self.assertIn("raise RuntimeError", block)
+        self.assertLess(block.index("_concat.video_is_gapless("),
+                        block.index("output.mux("),
+                        "the check must happen before the first packet is written")
 
     def test_the_audio_is_rebuilt_rather_than_copied(self):
         """Each segment's AAC opens on a priming delay that cannot be

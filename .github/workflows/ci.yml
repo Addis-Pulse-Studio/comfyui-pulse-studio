@@ -68,6 +68,70 @@ jobs:
       - name: Environment invariants (§18.1)
         run: python -m unittest tests.test_no_network tests.test_shipped_assets -v
 
+  tensor-layer:
+    # The job that exists because a skip is invisible in a green run.
+    #
+    # Sixteen tests guard themselves with `import torch` in setUp and skip when it
+    # is missing, which is every runner in the matrix above. That is deliberate --
+    # the suite must pass on a bare box -- but it meant those sixteen had never
+    # once executed anywhere: three Python versions green while `media.audio_span`
+    # and `media.treat_audio_seams`, the two functions the lip-sync trim rests on,
+    # were never called. The bug that hid there was a relative import inside a
+    # function body, which raises when the function is called rather than when the
+    # module loads. It surfaced only when the suite was finally run inside a
+    # working ComfyUI, where torch is present.
+    #
+    # So: one job, one Python, CPU-only wheels. Kept out of the matrix on purpose.
+    # Installing torch there would cost three downloads and would destroy the
+    # property the matrix exists to prove -- that this suite needs nothing
+    # installed. This job proves the other half.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Node too, so the JS-driving tests cannot skip either and the
+      # zero-skip assertion below is a statement about the whole suite.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install CPU-only torch
+        # The CPU index, not PyPI: the default wheel carries the CUDA runtime and
+        # is gigabytes for a runner that has no GPU. Unpinned, for the reason
+        # requirements.txt gives -- this pack must not fight a host's torch over a
+        # version, and CI testing a pin nobody runs would be testing the pin.
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --index-url https://download.pytorch.org/whl/cpu \
+            torch numpy
+          python -c "import torch, numpy; print(torch.__version__, numpy.__version__)"
+
+      - name: Full suite, and nothing may skip
+        # The assertion is the point. Without it this job would install torch,
+        # skip the same sixteen tests for some new reason, and report success.
+        run: |
+          set -o pipefail
+          python run_tests.py 2>&1 | tee suite.log
+          if grep -q "skipped" suite.log; then
+            echo "::error::a test skipped in the job whose whole purpose is that none do"
+            grep -o "skipped=[0-9]*" suite.log || true
+            exit 1
+          fi
+
+      - name: The tensor tests, named so their absence is a failure
+        # Already inside the suite above, and named here for the same reason the
+        # cross-language parity step is: these are the ones that were silently
+        # absent, and a check list that says so by name is worth the duplication.
+        run: |
+          python -m unittest -v \
+            tests.test_audio_role.TestTheTensorSlicing \
+            tests.test_concat.TestTheTensorRind \
+            tests.test_lipsync_timing.TheTensorSlicing
+
   import-purity:
     # A separate job with nothing installed. The pure core must import on a
     # machine with no torch and no ComfyUI; running it alongside the matrix

@@ -4,6 +4,218 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+### A recording says where on the film clock it starts
+
+`PulseVoice` is a new node: one recording, plus what it is for, whose it is, and
+**where it begins**. Its `PULSE_VOICE` output goes into `PulseSlate`'s new
+`voices.voice_1..3` group — visible to every window — or into one `PulseShot`'s
+new `voice` input, for that shot alone.
+
+#### The failure it closes
+
+A `lip_sync` clip is cut to the window it rides in. That makes *which seconds of
+the file* the question the whole feature turns on, and nothing in the graph could
+answer it: `render._audio_for` trimmed at `window.start_seconds`, which is the
+**film's** clock, and said so nowhere. The rule was documented in one example
+workflow's MarkdownNote and contradicted by `PulseShot.ref_audio`'s own tooltip
+("a voice or effect sample for this scene only" — true about scope, false about
+time).
+
+Wire a per-shot take, which is what that tooltip invites, and
+`concat.audio_span_bounds` clamped the start to the end of the buffer: window 3
+asked for the seconds from 24.50s of a 12-second recording and got padding.
+Every one of them. The render succeeded, the report said nothing, and the mouth
+did not move — which is indistinguishable from the model being bad at lip sync,
+so the failure was attributed to H3 and the graph was never looked at again.
+
+`Asset.audio_offset` is where a recording's first sample sits on the film clock.
+The default is `0.0`, which is what every project written before it existed
+means, so **no existing render changes** — `window.start_seconds - 0.0` is the
+call `_audio_for` has always made. `PulseVoice.aligns_to` is how a graph says
+otherwise: `film_clock` for a narration spanning the timeline, `shot_start` for a
+take recorded for one shot, plus an `offset_seconds` on top for room tone in
+front of it.
+
+It is a combo rather than a number because "this recording starts when the shot
+starts" should be something the graph states, not arithmetic the author redoes
+every time a duration changes.
+
+#### It is measured, not assumed
+
+`concat.audio_span_bounds` already computed how many samples of a span were
+silence and `media.audio_span` threw the number away. It is now returned as
+`(start, stop, head, tail)` and reported:
+
+> `@Voice` covers 0.00-12.40s on the film clock and window 3 covers 24.50-36.75s.
+> The two do not meet, so nothing of this recording reaches this window.
+
+with a partial form for a narration that merely runs out early.
+
+What an uncovered span *looks* like depends on whether the shots still ask for
+speech, and the first draft of this check got it wrong. With no dialogue the
+mouth is genuinely still. With dialogue it is not still at all: the `<d>` block
+instructs the model to say those words, so it generates speech and the mouth
+moves while `use_reference_audio` mixes the reference's silence over the top.
+Confirmed on a real render — a 7.6s narration in a 13.88s film, mouth visibly
+mid-syllable at 10.0s and 11.7s with a peak-zero track underneath. Saying "the
+mouth is still" there sends the author looking for a longer recording when the
+fix may be to cut the words, so the two cases now read differently.
+
+A trailing gap on the *last* window is held to a whole second rather than a
+quarter, because the film ending is not a mistake. Both graphs this was first run
+against tripped the quarter-second rule on a correct film — 0.46s on a 45s
+explainer, 0.37s on an 8s one — and a warning channel that fires on correct films
+is worth less than none. A gap anywhere else keeps the quarter second, and
+**lead-in** silence is never relaxed at either end: a recording that starts late
+is late wherever it happens.
+
+`source_seconds` is measured in the node layer — from the tensor for a socket, from the container
+header for a file — because `compiler.py` imports no torch and must not. A
+recording nothing could measure is never diagnosed: `None` means unknown, and
+unknown is not the same as empty.
+
+A **negative** offset is no longer clamped. Clamping was silent: a recording
+starting three seconds into the film was slid forward to the window's opening and
+every lip in it then ran three seconds early. It now leads in with silence, which
+is what "the recording has not started yet" actually sounds like.
+
+#### The sub-frame straddle, fixed at its source
+
+`PulseShot.duration_seconds` capped at `15.08` while a full 362-frame window is
+`15.08333s`, so a chain of full-length shots could not put a single cut on a
+seam. Every one landed 3ms short, `Shot.overlaps` placed the shot in both
+windows, and — because a shot's reference audio travels with it — each window was
+handed **two** lip-sync recordings describing the same seconds. Two "lip
+movements match" directives, one mouth, nothing reported.
+
+`Timeline.shots_in` now applies a one-frame floor: a window renders whole frames,
+so a shot occupying less than one of them does not appear in it. Two fallbacks
+keep it honest — with fewer than two shots there is nothing to trim towards, and
+a window whose every shot is a sliver keeps them, because rendering on the style
+line alone is worse than the duplicate. `report.straddling_shots` still names
+whatever remains. The widget cap is now `MAX_WINDOW_FRAMES / FPS`, so a shot may
+be exactly as long as the window it renders in.
+
+Two lip-sync references surviving in one window is still reported, and still not
+repaired: choosing which copy to discard means guessing which shot the author
+meant, and guessing wrong desynchronises the mouth that was right.
+
+#### Prompt and mux
+
+- A `lip_sync` reference now gets its `fully_copy` `retention_analysis` line even
+  when no `speaker` names its owner. The line was withheld from unbound
+  recordings to stop `reference` leaking a voice between characters — a real
+  concern for `voice_timbre`, and the wrong rule for `lip_sync`, where "use this
+  exact track and move the mouth with it" is true whoever is speaking. The
+  commonest graph there is — a one-hander, where nobody fills in `speaker`
+  because there is nothing to confuse — was asking for lip sync in
+  `subject_definitions` and saying nothing about it in `retention_analysis`.
+- `PulseRender.use_reference_audio` mixes **every** lip-sync recording in a
+  window, each at its own offset. It took the first one it found and `break`,
+  so a two-hander silently lost a character from the finished film.
+- The "quoted dialogue and a `lip_sync` reference" note read backwards. A quote
+  that *is* the recording's transcript is the recommended shape — it hands the
+  text encoder the words the waveform it cannot hear is carrying — so the old
+  wording fired on every shot of a narration graph doing exactly what the
+  documentation asks for. The correct case is stated first now.
+
+#### Nine tests that had never run
+
+`media.py` is a top-level module — `pyproject` declares it a py-module beside
+`nodes` and `render`, because those three need torch and comfy and the stdlib-only
+core must never see either. Three of its functions nonetheless reached into the
+core with a *relative* import, done lazily inside the function body:
+
+```python
+from .comfyui_pulse_studio.concat import audio_span_bounds
+```
+
+Inside ComfyUI that resolves, because the pack is loaded as a package. Anywhere
+else — including the test suite, which imports `media` top-level as the manifest
+says it is — it raises `ImportError: attempted relative import with no known
+parent package`. Being lazy is what made it invisible: importing the module
+worked and *calling* those functions did not.
+
+The tests that call them guard themselves with `import torch` in `setUp` and skip
+when it is missing, which is every CI runner and every box without a GPU. So the
+suite was green on three Python versions while nine of its tests had never once
+executed, and they failed the moment it was run where it matters: inside a working
+ComfyUI, where torch is present. Eleven errors, `audio_span` and
+`treat_audio_seams` among them — the two functions the whole lip-sync trim rests
+on.
+
+Now one import at module scope, branching on `__package__` rather than catching
+`ImportError`, so a genuine breakage inside `concat` still raises instead of being
+swallowed by a fallback. The core is stdlib-only, so importing it eagerly costs
+nothing. Two source-text guards in `tests/test_segment_cache.py` moved with it,
+and one now asserts the *absence* of a relative import inside a function body.
+
+With torch present the suite is 863 passed, **0 skipped**. Without it, 863 passed
+and 16 skipped, as before. CI runs the second of those, so the tensor layer is
+still unguarded there — a skip is invisible in a green run.
+
+#### Also
+
+- `js/ps_sockets.js` gains `voices.voice_` **appended after** `shots.shot_`, never
+  inserted: the frontend rebuilds that tail in `GROUPS` order and a group placed
+  ahead of an existing one lands a saved graph's wires on the wrong sockets. The
+  same rule put `voice` after `ref_audio` on `PulseShot`.
+- `tests/test_js_guard.py` did not know `PULSE_VOICE` was a connection type, so it
+  read the new input as a widget and waved through exactly the insertion it exists
+  to catch. It is in `CONNECTION_TYPES` now, and it caught the first draft of the
+  shipped graph wiring `voices.voice_1` into `model_fl2va`.
+- `audio_offset` reaches the segment cache key, appended after `voice_of` and only
+  when non-zero. Two renders identical in every other field are different films,
+  and the content digest cannot tell them apart — it hashes the whole file either
+  way. A project whose recordings all start with the film keeps every key on disk.
+- `example_workflows/PulseSlate_Voice.json`, the fifth shipped graph. Its
+  placeholder is the one-second test tone against a 13.88s film, so the first
+  thing it does is print the coverage diagnostic — which is the feature, and the
+  note says so.
+
+#### Not done here: the version bump
+
+The package version is unchanged at `3.0.0`, and this section is the note for
+whoever cuts the release.
+
+**Nothing in this work requires a schema bump.** The widget contract forbids
+inserting, reordering, removing, retyping or renaming a widget and permits
+appending; none of those happened. `PulseVoice` is a new node that brings its own
+`SPECS` table, and `PulseShot.voice` / `PulseSlate.voices.voice_N` are connection
+*inputs*, not widgets. Every existing node's widget list is byte-identical.
+
+**The bump is forced from outside.** `comfyui-pulse-studio 3.0.0` is on the
+ComfyUI registry with status `NodeVersionStatusBanned`, so that version can never
+be republished — and `tests/test_packaging.py` couples the package version to
+`SCHEMA_VERSION` deliberately ("one number wearing two hats", after they drifted
+once). So publishing at all means moving `SCHEMA_VERSION`, which means moving the
+whole widget contract with it, for a release in which no widget changed.
+
+The six edits, in an order that keeps the suite green at each step:
+
+1. `pyproject.toml` — `version = "3.1.0"`.
+2. `comfyui_pulse_studio/constants.py` — `SCHEMA_VERSION = "3.1.0"`.
+   `tests/test_packaging.py::test_version_matches_schema_version` guards 1 against 2.
+3. `js/ps_widget_order.js` — `export const CURRENT = "3.1.0"`.
+   `tests/test_js_guard.py` guards 2 against 3.
+4. `js/ps_widget_order.js` — add a `"3.1.0"` key to **all seven** entries in
+   `SPECS` (`PulseSlate`, `PulseShot`, `PulseVoice`, `PulseRender`, `PulseBench`,
+   `PulseRetake`, `PulseStill`), each a copy of that node's `"3.0.0"` list, which
+   is unchanged. **Keep the `"3.0.0"` keys.** `readSavedValues` looks the saved
+   file's own version up in this table, so deleting them makes every workflow
+   already on disk unreadable — the table is a history, not a current state. A
+   node with no entry at `CURRENT` reports as drifted rather than as untouched,
+   which is why all seven move even though none of them changed.
+5. The five graphs in `example_workflows/` — `PulseSlate`'s `widgets_values[0]`
+   from `"3.0.0"` to `"3.1.0"`, and the same on every other Pulse node in them.
+   `tests/test_workflow.py::test_the_workflow_declares_the_current_schema` asserts
+   this, and its expected literal moves too.
+6. This file — retitle `[Unreleased]` to `[3.1.0]` with the date.
+
+Re-check `GET https://api.comfy.org/nodes/comfyui-pulse-studio/versions` before
+publishing: 3.1.0 has to be free as well as 3.0.0 being unusable.
+
+
 ### A voice is bound to a face
 
 `PulseShot` gains a `speaker` widget, appended after `ref_audio_mode`. Type the

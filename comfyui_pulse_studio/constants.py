@@ -232,6 +232,47 @@ AUDIO_ROLE_RETENTION = {
     AUDIO_ROLE_TIMBRE: "reference",
 }
 
+# ── When a lip-sync render is quietly wrong ─────────────────────────────────
+# The numbers below exist because the failures they catch are invisible. A window
+# handed a recording that does not cover it, or twice as many words as it has
+# seconds, does not error and does not look broken in the report: it comes back
+# with a mouth that does not track, which is indistinguishable from the model
+# being bad at lip sync. That is the attribution this pack has to prevent, because
+# it sends the author to a different model rather than to their own graph.
+
+# How much silence inside a window is worth naming, in seconds. A lip-sync clip is
+# padded when it does not cover its window (see concat.audio_span_bounds), and a
+# few milliseconds of that is ordinary grid rounding -- a 362-frame window is
+# 15.0833s and no recording is cut to four decimal places. A quarter of a second
+# is roughly a syllable: below it there is nothing to see, and above it the mouth
+# is visibly still while the shot expects speech.
+LIP_SYNC_COVERAGE_TOLERANCE_SECONDS = 0.25
+
+# The same question at the end of the film, where the answer is different. A
+# narration that stops a fraction of a second before the last frame does is
+# ordinary -- the recording ends when the speaking ends, and the grid rounds the
+# final window up to a legal frame count regardless. Two real graphs tripped the
+# quarter-second rule on exactly that: 0.46s on a 45s explainer and 0.37s on an
+# 8s one, both correct films.
+#
+# So a *trailing* shortfall on the *last* window is held to a second instead. A
+# gap anywhere else is still a quarter second, because a mid-film silence is a
+# mistake and the end of a film is not. Lead-in silence is never relaxed at
+# either end: a recording that starts late is late wherever it happens.
+LIP_SYNC_END_OF_FILM_TOLERANCE_SECONDS = 1.0
+
+# Words per minute above which dialogue stops fitting its window. Ordinary
+# narration runs 130-160; broadcast urgency reaches ~180. Past this the words
+# cannot be spoken in the time available, so H3 either rushes them or runs past
+# the window, and the mouth is wrong either way. Deliberately well clear of any
+# defensible delivery rate -- this is a "your script does not fit" alarm, not a
+# style opinion, and a false one would train people to ignore the report.
+#
+# Only ever consulted when the recording's own length is unknown. A measured
+# duration answers the same question exactly, and an exact answer beats an
+# estimate built on how fast somebody might read.
+MAX_DIALOGUE_WPM = 200.0
+
 # ── How much of a visual reference to hold on to ────────────────────────────
 # These strings are written *verbatim* into the prompt's retention_analysis
 # section, which the model reads literally -- they are content, not an enum the

@@ -71,11 +71,12 @@ class Asset:
 
     __slots__ = ("asset_id", "kind", "name", "file", "description", "retention",
                  "trim_start", "trim_end", "include_audio", "synthetic", "audio_role",
-                 "voice_of")
+                 "voice_of", "audio_offset", "source_seconds")
 
     def __init__(self, asset_id, kind, name="", file="", description="",
                  retention=None, trim_start=0.0, trim_end=None, include_audio=False,
-                 synthetic=False, audio_role=None, voice_of=None):
+                 synthetic=False, audio_role=None, voice_of=None,
+                 audio_offset=0.0, source_seconds=None):
         if kind not in KINDS:
             raise ValueError("unknown asset kind %r (expected one of %r)" % (kind, KINDS))
         self.asset_id = str(asset_id)
@@ -111,6 +112,26 @@ class Asset:
         # that carries it. A voice dropped in the Asset Bin has no shot to read a
         # speaker off, so it has to say who it belongs to itself.
         self.voice_of = voice_of if kind == KIND_AUDIO else None
+        # Only meaningful on an audio asset: the second on the FILM clock at which
+        # this recording's first sample sits. 0.0 -- the default, and what every
+        # project written before this field existed means -- says the recording
+        # starts when the film starts, which is what a single narration track
+        # spanning the whole timeline does.
+        #
+        # It exists because a lip-sync clip is cut to the window it rides in, and
+        # until this field there was no way to say *which* seconds of the file
+        # that window should take. The trim assumed the film's clock and said so
+        # nowhere, so a per-shot recording -- the reading the socket's own tooltip
+        # invited -- was sliced at an offset past its own end and the window was
+        # handed silence. Not an error, not a warning: a mouth that does not move.
+        self.audio_offset = float(audio_offset or 0.0) if kind == KIND_AUDIO else 0.0
+        # How long the recording itself runs, when anything has measured it.
+        # None means unknown and is never read as zero -- a file nothing could
+        # measure is not a file that is empty, and diagnosing one as though it
+        # were would report silence at a render that is perfectly fine. Set by the
+        # node layer (which can see tensors and files); the compiler only reads it.
+        self.source_seconds = (None if source_seconds is None
+                               else max(0.0, float(source_seconds)))
 
     @property
     def duration(self):
@@ -137,6 +158,13 @@ class Asset:
             d["audio_role"] = self.audio_role
         if self.voice_of:
             d["voice_of"] = self.voice_of
+        # Both emitted only when they carry information, so a bin holding no
+        # voices serialises byte-identically to one written before they existed
+        # -- which is what keeps every cache key already on disk valid.
+        if self.audio_offset:
+            d["audio_offset"] = self.audio_offset
+        if self.source_seconds is not None:
+            d["source_seconds"] = self.source_seconds
         return d
 
     @classmethod
@@ -154,6 +182,8 @@ class Asset:
             synthetic=d.get("synthetic", False),
             audio_role=d.get("audio_role"),
             voice_of=d.get("voice_of"),
+            audio_offset=d.get("audio_offset", 0.0),
+            source_seconds=d.get("source_seconds"),
         )
 
     def __repr__(self):

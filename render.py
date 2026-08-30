@@ -177,15 +177,22 @@ def load_window_references(window, side, width, height, resize_method, carry_fra
     def _audio_for(ref, clip):
         """A lip-sync clip is cut to this window's own span; a timbre clip is not.
 
-        Alignment is the whole difference between the two roles. The model packs
-        reference audio rows against the target audio grid, so a lip-sync clip has
-        to cover exactly the seconds the window covers -- see
-        constants.AUDIO_ROLE_LIP_SYNC. A timbre reference is asked no temporal
-        question at all, and trimming it would only throw away voice to learn from.
+        Alignment is the whole difference between the two roles. `PackedLayout`
+        advances its cursor by each reference block's own span before the target
+        begins, so a clip exactly as long as the window sits a constant distance
+        from the rows it belongs to -- see constants.AUDIO_ROLE_LIP_SYNC. A timbre
+        reference is asked no temporal question at all, and trimming it would only
+        throw away voice to learn from.
+
+        `audio_offset` is where the recording's first sample sits on the film
+        clock, so subtracting it converts this window's film-clock start into the
+        recording's own. At the default 0.0 that is the identity and this is the
+        call it has always been: the recording is assumed to start with the film.
         """
         if clip is None or ref.audio_role != AUDIO_ROLE_LIP_SYNC or not window_seconds:
             return clip
-        return media.audio_span(clip, window.start_seconds, window_seconds)
+        return media.audio_span(
+            clip, window.start_seconds - ref.audio_offset, window_seconds)
 
     for ref in window.files:
         if ref.synthetic:
@@ -393,7 +400,7 @@ def reference_audio_track(plan_windows, windows_doc, side, fps=24):
     for position, window in enumerate(windows_doc):
         seconds = (window.get("frames") or 0) / float(window.get("fps") or fps or 24)
         compiled = plan_windows[position] if position < len(plan_windows) else None
-        clip = None
+        spans = []
         for ref in (compiled.files if compiled is not None else []):
             if ref.synthetic or ref.kind != KIND_AUDIO:
                 continue
@@ -404,9 +411,18 @@ def reference_audio_track(plan_windows, windows_doc, side, fps=24):
                 ref.file, ref.trim_start, ref.trim_end)
             if raw is None:
                 continue
-            clip = media.audio_span(raw, compiled.start_seconds, seconds)
-            break
-        pieces.append((clip, seconds))
+            # Every one of them, not the first. A window with two speakers has two
+            # recordings covering the same seconds, and a film that plays one of
+            # them is missing a character -- silently, because the render report
+            # only ever knew about the reference, never about the mix.
+            #
+            # `audio_offset` converts this window's film-clock start into each
+            # recording's own, exactly as the reference trim does. Doing it any
+            # other way here would put the muxed track and the mouth that was
+            # conditioned on it out of step with each other.
+            spans.append(media.audio_span(
+                raw, compiled.start_seconds - ref.audio_offset, seconds))
+        pieces.append((media.mix_audio(spans), seconds))
 
     real = [c for c, _ in pieces if c is not None]
     if not real:

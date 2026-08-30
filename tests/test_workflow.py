@@ -18,7 +18,7 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).parent.parent
 WORKFLOW_DIR = PROJECT_ROOT / "example_workflows"
-# Four graphs ship, as of 2026-08-17. §15.4 and §15.9 asked for three -- the short
+# Five graphs ship: four as of 2026-08-17, plus the PulseVoice graph. §15.4 and §15.9 asked for three -- the short
 # path on this node's own sampler, the long path, and the long path with the patch
 # chain -- and 3.0.0 released with all three. The short-path and Spectrum+Sage
 # graphs were dropped on 2026-08-11, leaving the long path alone; the short path
@@ -40,7 +40,12 @@ LONG_FORM = WORKFLOW_DIR / "PulseSlate_LongForm.json"
 CAST = WORKFLOW_DIR / "PulseSlate_Cast.json"
 RETAKE = WORKFLOW_DIR / "PulseSlate_Retake.json"
 SINGLE = WORKFLOW_DIR / "PulseSlate_Single.json"
-SHIPPED_GRAPHS = (LONG_FORM, CAST, RETAKE, SINGLE)
+# The fifth, added with PulseVoice: one recording, one node, every window. It is
+# here rather than only in the glob-driven widget checks because the tuple is what
+# the structural battery reads, and a graph that opens as a disconnected mess is
+# worse than one that fails to load.
+VOICE = WORKFLOW_DIR / "PulseSlate_Voice.json"
+SHIPPED_GRAPHS = (LONG_FORM, CAST, RETAKE, SINGLE, VOICE)
 ASSET_DIR = WORKFLOW_DIR / "assets"
 NODES_PY = PROJECT_ROOT / "nodes.py"
 

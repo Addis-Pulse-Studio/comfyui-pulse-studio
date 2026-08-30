@@ -1,0 +1,885 @@
+{
+  "id": "00000000-0000-0000-0000-000000000000",
+  "revision": 0,
+  "last_node_id": 200,
+  "last_link_id": 15,
+  "nodes": [
+    {
+      "id": 10,
+      "type": "UNETLoader",
+      "pos": [
+        40,
+        40
+      ],
+      "size": [
+        400,
+        82
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "outputs": [
+        {
+          "name": "MODEL",
+          "type": "MODEL",
+          "links": [
+            1,
+            11
+          ],
+          "slot_index": 0
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "UNETLoader"
+      },
+      "widgets_values": [
+        "minimax\\minimax_h3_ref2va_pruned_int8_convrot.safetensors",
+        "default"
+      ],
+      "title": "ref2va checkpoint (references)"
+    },
+    {
+      "id": 12,
+      "type": "CLIPLoader",
+      "pos": [
+        40,
+        150
+      ],
+      "size": [
+        400,
+        106
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "outputs": [
+        {
+          "name": "CLIP",
+          "type": "CLIP",
+          "links": [
+            2
+          ],
+          "slot_index": 0
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "CLIPLoader"
+      },
+      "widgets_values": [
+        "minimax\\qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+        "minimax",
+        "default"
+      ]
+    },
+    {
+      "id": 13,
+      "type": "VAELoader",
+      "pos": [
+        40,
+        280
+      ],
+      "size": [
+        400,
+        58
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "outputs": [
+        {
+          "name": "VAE",
+          "type": "VAE",
+          "links": [
+            3,
+            12
+          ],
+          "slot_index": 0
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "VAELoader"
+      },
+      "widgets_values": [
+        "minimax\\minimax_h3_video_vae_fp16.safetensors"
+      ],
+      "title": "video VAE"
+    },
+    {
+      "id": 14,
+      "type": "VAELoader",
+      "pos": [
+        40,
+        360
+      ],
+      "size": [
+        400,
+        58
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "outputs": [
+        {
+          "name": "VAE",
+          "type": "VAE",
+          "links": [
+            4,
+            13
+          ],
+          "slot_index": 0
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "VAELoader"
+      },
+      "widgets_values": [
+        "minimax\\minimax_h3_audio_vae_fp32.safetensors"
+      ],
+      "title": "audio VAE"
+    },
+    {
+      "id": 70,
+      "type": "LoadAudio",
+      "pos": [
+        40,
+        780
+      ],
+      "size": [
+        330,
+        136
+      ],
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "AUDIO",
+          "type": "AUDIO",
+          "links": [
+            5
+          ],
+          "slot_index": 0
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "LoadAudio"
+      },
+      "widgets_values": [
+        "example_pulse_voice.wav",
+        null,
+        null
+      ],
+      "title": "Your narration"
+    },
+    {
+      "id": 71,
+      "type": "PulseVoice",
+      "pos": [
+        410,
+        780
+      ],
+      "size": [
+        400,
+        320
+      ],
+      "flags": {},
+      "order": 2,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "audio",
+          "type": "AUDIO",
+          "link": 5,
+          "shape": 7
+        }
+      ],
+      "outputs": [
+        {
+          "name": "voice",
+          "type": "PULSE_VOICE",
+          "links": [
+            6
+          ],
+          "slot_index": 0
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "PulseVoice"
+      },
+      "widgets_values": [
+        "3.0.0",
+        "Voice",
+        "lip_sync",
+        "film_clock",
+        0.0,
+        0.0,
+        -1.0,
+        "",
+        "the narration that runs under the whole film"
+      ],
+      "title": "Pulse Voice · one file, every window"
+    },
+    {
+      "id": 80,
+      "type": "PulseShot",
+      "pos": [
+        870,
+        40
+      ],
+      "size": [
+        400,
+        340
+      ],
+      "flags": {},
+      "order": 3,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "start_image",
+          "type": "IMAGE",
+          "link": null,
+          "shape": 7
+        },
+        {
+          "name": "end_image",
+          "type": "IMAGE",
+          "link": null,
+          "shape": 7
+        },
+        {
+          "name": "ref_audio",
+          "type": "AUDIO",
+          "link": null,
+          "shape": 7
+        },
+        {
+          "name": "voice",
+          "type": "PULSE_VOICE",
+          "link": null,
+          "shape": 7
+        },
+        {
+          "name": "refs.ref_image_1",
+          "type": "IMAGE",
+          "link": null,
+          "shape": 7
+        }
+      ],
+      "outputs": [
+        {
+          "name": "shot",
+          "type": "PULSE_SHOT",
+          "links": [
+            7
+          ],
+          "slot_index": 0
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "PulseShot"
+      },
+      "widgets_values": [
+        "3.0.0",
+        "",
+        "0.00-6.58  The opening",
+        "A locked-off wide of the speaker against a plain off-white wall, standing left of centre and occupying the left third of the frame. They talk straight to lens, weight settled, one small open-handed gesture. The right half of the frame stays clean and empty.",
+        "Close, dry, professional narration. They say \"The recording carries this part, and the mouth follows it.\"",
+        6.5833,
+        "inherit",
+        "lip_sync",
+        ""
+      ],
+      "title": "Shot 1"
+    },
+    {
+      "id": 81,
+      "type": "PulseShot",
+      "pos": [
+        870,
+        440
+      ],
+      "size": [
+        400,
+        340
+      ],
+      "flags": {},
+      "order": 4,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "start_image",
+          "type": "IMAGE",
+          "link": null,
+          "shape": 7
+        },
+        {
+          "name": "end_image",
+          "type": "IMAGE",
+          "link": null,
+          "shape": 7
+        },
+        {
+          "name": "ref_audio",
+          "type": "AUDIO",
+          "link": null,
+          "shape": 7
+        },
+        {
+          "name": "voice",
+          "type": "PULSE_VOICE",
+          "link": null,
+          "shape": 7
+        },
+        {
+          "name": "refs.ref_image_1",
+          "type": "IMAGE",
+          "link": null,
+          "shape": 7
+        }
+      ],
+      "outputs": [
+        {
+          "name": "shot",
+          "type": "PULSE_SHOT",
+          "links": [
+            8
+          ],
+          "slot_index": 0
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "PulseShot"
+      },
+      "widgets_values": [
+        "3.0.0",
+        "",
+        "6.58-13.17  After the seam",
+        "The same locked-off framing and the same speaker, easing very slightly closer by the end of the shot. Same wall, same lighting, no cut.",
+        "The same close, dry narration, unchanged in character. They say \"And it keeps following it across the seam, because one voice covers both windows.\"",
+        6.5833,
+        "inherit",
+        "lip_sync",
+        ""
+      ],
+      "title": "Shot 2"
+    },
+    {
+      "id": 20,
+      "type": "PulseSlate",
+      "pos": [
+        1330,
+        40
+      ],
+      "size": [
+        460,
+        940
+      ],
+      "flags": {},
+      "order": 5,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "link": 1
+        },
+        {
+          "name": "clip",
+          "type": "CLIP",
+          "link": 2
+        },
+        {
+          "name": "vae",
+          "type": "VAE",
+          "link": 3
+        },
+        {
+          "name": "audio_vae",
+          "type": "VAE",
+          "link": 4
+        },
+        {
+          "name": "model_fl2va",
+          "type": "MODEL",
+          "link": null,
+          "shape": 7
+        },
+        {
+          "name": "ref_video",
+          "type": "IMAGE",
+          "link": null,
+          "shape": 7
+        },
+        {
+          "name": "ref_video_audio",
+          "type": "AUDIO",
+          "link": null,
+          "shape": 7
+        },
+        {
+          "name": "ref_music",
+          "type": "AUDIO",
+          "link": null,
+          "shape": 7
+        },
+        {
+          "name": "refs.ref_image_1",
+          "type": "IMAGE",
+          "link": null,
+          "shape": 7
+        },
+        {
+          "name": "shots.shot_1",
+          "type": "PULSE_SHOT",
+          "link": 7,
+          "shape": 7
+        },
+        {
+          "name": "shots.shot_2",
+          "type": "PULSE_SHOT",
+          "link": 8,
+          "shape": 7
+        },
+        {
+          "name": "shots.shot_3",
+          "type": "PULSE_SHOT",
+          "link": null,
+          "shape": 7
+        },
+        {
+          "name": "voices.voice_1",
+          "type": "PULSE_VOICE",
+          "link": 6,
+          "shape": 7
+        },
+        {
+          "name": "voices.voice_2",
+          "type": "PULSE_VOICE",
+          "link": null,
+          "shape": 7
+        }
+      ],
+      "outputs": [
+        {
+          "name": "timeline",
+          "type": "PULSE_TIMELINE",
+          "links": [
+            9
+          ],
+          "slot_index": 0
+        },
+        {
+          "name": "positive",
+          "type": "CONDITIONING",
+          "links": [],
+          "slot_index": 1
+        },
+        {
+          "name": "latent",
+          "type": "LATENT",
+          "links": [],
+          "slot_index": 2
+        },
+        {
+          "name": "combined_audio",
+          "type": "AUDIO",
+          "links": [],
+          "slot_index": 3
+        },
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "links": [],
+          "slot_index": 4
+        },
+        {
+          "name": "compiled_prompt",
+          "type": "STRING",
+          "links": [
+            10
+          ],
+          "slot_index": 5
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "PulseSlate"
+      },
+      "widgets_values": [
+        "3.0.0",
+        "{\"schema\": 2, \"assets\": [], \"cast\": []}",
+        "style: Bright, modern explainer film, photoreal live action. One speaker against a smooth off-white studio wall, left third of a wide 16:9 frame. High-key three-point lighting, soft shadows, shallow depth of field, natural skin tones, sharp focus on the face. The camera is locked off.\nidentity: The same speaker throughout, in the same wardrobe, in the same position in frame. Their face, hair and clothing do not change between windows.\nsoundscape: A quiet studio. Room tone only under the voice; no music bed, no effects, no second speaker.\nmusic: None.",
+        "",
+        13.1666,
+        "16:9 landscape",
+        1344,
+        768,
+        20,
+        "res_multistep",
+        "simple",
+        1.0,
+        0,
+        "fixed",
+        "shot_aligned",
+        6.6,
+        "crop",
+        "image",
+        true,
+        4.0,
+        "match",
+        12.0,
+        3.0,
+        3,
+        "none"
+      ],
+      "title": "① Pulse Slate · compile"
+    },
+    {
+      "id": 90,
+      "type": "PulseRender",
+      "pos": [
+        1830,
+        40
+      ],
+      "size": [
+        420,
+        300
+      ],
+      "flags": {},
+      "order": 6,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "timeline",
+          "type": "PULSE_TIMELINE",
+          "link": 9
+        },
+        {
+          "name": "model",
+          "type": "MODEL",
+          "link": 11
+        },
+        {
+          "name": "vae",
+          "type": "VAE",
+          "link": 12
+        },
+        {
+          "name": "audio_vae",
+          "type": "VAE",
+          "link": 13
+        },
+        {
+          "name": "model_fl2va",
+          "type": "MODEL",
+          "link": null,
+          "shape": 7
+        }
+      ],
+      "outputs": [
+        {
+          "name": "video",
+          "type": "VIDEO",
+          "links": [
+            14
+          ],
+          "slot_index": 0
+        },
+        {
+          "name": "frames",
+          "type": "IMAGE",
+          "links": [],
+          "slot_index": 1
+        },
+        {
+          "name": "audio",
+          "type": "AUDIO",
+          "links": [],
+          "slot_index": 2
+        },
+        {
+          "name": "segment_paths",
+          "type": "STRING",
+          "links": [],
+          "slot_index": 3
+        },
+        {
+          "name": "report",
+          "type": "STRING",
+          "links": [
+            15
+          ],
+          "slot_index": 4
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "PulseRender"
+      },
+      "widgets_values": [
+        "3.0.0",
+        "auto",
+        "pulsevoice",
+        "",
+        true,
+        true,
+        false,
+        false,
+        true,
+        "audio+colour"
+      ],
+      "title": "② Pulse Render · execute"
+    },
+    {
+      "id": 39,
+      "type": "SaveVideo",
+      "pos": [
+        1830,
+        380
+      ],
+      "size": [
+        420,
+        340
+      ],
+      "flags": {},
+      "order": 7,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "video",
+          "type": "VIDEO",
+          "link": 14
+        }
+      ],
+      "outputs": [
+        {
+          "name": "video",
+          "type": "VIDEO",
+          "links": [],
+          "slot_index": 0
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "SaveVideo"
+      },
+      "widgets_values": [
+        "video/PulseSlate_voice",
+        "mp4",
+        "h264",
+        "auto"
+      ]
+    },
+    {
+      "id": 60,
+      "type": "PreviewAny",
+      "pos": [
+        40,
+        1160
+      ],
+      "size": [
+        760,
+        300
+      ],
+      "flags": {},
+      "order": 6,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "source",
+          "type": "*",
+          "link": 10
+        }
+      ],
+      "outputs": [],
+      "properties": {
+        "Node name for S&R": "PreviewAny"
+      },
+      "widgets_values": [],
+      "title": "compiled_prompt · read this before you render"
+    },
+    {
+      "id": 61,
+      "type": "PreviewAny",
+      "pos": [
+        830,
+        1160
+      ],
+      "size": [
+        760,
+        300
+      ],
+      "flags": {},
+      "order": 8,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "source",
+          "type": "*",
+          "link": 15
+        }
+      ],
+      "outputs": [],
+      "properties": {
+        "Node name for S&R": "PreviewAny"
+      },
+      "widgets_values": [],
+      "title": "report · the lip-sync section is near the top"
+    },
+    {
+      "id": 200,
+      "type": "MarkdownNote",
+      "pos": [
+        40,
+        40
+      ],
+      "size": [
+        760,
+        700
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "properties": {
+        "Node name for S&R": "MarkdownNote"
+      },
+      "widgets_values": [
+        "# Pulse Voice · lip sync that says where it starts\n\n**One `LoadAudio`, one `PulseVoice`, every window.** Before this node the only\nroute to `lip_sync` was a shot's own `ref_audio`, so a narration covering the\nwhole film needed one wire per shot — four identical wires to one file on a\nfour-window film. `voices.voice_1` on Pulse Slate is visible to every window.\n\n## The thing that used to go wrong silently\n\nA `lip_sync` clip is **cut to the window it rides in**. That makes *which seconds\nof the file* the whole question, and until `aligns_to` existed nothing in the\ngraph could answer it — the trim assumed the recording began with the film and\nsaid so nowhere.\n\n- **`film_clock`** (set here) — the recording's first sample is the film's second\n  zero. This is what a single narration track covering the whole timeline does.\n- **`shot_start`** — the recording's first sample is the start of the shot it is\n  wired to. This is what a take recorded for one shot does. Wire the PulseVoice\n  into that shot's `voice` input rather than into the slate.\n\nGet it wrong and the window is handed **silence**: no error, no failed render,\njust a mouth that does not move. The report now says so, in seconds.\n\n`offset_seconds` is added on top of whichever base you pick, for a take with a\ncouple of seconds of room tone in front of it.\n\n## The placeholder is deliberately too short\n\n`example_pulse_voice.wav` is a **one-second** test tone and the film is 13.88s,\nso the first thing this graph tells you is:\n\n> `@Voice` covers 0.00-1.00s on the film clock and window 1 covers 0.00-6.58s,\n> so it runs out 5.58s before it ends. That much of the window has no recording\n> behind it, and the shots there still carry written dialogue — so the model\n> speaks those words while the supplied track is silent, and the mouth moves over\n> dead air.\n\nThat message **is** the feature. Point `LoadAudio` at your own narration — aim\nfor **13.9s or a little more** — and it goes away.\n\nThe two shots add up to 13.17s but the render is 13.88s: a window is a whole\nnumber of frames on H3's 17k+5 grid, so the last one is stretched to the nearest\nlegal count rather than cut short. The report says so under `duration snapped to\nthe frame grid`, and the recording has to cover the *rendered* length, not the\nrequested one.\n\n## Why the shot durations look odd\n\n`6.5833` is 158 frames, and 158 is on H3's 17k+5 frame grid. On-grid durations\nput every cut exactly on a window seam, so no shot is compiled into two windows\nand no window is handed two copies of the same voice. `partition_strategy` is\n`shot_aligned`, which reports whether it managed it.\n\n## What to check before spending a render\n\n- **`compiled_prompt`** (bottom left) — `subject_definitions` must carry\n  ``Their lip movements match `<Audio 1>` precisely``, and `retention_analysis`\n  must carry ``` `<Audio 1>`: fully_copy ```. Those two sentences *are* the\n  mechanism: the text encoder never hears the waveform, so wiring the socket\n  tells the model nothing on its own.\n- **`report`** (bottom right) — the lip-sync notes, the window table, and which\n  cuts `shot_aligned` reached.\n\n## Two speakers\n\nGive each their own `PulseVoice`, set `speaker` to their `@Name` in the Asset\nBin, and put each on the shot they speak in. A window carrying two lip-sync\nreferences is reported: both are cut to the same seconds, so the mouth has more\nthan one answer.\n\n`use_reference_audio` is **on**, so your take is muxed into the finished film\ninstead of H3's re-synthesis of it. Every voice in a window is mixed, not just\nthe first.\n"
+      ]
+    }
+  ],
+  "links": [
+    [
+      1,
+      10,
+      0,
+      20,
+      0,
+      "MODEL"
+    ],
+    [
+      2,
+      12,
+      0,
+      20,
+      1,
+      "CLIP"
+    ],
+    [
+      3,
+      13,
+      0,
+      20,
+      2,
+      "VAE"
+    ],
+    [
+      4,
+      14,
+      0,
+      20,
+      3,
+      "VAE"
+    ],
+    [
+      5,
+      70,
+      0,
+      71,
+      0,
+      "AUDIO"
+    ],
+    [
+      6,
+      71,
+      0,
+      20,
+      12,
+      "PULSE_VOICE"
+    ],
+    [
+      7,
+      80,
+      0,
+      20,
+      9,
+      "PULSE_SHOT"
+    ],
+    [
+      8,
+      81,
+      0,
+      20,
+      10,
+      "PULSE_SHOT"
+    ],
+    [
+      9,
+      20,
+      0,
+      90,
+      0,
+      "PULSE_TIMELINE"
+    ],
+    [
+      10,
+      20,
+      5,
+      60,
+      0,
+      "STRING"
+    ],
+    [
+      11,
+      10,
+      0,
+      90,
+      1,
+      "MODEL"
+    ],
+    [
+      12,
+      13,
+      0,
+      90,
+      2,
+      "VAE"
+    ],
+    [
+      13,
+      14,
+      0,
+      90,
+      3,
+      "VAE"
+    ],
+    [
+      14,
+      90,
+      0,
+      39,
+      0,
+      "VIDEO"
+    ],
+    [
+      15,
+      90,
+      4,
+      61,
+      0,
+      "STRING"
+    ]
+  ],
+  "groups": [],
+  "config": {},
+  "extra": {
+    "ds": {
+      "scale": 0.65,
+      "offset": [
+        0,
+        0
+      ]
+    }
+  },
+  "version": 0.4
+}
