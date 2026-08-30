@@ -36,10 +36,14 @@ NODE = shutil.which("node")
 CONNECTION_TYPES = {"MODEL", "CLIP", "VAE", "CONDITIONING", "LATENT", "IMAGE", "AUDIO",
                     # 3.0.0's own wired types. PULSE_TIMELINE and PULSE_SHOT carry
                     # compiled data between the pack's nodes; VIDEO is core's.
-                    "PULSE_TIMELINE", "PULSE_SHOT", "VIDEO"}
+                    # PULSE_VOICE carries one recording plus its role, its owner
+                    # and its position on the film clock. Absent from this set it
+                    # read as a widget, and the guard below waved through a
+                    # connection input inserted ahead of an existing one.
+                    "PULSE_TIMELINE", "PULSE_SHOT", "PULSE_VOICE", "VIDEO"}
 
 # Every node in the pack is under the slot contract, so every node is compared.
-NODE_CLASSES = ("PulseSlate", "PulseShot", "PulseRender", "PulseBench",
+NODE_CLASSES = ("PulseSlate", "PulseShot", "PulseVoice", "PulseRender", "PulseBench",
                 "PulseRetake", "PulseStill")
 
 # Dot-namespaced growing socket groups (§4). They are declared in Python by a
@@ -329,7 +333,10 @@ class TestInputAndOutputOrderIsFrozen(unittest.TestCase):
         # test_dynamic_group_sizes_match_the_frontend instead.
         "PulseSlate": ["model", "clip", "vae", "audio_vae",
                        "model_fl2va", "ref_video", "ref_video_audio", "ref_music"],
-        "PulseShot": ["start_image", "end_image", "ref_audio"],
+        # `voice` is appended after ref_audio, never inserted before it: an
+        # optional input's link endpoint is positional in a saved node.
+        "PulseShot": ["start_image", "end_image", "ref_audio", "voice"],
+        "PulseVoice": ["audio"],
         "PulseRender": ["timeline", "model", "vae", "audio_vae", "model_fl2va"],
         "PulseBench": [],
         "PulseRetake": ["model_fl2va", "clip", "vae", "audio_vae", "images", "base_audio"],
@@ -358,7 +365,8 @@ class TestInputAndOutputOrderIsFrozen(unittest.TestCase):
     #: frontend will draw sockets the backend does not declare (or stop short of
     #: ones it does, making them unreachable).
     EXPECTED_GROUPS = {
-        "PulseSlate": {"refs.ref_image_": 8, "shots.shot_": 24},
+        "PulseSlate": {"refs.ref_image_": 8, "shots.shot_": 24,
+                       "voices.voice_": 3},
         "PulseShot": {"refs.ref_image_": 4},
     }
 
@@ -374,7 +382,7 @@ class TestInputAndOutputOrderIsFrozen(unittest.TestCase):
                                   "size of %s on %s" % (prefix, class_name))
         # And that the Python constants the loops use are the same numbers.
         for name, size in (("MAX_SLATE_REF_IMAGES", 8), ("MAX_SHOT_SOCKETS", 24),
-                           ("MAX_SHOT_REF_IMAGES", 4)):
+                           ("MAX_SHOT_REF_IMAGES", 4), ("MAX_SLATE_VOICES", 3)):
             self.assertIn("%s = %d" % (name, size), source)
 
     def test_the_growing_groups_are_declared_last(self):
@@ -386,6 +394,10 @@ class TestInputAndOutputOrderIsFrozen(unittest.TestCase):
         self.assertLess(slate.index('optional["refs.ref_image_%d" % i]'),
                         slate.index('optional["shots.shot_%d" % i]'),
                         "references must be declared before shots, matching GROUPS")
+        self.assertLess(slate.index('optional["shots.shot_%d" % i]'),
+                        slate.index('optional["voices.voice_%d" % i]'),
+                        "voices are appended after shots, matching GROUPS -- a group "
+                        "inserted ahead of an existing one moves a saved graph's wires")
 
     def test_input_order_is_unchanged(self):
         for class_name, expected in self.EXPECTED_INPUTS.items():

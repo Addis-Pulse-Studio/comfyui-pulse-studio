@@ -211,6 +211,12 @@
           "type": "PULSE_SHOT",
           "link": null,
           "shape": 7
+        },
+        {
+          "name": "voices.voice_1",
+          "type": "PULSE_VOICE",
+          "link": null,
+          "shape": 7
         }
       ],
       "outputs": [

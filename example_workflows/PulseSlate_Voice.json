@@ -1,8 +1,8 @@
 {
   "id": "00000000-0000-0000-0000-000000000000",
   "revision": 0,
-  "last_node_id": 92,
-  "last_link_id": 16,
+  "last_node_id": 200,
+  "last_link_id": 15,
   "nodes": [
     {
       "id": 10,
@@ -24,7 +24,7 @@
           "type": "MODEL",
           "links": [
             1,
-            10
+            11
           ],
           "slot_index": 0
         }
@@ -50,7 +50,7 @@
         106
       ],
       "flags": {},
-      "order": 2,
+      "order": 0,
       "mode": 0,
       "outputs": [
         {
@@ -83,7 +83,7 @@
         58
       ],
       "flags": {},
-      "order": 3,
+      "order": 0,
       "mode": 0,
       "outputs": [
         {
@@ -91,7 +91,7 @@
           "type": "VAE",
           "links": [
             3,
-            11
+            12
           ],
           "slot_index": 0
         }
@@ -116,7 +116,7 @@
         58
       ],
       "flags": {},
-      "order": 4,
+      "order": 0,
       "mode": 0,
       "outputs": [
         {
@@ -124,7 +124,7 @@
           "type": "VAE",
           "links": [
             4,
-            12
+            13
           ],
           "slot_index": 0
         }
@@ -138,55 +138,66 @@
       "title": "audio VAE"
     },
     {
-      "id": 80,
-      "type": "PulseShot",
+      "id": 70,
+      "type": "LoadAudio",
       "pos": [
-        500,
-        40
+        40,
+        780
+      ],
+      "size": [
+        330,
+        136
+      ],
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "AUDIO",
+          "type": "AUDIO",
+          "links": [
+            5
+          ],
+          "slot_index": 0
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "LoadAudio"
+      },
+      "widgets_values": [
+        "example_pulse_voice.wav",
+        null,
+        null
+      ],
+      "title": "Your narration"
+    },
+    {
+      "id": 71,
+      "type": "PulseVoice",
+      "pos": [
+        410,
+        780
       ],
       "size": [
         400,
         320
       ],
       "flags": {},
-      "order": 5,
+      "order": 2,
       "mode": 0,
       "inputs": [
         {
-          "name": "start_image",
-          "type": "IMAGE",
-          "link": null,
-          "shape": 7
-        },
-        {
-          "name": "end_image",
-          "type": "IMAGE",
-          "link": null,
-          "shape": 7
-        },
-        {
-          "name": "ref_audio",
+          "name": "audio",
           "type": "AUDIO",
-          "link": null,
-          "shape": 7
-        },
-        {
-          "name": "voice",
-          "type": "PULSE_VOICE",
-          "link": null,
-          "shape": 7
-        },
-        {
-          "name": "refs.ref_image_1",
-          "type": "IMAGE",
-          "link": null,
+          "link": 5,
           "shape": 7
         }
       ],
       "outputs": [
         {
-          "name": "shot",
-          "type": "PULSE_SHOT",
+          "name": "voice",
+          "type": "PULSE_VOICE",
           "links": [
             6
           ],
@@ -194,34 +205,34 @@
         }
       ],
       "properties": {
-        "Node name for S&R": "PulseShot"
+        "Node name for S&R": "PulseVoice"
       },
       "widgets_values": [
         "3.0.0",
-        "",
-        "The arrival",
-        "She pushes through the cafe door, shaking rain off her scarf.",
-        "",
-        6.0,
-        "inherit",
+        "Voice",
         "lip_sync",
-        ""
+        "film_clock",
+        0.0,
+        0.0,
+        -1.0,
+        "",
+        "the narration that runs under the whole film"
       ],
-      "title": "Shot 1"
+      "title": "Pulse Voice · one file, every window"
     },
     {
-      "id": 81,
+      "id": 80,
       "type": "PulseShot",
       "pos": [
-        500,
-        400
+        870,
+        40
       ],
       "size": [
         400,
-        320
+        340
       ],
       "flags": {},
-      "order": 6,
+      "order": 3,
       "mode": 0,
       "inputs": [
         {
@@ -271,29 +282,29 @@
       "widgets_values": [
         "3.0.0",
         "",
-        "The counter",
-        "She crosses to the counter and says \"you're still open, thank god\"",
-        "",
-        6.0,
+        "0.00-6.58  The opening",
+        "A locked-off wide of the speaker against a plain off-white wall, standing left of centre and occupying the left third of the frame. They talk straight to lens, weight settled, one small open-handed gesture. The right half of the frame stays clean and empty.",
+        "Close, dry, professional narration. They say \"The recording carries this part, and the mouth follows it.\"",
+        6.5833,
         "inherit",
         "lip_sync",
         ""
       ],
-      "title": "Shot 2"
+      "title": "Shot 1"
     },
     {
-      "id": 82,
+      "id": 81,
       "type": "PulseShot",
       "pos": [
-        500,
-        760
+        870,
+        440
       ],
       "size": [
         400,
-        320
+        340
       ],
       "flags": {},
-      "order": 7,
+      "order": 4,
       "mode": 0,
       "inputs": [
         {
@@ -343,29 +354,29 @@
       "widgets_values": [
         "3.0.0",
         "",
-        "The window seat",
-        "She sits by the window as the rain runs down the glass.",
-        "",
-        6.0,
+        "6.58-13.17  After the seam",
+        "The same locked-off framing and the same speaker, easing very slightly closer by the end of the shot. Same wall, same lighting, no cut.",
+        "The same close, dry narration, unchanged in character. They say \"And it keeps following it across the seam, because one voice covers both windows.\"",
+        6.5833,
         "inherit",
         "lip_sync",
         ""
       ],
-      "title": "Shot 3"
+      "title": "Shot 2"
     },
     {
       "id": 20,
       "type": "PulseSlate",
       "pos": [
-        940,
+        1330,
         40
       ],
       "size": [
-        620,
-        900
+        460,
+        940
       ],
       "flags": {},
-      "order": 8,
+      "order": 5,
       "mode": 0,
       "inputs": [
         {
@@ -421,23 +432,29 @@
         {
           "name": "shots.shot_1",
           "type": "PULSE_SHOT",
-          "link": 6,
+          "link": 7,
           "shape": 7
         },
         {
           "name": "shots.shot_2",
           "type": "PULSE_SHOT",
-          "link": 7,
+          "link": 8,
           "shape": 7
         },
         {
           "name": "shots.shot_3",
           "type": "PULSE_SHOT",
-          "link": 8,
+          "link": null,
           "shape": 7
         },
         {
           "name": "voices.voice_1",
+          "type": "PULSE_VOICE",
+          "link": 6,
+          "shape": 7
+        },
+        {
+          "name": "voices.voice_2",
           "type": "PULSE_VOICE",
           "link": null,
           "shape": 7
@@ -479,7 +496,9 @@
         {
           "name": "compiled_prompt",
           "type": "STRING",
-          "links": [],
+          "links": [
+            10
+          ],
           "slot_index": 5
         }
       ],
@@ -489,9 +508,9 @@
       "widgets_values": [
         "3.0.0",
         "{\"schema\": 2, \"assets\": [], \"cast\": []}",
-        "style: Shot on 35mm, warm practical light, shallow depth of field, handheld.\nidentity: the same woman in the red scarf throughout; the scarf is never removed or recoloured.\nsoundscape: Rain outside, low espresso-machine hiss, quiet room tone.\nmusic: Sparse piano, no percussion.",
+        "style: Bright, modern explainer film, photoreal live action. One speaker against a smooth off-white studio wall, left third of a wide 16:9 frame. High-key three-point lighting, soft shadows, shallow depth of field, natural skin tones, sharp focus on the face. The camera is locked off.\nidentity: The same speaker throughout, in the same wardrobe, in the same position in frame. Their face, hair and clothing do not change between windows.\nsoundscape: A quiet studio. Room tone only under the voice; no music bed, no effects, no second speaker.\nmusic: None.",
         "",
-        12.0,
+        13.1666,
         "16:9 landscape",
         1344,
         768,
@@ -501,8 +520,8 @@
         1.0,
         0,
         "fixed",
-        "balanced",
-        15.0,
+        "shot_aligned",
+        6.6,
         "crop",
         "image",
         true,
@@ -519,7 +538,7 @@
       "id": 90,
       "type": "PulseRender",
       "pos": [
-        1600,
+        1830,
         40
       ],
       "size": [
@@ -527,7 +546,7 @@
         300
       ],
       "flags": {},
-      "order": 9,
+      "order": 6,
       "mode": 0,
       "inputs": [
         {
@@ -538,17 +557,17 @@
         {
           "name": "model",
           "type": "MODEL",
-          "link": 10
+          "link": 11
         },
         {
           "name": "vae",
           "type": "VAE",
-          "link": 11
+          "link": 12
         },
         {
           "name": "audio_vae",
           "type": "VAE",
-          "link": 12
+          "link": 13
         },
         {
           "name": "model_fl2va",
@@ -599,22 +618,22 @@
       "widgets_values": [
         "3.0.0",
         "auto",
-        "pulseslate",
+        "pulsevoice",
         "",
         true,
         true,
         false,
         false,
-        false,
+        true,
         "audio+colour"
       ],
       "title": "② Pulse Render · execute"
     },
     {
-      "id": 38,
+      "id": 39,
       "type": "SaveVideo",
       "pos": [
-        1600,
+        1830,
         380
       ],
       "size": [
@@ -622,7 +641,7 @@
         340
       ],
       "flags": {},
-      "order": 10,
+      "order": 7,
       "mode": 0,
       "inputs": [
         {
@@ -643,7 +662,7 @@
         "Node name for S&R": "SaveVideo"
       },
       "widgets_values": [
-        "video/PulseSlate_long",
+        "video/PulseSlate_voice",
         "mp4",
         "h264",
         "auto"
@@ -653,15 +672,43 @@
       "id": 60,
       "type": "PreviewAny",
       "pos": [
-        940,
-        970
+        40,
+        1160
       ],
       "size": [
-        620,
-        460
+        760,
+        300
       ],
       "flags": {},
-      "order": 11,
+      "order": 6,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "source",
+          "type": "*",
+          "link": 10
+        }
+      ],
+      "outputs": [],
+      "properties": {
+        "Node name for S&R": "PreviewAny"
+      },
+      "widgets_values": [],
+      "title": "compiled_prompt · read this before you render"
+    },
+    {
+      "id": 61,
+      "type": "PreviewAny",
+      "pos": [
+        830,
+        1160
+      ],
+      "size": [
+        760,
+        300
+      ],
+      "flags": {},
+      "order": 8,
       "mode": 0,
       "inputs": [
         {
@@ -670,93 +717,35 @@
           "link": 15
         }
       ],
+      "outputs": [],
       "properties": {
         "Node name for S&R": "PreviewAny"
       },
       "widgets_values": [],
-      "title": "③ report — run dry_run and read this first"
+      "title": "report · the lip-sync section is near the top"
     },
     {
-      "id": 91,
-      "type": "PulseBench",
-      "pos": [
-        1600,
-        760
-      ],
-      "size": [
-        420,
-        200
-      ],
-      "flags": {},
-      "order": 12,
-      "mode": 0,
-      "outputs": [
-        {
-          "name": "table",
-          "type": "STRING",
-          "links": [
-            16
-          ],
-          "slot_index": 0
-        }
-      ],
-      "properties": {
-        "Node name for S&R": "PulseBench"
-      },
-      "widgets_values": [
-        "3.0.0",
-        ""
-      ],
-      "title": "Pulse Bench · which chain is faster here"
-    },
-    {
-      "id": 92,
-      "type": "PreviewAny",
-      "pos": [
-        1600,
-        1000
-      ],
-      "size": [
-        420,
-        260
-      ],
-      "flags": {},
-      "order": 13,
-      "mode": 0,
-      "inputs": [
-        {
-          "name": "source",
-          "type": "*",
-          "link": 16
-        }
-      ],
-      "properties": {
-        "Node name for S&R": "PreviewAny"
-      },
-      "widgets_values": [],
-      "title": "④ measured cost per patch chain"
-    },
-    {
-      "id": 1,
+      "id": 200,
       "type": "MarkdownNote",
       "pos": [
-        2060,
+        40,
         40
       ],
       "size": [
-        600,
-        1000
+        760,
+        700
       ],
       "flags": {},
-      "order": 14,
+      "order": 0,
       "mode": 0,
+      "inputs": [],
+      "outputs": [],
       "properties": {
         "Node name for S&R": "MarkdownNote"
       },
       "widgets_values": [
-        "# Pulse Slate 3 · long path (many windows)\n\n`PulseSlate` compiles; **Pulse Render** executes. Nothing is muted, and there is\nno second branch to keep in sync.\n\n## The segment cache is the point\nEvery window is written to `ComfyUI/output/<run_dir>/<run_id>/` as it finishes,\nand the manifest is fsynced before the next one starts.\n\n- **Kill the render at window 9 of 12 and requeue** → 0–8 load from disk, only\n  9–11 render.\n- **Edit one shot** → only the window holding it re-renders. Every other window\n  is reused, at its original seed.\n- **Change the base seed, or steps, or the patch chain** → everything re-renders,\n  because all three change the output.\n\nThat last one is why `patch_fingerprint` exists. Sol-Attn, Spectrum and EasyCache\nall change what the same prompt and seed produce, so a cache that ignored them\nwould hand you a film whose shots were rendered at different sparsities and say\nnothing about it.\n\n## Run the dry run first\nSet **dry_run** and queue. You get the report and nothing else: no sampling, no\ndecode, no file writes. Check the per-shot ordinal map and the unresolved-alias\nlist *before* spending GPU hours — a wrong binding renders successfully and gives\nyou a well-formed film of the wrong person.\n\n## Seeds survive edits\nA window's seed is derived from the **set of shots in it**, not from its position.\nInserting a shot at the top no longer rerolls every window after it.\n\n## Pulse Shot\nEach `PulseShot` carries its own text, duration, first/last frames and\nscene-local references — so a shot's opening frame can come from an upstream\ngenerator in this same graph rather than from a file on disk. Its `shot_id` is\nwritten once and never changes, which is what keeps its cached segment attached\nto it when you reorder the film.\n\n## Adding a voice\nThis film has no reference audio, and the multi-window path is where adding one\nneeds the most care: a `lip_sync` clip is cut to the window it rides in, so on a\nfilm with several windows *which seconds of the file* is the whole question.\n\nWire one **`PulseVoice`** into Pulse Slate's `voices.voice_1` and it is visible to\nevery window — one wire, not one per shot. Its `aligns_to` says where the\nrecording starts: `film_clock` for a narration covering the whole timeline,\n`shot_start` for a take cut for a single shot, in which case wire it to that\nshot's own `voice` input instead. A recording that does not cover a window is\nnamed in the pre-flight report, with the shortfall in seconds, rather than\nrendering as silence. `PulseSlate_Voice.json` is that graph.\n\nWatch where the seams fall before you add one. Three 6.0s shots do **not** divide\ninto this film's two 226-frame windows: the seam lands at 9.4167s, mid-way through\nshot 2, so shot 2 is compiled into both windows and the report's *straddling\nshots* section names it. That is not an error — dropping it from the second window\nwould leave that window with no direction at all — but a voice on a straddling\nshot is handed to both windows, each trimmed to its own span, and the compiler\nreports that too.\n\nTo avoid it, give a shot a duration that is a whole number of frames on H3's\n17k+5 grid and let `partition_strategy: shot_aligned` put the seams on your cuts.\n`PulseSlate_Voice.json` does exactly that.\n\n## Patch the model upstream\nThis graph has no attention or memory patch on it, so it will say so on every\nqueue — three warnings, all accurate. Patches belong **upstream** of Pulse Slate\nand Pulse Render: both sample with the model handed *to* them, so a patch applied\nafter them does nothing at all.\n\nOn a 32GB card Spectrum's `system_ram` history offload is what makes a 362-frame\nwindow **fit at all**. It is not a speed setting; do not turn it off for speed.\n\nThe recommended chain, in the order that works:\n\n```\nUNETLoader\n  → SpectrumApplyMiniMaxH3        (history_storage: system_ram)\n  → PathchSageAttentionKJ         (sets Sage as the fallback backend)\n  → MiniMax H3 Scheduled Sol Attention Patch\n  → MiniMax H3 Chunk FeedForward\n  → Pulse Slate / Pulse Render\n```\n\n**Sol-Attn must come after the Sage patch.** After it, Sol adopts the Sage\nforward as its fallback, so ineligible steps run memory-efficient Sage while\neligible steps run Sol. *Before* it, the Sage patch shadows the Sol node entirely\nand it does nothing — and the graph still runs, still produces output, and warns\nyou about none of it.\n\nWire it into `model`. This graph runs `continuity: none`, so every window\nrenders through the reference checkpoint and there is no second model input\nto keep in sync — a checkpoint nothing samples with is still ~20 GB resident,\nwhich is 20 GB the render wanted. Switch continuity to `last_frame_carry` and you\nadd `model_fl2va` and a second copy of the chain on it.\n\nPulse Render detects whatever it finds and folds the settings into the cache\nkey, so changing `tau_start` re-renders the affected segments instead of\nsilently reusing segments rendered at the old sparsity.\n\nSet the Sol node's `sink_conditioning` to `exact_kv_and_rows`. Pulse Slate pairs\neach character image with its own audio track, and that pairing lives in exactly\nthe query rows that setting keeps dense.\n\n## Memory\nLeave **low_memory** on. The finished video is assembled by stream-copying the\nsegment files together, so a twelve-window film is never held in RAM at all. The\n`frames` output is only materialised if you actually wire it.\n"
-      ],
-      "title": "READ ME"
+        "# Pulse Voice · lip sync that says where it starts\n\n**One `LoadAudio`, one `PulseVoice`, every window.** Before this node the only\nroute to `lip_sync` was a shot's own `ref_audio`, so a narration covering the\nwhole film needed one wire per shot — four identical wires to one file on a\nfour-window film. `voices.voice_1` on Pulse Slate is visible to every window.\n\n## The thing that used to go wrong silently\n\nA `lip_sync` clip is **cut to the window it rides in**. That makes *which seconds\nof the file* the whole question, and until `aligns_to` existed nothing in the\ngraph could answer it — the trim assumed the recording began with the film and\nsaid so nowhere.\n\n- **`film_clock`** (set here) — the recording's first sample is the film's second\n  zero. This is what a single narration track covering the whole timeline does.\n- **`shot_start`** — the recording's first sample is the start of the shot it is\n  wired to. This is what a take recorded for one shot does. Wire the PulseVoice\n  into that shot's `voice` input rather than into the slate.\n\nGet it wrong and the window is handed **silence**: no error, no failed render,\njust a mouth that does not move. The report now says so, in seconds.\n\n`offset_seconds` is added on top of whichever base you pick, for a take with a\ncouple of seconds of room tone in front of it.\n\n## The placeholder is deliberately too short\n\n`example_pulse_voice.wav` is a **one-second** test tone and the film is 13.88s,\nso the first thing this graph tells you is:\n\n> `@Voice` covers 0.00-1.00s on the film clock and window 1 covers 0.00-6.58s,\n> so it runs out 5.58s before it ends. That much of the window has no recording\n> behind it, and the shots there still carry written dialogue — so the model\n> speaks those words while the supplied track is silent, and the mouth moves over\n> dead air.\n\nThat message **is** the feature. Point `LoadAudio` at your own narration — aim\nfor **13.9s or a little more** — and it goes away.\n\nThe two shots add up to 13.17s but the render is 13.88s: a window is a whole\nnumber of frames on H3's 17k+5 grid, so the last one is stretched to the nearest\nlegal count rather than cut short. The report says so under `duration snapped to\nthe frame grid`, and the recording has to cover the *rendered* length, not the\nrequested one.\n\n## Why the shot durations look odd\n\n`6.5833` is 158 frames, and 158 is on H3's 17k+5 frame grid. On-grid durations\nput every cut exactly on a window seam, so no shot is compiled into two windows\nand no window is handed two copies of the same voice. `partition_strategy` is\n`shot_aligned`, which reports whether it managed it.\n\n## What to check before spending a render\n\n- **`compiled_prompt`** (bottom left) — `subject_definitions` must carry\n  ``Their lip movements match `<Audio 1>` precisely``, and `retention_analysis`\n  must carry ``` `<Audio 1>`: fully_copy ```. Those two sentences *are* the\n  mechanism: the text encoder never hears the waveform, so wiring the socket\n  tells the model nothing on its own.\n- **`report`** (bottom right) — the lip-sync notes, the window table, and which\n  cuts `shot_aligned` reached.\n\n## Two speakers\n\nGive each their own `PulseVoice`, set `speaker` to their `@Name` in the Asset\nBin, and put each on the shot they speak in. A window carrying two lip-sync\nreferences is reported: both are cut to the same seconds, so the mouth has more\nthan one answer.\n\n`use_reference_audio` is **on**, so your take is muxed into the finished film\ninstead of H3's re-synthesis of it. Every voice in a window is mixed, not just\nthe first.\n"
+      ]
     }
   ],
   "links": [
@@ -793,7 +782,23 @@
       "VAE"
     ],
     [
+      5,
+      70,
+      0,
+      71,
+      0,
+      "AUDIO"
+    ],
+    [
       6,
+      71,
+      0,
+      20,
+      12,
+      "PULSE_VOICE"
+    ],
+    [
+      7,
       80,
       0,
       20,
@@ -801,19 +806,11 @@
       "PULSE_SHOT"
     ],
     [
-      7,
+      8,
       81,
       0,
       20,
       10,
-      "PULSE_SHOT"
-    ],
-    [
-      8,
-      82,
-      0,
-      20,
-      11,
       "PULSE_SHOT"
     ],
     [
@@ -826,6 +823,14 @@
     ],
     [
       10,
+      20,
+      5,
+      60,
+      0,
+      "STRING"
+    ],
+    [
+      11,
       10,
       0,
       90,
@@ -833,7 +838,7 @@
       "MODEL"
     ],
     [
-      11,
+      12,
       13,
       0,
       90,
@@ -841,7 +846,7 @@
       "VAE"
     ],
     [
-      12,
+      13,
       14,
       0,
       90,
@@ -852,7 +857,7 @@
       14,
       90,
       0,
-      38,
+      39,
       0,
       "VIDEO"
     ],
@@ -860,77 +865,16 @@
       15,
       90,
       4,
-      60,
-      0,
-      "STRING"
-    ],
-    [
-      16,
-      91,
-      0,
-      92,
+      61,
       0,
       "STRING"
     ]
   ],
-  "groups": [
-    {
-      "id": 246,
-      "title": "LOADERS",
-      "bounding": [
-        20,
-        10,
-        440,
-        510
-      ],
-      "color": "#a1309b",
-      "font_size": 24,
-      "flags": {}
-    },
-    {
-      "id": 752,
-      "title": "SHOTS — one node per shot",
-      "bounding": [
-        480,
-        10,
-        440,
-        1090
-      ],
-      "color": "#3f789e",
-      "font_size": 24,
-      "flags": {}
-    },
-    {
-      "id": 897,
-      "title": "① COMPILE",
-      "bounding": [
-        920,
-        10,
-        660,
-        1440
-      ],
-      "color": "#3f789e",
-      "font_size": 24,
-      "flags": {}
-    },
-    {
-      "id": 775,
-      "title": "② RENDER + CACHE",
-      "bounding": [
-        1580,
-        10,
-        460,
-        960
-      ],
-      "color": "#88A",
-      "font_size": 24,
-      "flags": {}
-    }
-  ],
+  "groups": [],
   "config": {},
   "extra": {
     "ds": {
-      "scale": 0.7,
+      "scale": 0.65,
       "offset": [
         0,
         0

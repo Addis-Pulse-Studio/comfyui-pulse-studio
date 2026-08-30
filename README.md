@@ -44,13 +44,14 @@ against. It has to be a build carrying `comfy_extras/nodes_minimax_h3.py` and
 is no mechanism for a custom node to enforce a host version, so this is
 documentation rather than a check.
 
-Then load one of the four graphs in `example_workflows/`:
+Then load one of the five graphs in `example_workflows/`:
 
 | graph | what it shows |
 |---|---|
 | `PulseSlate_Single.json` | The short path: one window, sampled by your own graph. Start here. |
 | `PulseSlate_LongForm.json` | The long path: many windows, `PulseRender`, the segment cache. |
 | `PulseSlate_Cast.json` | The Asset Bin — named references, descriptions, retention, per-shot audio. |
+| `PulseSlate_Voice.json` | Lip sync: one narration, one `PulseVoice`, every window — and what the report says when the recording does not cover the film. |
 | `PulseSlate_Retake.json` | Re-render a bad span of a finished film, in place. |
 
 Every one of them opens with no third-party pack installed. The placeholder
@@ -481,6 +482,42 @@ what the model does alongside it, and the two options are genuinely different jo
 - **`voice_timbre`** — the model speaks this shot's own dialogue and borrows only
   the character of the voice. No alignment, no trim.
 
+**Which seconds get trimmed: this socket reads the film clock.** A `lip_sync`
+clip is cut to the window it rides in, and `ref_audio` takes those seconds
+starting at the window's position **on the whole film's clock**. So this socket
+expects a recording that runs alongside the entire film — one narration track,
+wired into every shot that speaks. It is the scope that is scene-local, not the
+timing: `@Voice` on shot 3 is invisible to shot 2, but its *seconds* are still
+counted from the film's zero.
+
+A take recorded for one shot begins at that shot, not at the film. Left on this
+socket it is cut at an offset past its own end, and the window is handed silence
+— no error, no failed render, just a mouth that does not move. **Use
+[Pulse Voice](#pulse-voice) instead**, which says where the recording starts.
+
+Either way the report now measures it. A recording that does not cover its window
+is named with the shortfall in seconds:
+
+> `@Voice` covers 0.00-12.40s on the film clock and window 3 covers 24.50-36.75s.
+> The two do not meet, so nothing of this recording reaches this window.
+
+and one that merely runs out early gets the partial form. Both then say what the
+gap actually looks like, which depends on the shots: with no dialogue the mouth
+is genuinely still, and with dialogue it is not still at all — the `<d>` block
+tells the model to say those words, so it generates speech and the mouth moves
+while `use_reference_audio` mixes the reference's silence over the top. A talking
+head on a dead track, fixed by cutting the words rather than by hunting for a
+longer recording. A recording nothing
+could measure is never diagnosed: unknown is not the same as empty.
+
+A **trailing** gap on the **last** window is held to a whole second rather than a
+quarter. A narration stopping a fraction of a second before the final frame is
+ordinary — the recording ends when the speaking ends, and the grid rounds the
+last window up to a legal frame count regardless. A gap anywhere else, and
+lead-in silence anywhere at all, keeps the quarter-second rule: a silence in the
+middle of a film is a mistake, and a recording that starts late is late wherever
+it happens.
+
 The mode is part of the cache key, so switching it re-renders rather than handing
 back a segment made under the other instruction.
 
@@ -563,6 +600,13 @@ Binding to a picture that is not in the bin, or to another recording, is refused
 rather than written into the prompt. A voice belongs to somebody the model can
 see.
 
+A bin recording reads the **film clock**, like `ref_audio` does: it is trimmed to
+each window starting at that window's position in the whole film. The panel has
+no control for saying otherwise — [Pulse Voice](#pulse-voice) is where that
+lives. What the bin does get for free is measurement: the file's length is read
+from its header at compile time, so a recording that does not cover the windows
+it is trimmed to is named in the report rather than rendering as silence.
+
 Where both apply — a shot's own `ref_audio` that also carries an explicit
 `voice_of` — the explicit binding wins. The author naming a character beats the
 wiring implying one.
@@ -575,6 +619,52 @@ window 2 onward reads as drift rather than as a missing reference. Unbound clips
 go first, then `voice_timbre`, then `lip_sync` — losing an alignment
 desynchronises a mouth, which is visible. The drop is still reported either way,
 and the survivors keep their bin order so nothing renumbers that did not have to.
+
+### Pulse Voice
+
+One recording, and where on the film clock it belongs. Output is a `PULSE_VOICE`
+that goes into **Pulse Slate**'s `voices.voice_1..3` — visible to every window —
+or into one **Pulse Shot**'s `voice` input, for that shot alone.
+
+It exists because an `AUDIO` socket carries a waveform and nothing else: not a
+role, not an owner, and not a position in time. All three had to be said
+somewhere, and until this node the first was a widget on `PulseShot`, the second
+was a field only a bin asset had, and the third could not be said at all.
+
+It also collapses the pattern the socket forced. A narration covering the whole
+film used to need one wire per shot — four identical wires to one `LoadAudio` on
+a four-window film — because a shot's own socket was the only route to
+`lip_sync`. `PulseSlate.ref_music` and `ref_video_audio` carry no role: the first
+is the non-diegetic score and the second is a video's paired soundtrack, so
+neither can ask for a mouth to move. One `PulseVoice` on the slate reaches every
+window.
+
+| widget | what it decides |
+| --- | --- |
+| `name` | the `@handle` to cite it by in a shot. Never an ordinal — those are computed. |
+| `role` | `lip_sync` or `voice_timbre`, the same two jobs `ref_audio_mode` picks between. |
+| `aligns_to` | **`film_clock`**: the first sample is the film's second zero — a narration spanning the timeline. **`shot_start`**: the first sample is the start of the shot it is wired to — a per-shot take. |
+| `offset_seconds` | added on top of whichever base `aligns_to` chose, for a take with room tone in front of it. Negative moves it earlier. |
+| `trim_start` / `trim_end` | which part of the file to use at all. `-1` on `trim_end` means "to the end". |
+| `speaker` | whose voice it is, as an `@Name` from the Asset Bin. Gets them a stable `(S1)` and makes the prompt name them instead of saying "this character". |
+| `description` | what the recording is, in a few words. Rides into `subject_definitions` beside the reference. |
+
+`aligns_to` is a choice rather than a number because "this recording starts when
+the shot starts" should be something the graph *states*, not arithmetic the
+author redoes every time a duration changes. On Pulse Slate there is no shot to
+start at, so `shot_start` there is reported and read as `film_clock`.
+
+The offset reaches the segment cache key, and only when it is non-zero — two
+renders identical in every other field are different films, and the content
+digest cannot tell them apart because it hashes the whole file either way. A
+project whose recordings all start with the film keeps every key already on disk.
+
+On a shot carrying both, `voice` wins over `ref_audio` and the report says so.
+`PulseRender.use_reference_audio` mixes **every** lip-sync recording in a window
+into the finished film, each placed at its own offset — not just the first one it
+finds, which is what a two-hander used to lose a character to.
+
+`example_workflows/PulseSlate_Voice.json` is the whole thing in one graph.
 
 ### Pulse Render
 
@@ -759,7 +849,14 @@ retake geometry over an exhaustive sweep of reachable cuts, canvas fitting, and
 end-to-end invariants such as *every tag cited in a prompt must correspond to a
 socket that window actually carries*.
 
-Also asserted, over all four shipped graphs rather than over one of them: stored
+Lip-sync timing has its own file. It asserts the span arithmetic in both
+directions — that a recording starting after a window opens leads in with
+silence rather than being slid forward, and that every span is exactly the
+window's length however far outside the recording it falls — and it pins the
+zero-offset path byte for byte, because that is what every render already on
+disk was cut with.
+
+Also asserted, over all five shipped graphs rather than over one of them: stored
 widget values stay aligned with `INPUT_TYPES` (a widget inserted in the middle
 would silently shift every value after it), the stored canvas matches the preset
 the graph selects, every link is backfilled in both directions, every emitted

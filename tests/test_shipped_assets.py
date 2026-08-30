@@ -58,15 +58,17 @@ class TestTheScanHasInput(unittest.TestCase):
         found = workflows()
         self.assertTrue(found, "no example workflows found to scan")
         names = {p.name for p in found}
-        # Four graphs ship since 2026-08-17: the long path, the short path, the
-        # cast-and-references graph and the retake graph. §15 named three and
+        # Five graphs ship: the long path, the short path, the
+        # cast-and-references graph, the retake graph, and the lip-sync graph
+        # that demonstrates PulseVoice. §15 named three and
         # 3.0.0 released with three, of which two were dropped on 2026-08-11.
         # The scan is only worth anything if what it is meant to cover is
         # actually on disk -- and the graph that carries a populated asset bin is
         # the one with the most to leak, so it is named here rather than trusted
         # to a glob.
         for expected in ("PulseSlate_LongForm.json", "PulseSlate_Single.json",
-                         "PulseSlate_Cast.json", "PulseSlate_Retake.json"):
+                         "PulseSlate_Cast.json", "PulseSlate_Retake.json",
+                         "PulseSlate_Voice.json"):
             self.assertIn(expected, names)
 
 

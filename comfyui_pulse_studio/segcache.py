@@ -119,6 +119,13 @@ def _ref_descriptor_key(ref):
     # neither a role-less nor an unbound reference moves the key it already has.
     if ref.get("voice_of"):
         key.append(ref["voice_of"])
+    # And `audio_offset` is a seventh. It decides *which seconds* of the recording
+    # this window is handed, so two renders identical in every other field are
+    # different films -- and the difference is invisible in the descriptor's
+    # digest, which hashes the whole file either way. Appended last and only when
+    # non-zero, so a recording that starts with the film keeps its key on disk.
+    if ref.get("audio_offset"):
+        key.append(ref["audio_offset"])
     return key
 
 

@@ -183,27 +183,33 @@ class TestTheTrimIsToTheWindow(unittest.TestCase):
     WINDOW = 9.4167          # 226 frames at 24fps, the real long-form window
 
     def test_a_long_clip_is_cut_to_the_window(self):
-        start, stop, pad = audio_span_bounds(30 * self.SR, self.SR, 0.0, self.WINDOW)
+        start, stop, head, tail = audio_span_bounds(
+            30 * self.SR, self.SR, 0.0, self.WINDOW)
         self.assertEqual(stop - start, round(self.WINDOW * self.SR))
-        self.assertEqual(pad, 0)
+        self.assertEqual((head, tail), (0, 0))
 
     def test_window_two_begins_exactly_where_window_one_ended(self):
         """The property the whole feature rests on. A gap or an overlap here puts
         every mouth after the seam out of step with its own voice."""
-        _, first_stop, _ = audio_span_bounds(30 * self.SR, self.SR, 0.0, self.WINDOW)
-        second_start, _, _ = audio_span_bounds(
+        _, first_stop, _, _ = audio_span_bounds(
+            30 * self.SR, self.SR, 0.0, self.WINDOW)
+        second_start, _, _, _ = audio_span_bounds(
             30 * self.SR, self.SR, self.WINDOW, self.WINDOW)
         self.assertEqual(second_start, first_stop)
 
     def test_a_short_clip_is_padded_rather_than_shortening_the_window(self):
-        start, stop, pad = audio_span_bounds(2 * self.SR, self.SR, 0.0, self.WINDOW)
+        start, stop, head, tail = audio_span_bounds(
+            2 * self.SR, self.SR, 0.0, self.WINDOW)
         self.assertEqual(stop - start, 2 * self.SR)
-        self.assertEqual((stop - start) + pad, round(self.WINDOW * self.SR))
+        self.assertEqual(head, 0)
+        self.assertEqual((stop - start) + tail, round(self.WINDOW * self.SR))
 
     def test_a_window_past_the_end_of_the_recording_is_all_silence(self):
-        start, stop, pad = audio_span_bounds(2 * self.SR, self.SR, 60.0, self.WINDOW)
+        start, stop, head, tail = audio_span_bounds(
+            2 * self.SR, self.SR, 60.0, self.WINDOW)
         self.assertEqual(stop - start, 0)
-        self.assertEqual(pad, round(self.WINDOW * self.SR))
+        self.assertEqual(head, 0)
+        self.assertEqual(tail, round(self.WINDOW * self.SR))
 
     def test_every_window_gets_the_same_number_of_samples(self):
         """Real or padded, the length is the window's length -- otherwise the track
@@ -211,15 +217,13 @@ class TestTheTrimIsToTheWindow(unittest.TestCase):
         want = round(self.WINDOW * self.SR)
         for total_seconds in (30, 12, 2, 0):
             for w in range(3):
-                _, stop, pad = audio_span_bounds(
+                start, stop, head, tail = audio_span_bounds(
                     total_seconds * self.SR, self.SR, w * self.WINDOW, self.WINDOW)
-                start, _, _ = audio_span_bounds(
-                    total_seconds * self.SR, self.SR, w * self.WINDOW, self.WINDOW)
-                self.assertEqual((stop - start) + pad, want,
+                self.assertEqual(head + (stop - start) + tail, want,
                                  "%ds file, window %d" % (total_seconds, w))
 
     def test_a_non_44k_rate_is_honoured(self):
-        _, stop, _ = audio_span_bounds(30 * 32000, 32000, 0.0, 5.0)
+        _, stop, _, _ = audio_span_bounds(30 * 32000, 32000, 0.0, 5.0)
         self.assertEqual(stop, 5 * 32000)
 
     def test_a_zero_sample_rate_is_refused_rather_than_dividing_by_it(self):

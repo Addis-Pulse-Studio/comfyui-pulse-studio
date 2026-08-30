@@ -41,4 +41,19 @@ DisplayName = "Pulse Studio"
 Icon = ""
 
 [tool.pytest.ini_options]
+# Kept so that `pytest` at least looks in the right place, NOT because pytest can
+# run this suite -- it cannot, and the reason is structural rather than a setting.
+#
+# A ComfyUI custom node must expose a package `__init__.py` at its root, and that
+# file imports `nodes.py` -> `torch` + `comfy`. pytest models any directory
+# holding an `__init__.py` as a Package and imports it, so collecting `tests/`
+# imports the pack's entry point on the way past. Outside ComfyUI that dies on the
+# relative import; inside it dies on the ComfyUI imports. Either way every test
+# errors at setup, one root cause reported once per test, and nothing runs.
+#
+# Verified against pytest 9.1.1: --import-mode=importlib, --ignore=__init__.py,
+# removing tests/__init__.py, and combinations of all three do not avoid it.
+#
+# `python run_tests.py` is unittest discovery, which does not model directories as
+# packages. It is what CI runs and what CONTRIBUTING documents.
 testpaths = ["tests"]

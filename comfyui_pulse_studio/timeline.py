@@ -147,13 +147,36 @@ class Timeline:
         return sorted(self.shots, key=lambda s: s.start)
 
     def shots_in(self, start, end):
-        """Every shot overlapping [start, end), in clock order.
+        """Every shot overlapping [start, end) by at least one frame, in clock order.
 
         A shot spanning a window boundary is compiled into both windows. Dropping
         it from the second would leave that window with no direction at all --
         which renders as a stall rather than as continued action.
+
+        THE ONE-FRAME FLOOR
+
+        A window renders whole frames, so a shot occupying less than one of them
+        does not appear in it -- there is no frame for it to appear in. Without
+        that floor the overlap test is exact-real arithmetic against a grid that
+        is not, and the two disagree constantly: `PulseShot.duration_seconds` used
+        to cap at 15.08 while a full 362-frame window is 15.08333s, so a chain of
+        full-length shots could not put a single cut on a seam. Every one landed
+        3ms short, every shot was compiled into two windows, and -- because a
+        shot's reference audio comes with it -- each window was handed two
+        lip-sync recordings describing the same seconds. The mouth then has two
+        answers and nothing says so.
+
+        Two fallbacks, both deliberate. With fewer than two shots there is nothing
+        to trim towards, and a window whose every shot is a sliver keeps them:
+        rendering on the style line alone is worse than the duplicate this exists
+        to prevent. `report.straddling_shots` still names the ones that remain.
         """
-        return [s for s in self.ordered_shots() if s.overlaps(start, end)]
+        kept = [s for s in self.ordered_shots() if s.overlaps(start, end)]
+        if len(kept) < 2:
+            return kept
+        grain = 1.0 / float(self.fps or FPS)
+        return [s for s in kept
+                if min(s.end, end) - max(s.start, start) >= grain] or kept
 
     # ── validation ──────────────────────────────────────────────────────────
 

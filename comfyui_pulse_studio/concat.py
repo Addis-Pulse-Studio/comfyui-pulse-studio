@@ -47,7 +47,8 @@ segment files.
 import math
 
 __all__ = ["video_shifts", "video_is_gapless", "frame_duration",
-           "audio_span_bounds", "seam_dip_samples", "seam_dip_gains",
+           "audio_span_bounds", "audio_span_report",
+           "seam_dip_samples", "seam_dip_gains",
            "seam_gain_match", "SEAM_FADE_MS_DEFAULT",
            "SEAM_FADE_MS_MIN", "SEAM_FADE_MS_MAX"]
 
@@ -88,26 +89,61 @@ def video_is_gapless(frame_counts, fps, time_base, shifts, frame_units=None):
 
 
 def audio_span_bounds(total_samples, sample_rate, start_seconds, seconds):
-    """Where a lip-sync reference is cut for one window: (start, stop, pad).
+    """Where a lip-sync reference is cut for one window: (start, stop, head, tail).
 
     Pure index arithmetic, here rather than in `media` for the same reason the
     placement maths is: this is what has to be right for a mouth to track a
     recording, and nothing that needs torch can be reached by the suite on a box
     with no GPU. `media.audio_span` is the three lines of tensor slicing around it.
 
-    `stop` may run past the buffer; `pad` is how many samples of silence make up
-    the difference. Padding rather than returning a short clip is deliberate -- a
-    recording that ends mid-window should leave the mouth still for the rest of
-    it, not shorten the window and desynchronise every window after.
+    `head` and `tail` are silence: `head` before the recording begins, `tail`
+    after it runs out, and `head + (stop - start) + tail` is always exactly the
+    number of samples the window asked for. Padding rather than returning a short
+    clip is deliberate -- a recording that ends mid-window should leave the mouth
+    still for the rest of it, not shorten the window and desynchronise every
+    window after.
+
+    WHY A NEGATIVE START IS NOT AN ERROR
+
+    `start_seconds` is measured on the *recording's* own clock: it is where this
+    window opens relative to the recording's first sample. A recording that
+    starts a few seconds into the film is therefore asked for a negative offset,
+    and the honest answer is silence until it begins -- not a clamp to zero,
+    which would slide the whole take forward and desynchronise the very mouth the
+    offset exists to line up. Clamping was the old behaviour and it was silent:
+    the render succeeded and the lips ran early by however far the clamp moved.
     """
     rate = int(sample_rate)
     if rate <= 0:
         raise ValueError("sample_rate must be positive, got %r" % (sample_rate,))
     total = max(0, int(total_samples))
     want = max(1, int(round(float(seconds) * rate)))
-    start = max(0, min(int(round(float(start_seconds or 0.0) * rate)), total))
-    stop = min(total, start + want)
-    return start, stop, want - (stop - start)
+    begin = int(round(float(start_seconds or 0.0) * rate))
+    head = min(want, max(0, -begin))
+    start = max(0, min(begin, total))
+    stop = min(total, start + (want - head))
+    return start, stop, head, want - head - (stop - start)
+
+
+def audio_span_report(source_seconds, start_seconds, seconds):
+    """(head_seconds, tail_seconds) of silence one window's span would carry.
+
+    The same arithmetic as `audio_span_bounds`, asked in seconds and answered in
+    seconds, for the one caller that has a duration but no waveform: the
+    compiler. It runs before anything is decoded and it imports no torch, so it
+    cannot count samples -- but it is the only place that can put the number in
+    front of the author *before* a render is spent finding out.
+
+    A sample rate is not needed and not taken. The two answers agree to within
+    one sample, which is four orders of magnitude below anything worth reporting.
+    """
+    total = max(0.0, float(source_seconds or 0.0))
+    want = max(0.0, float(seconds or 0.0))
+    begin = float(start_seconds or 0.0)
+    head = min(want, max(0.0, -begin))
+    start = max(0.0, min(begin, total))
+    stop = min(total, start + (want - head))
+    return head, want - head - (stop - start)
 
 
 # ── the audio seam, at content level ────────────────────────────────────────

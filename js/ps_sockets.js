@@ -36,6 +36,10 @@ export const GROUPS = {
   PulseSlate: [
     { prefix: "refs.ref_image_", max: 8 },
     { prefix: "shots.shot_", max: 24 },
+    // Appended, never inserted: this list is rebuilt in order and a group placed
+    // ahead of an existing one would move a saved graph's wires onto the wrong
+    // sockets. It must stay in step with PulseSlate.INPUT_TYPES in nodes.py.
+    { prefix: "voices.voice_", max: 3 },
   ],
   PulseShot: [
     { prefix: "refs.ref_image_", max: 4 },

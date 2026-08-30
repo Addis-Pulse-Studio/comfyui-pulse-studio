@@ -47,3 +47,10 @@ reference_purpose only/
 
 # The planning document is local working material, not part of the node.
 H3_Omni_Director_Blueprint_v2.md
+
+# Test output redirected to a file. `python run_tests.py > test_output.txt` in the
+# pack root is the natural thing to do when a run is too long to read in a
+# terminal, and it leaves a multi-megabyte log next to the code that `git add -A`
+# would happily commit.
+test_output.txt
+

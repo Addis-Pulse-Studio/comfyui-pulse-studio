@@ -306,7 +306,7 @@ def socket_slot_of(asset_id):
 
 
 def ref_descriptor(ordinal, kind, alias, source, file=None, sha256=None,
-                   audio_role=None, voice_of=None):
+                   audio_role=None, voice_of=None, audio_offset=0.0):
     """One entry in `refs.global` or in a shot's `local_refs`. Spec §3.
 
     `source` is `bin` for a file dragged onto the Asset Bin and `socket` for a
@@ -323,6 +323,11 @@ def ref_descriptor(ordinal, kind, alias, source, file=None, sha256=None,
         entry["audio_role"] = audio_role
     if voice_of:
         entry["voice_of"] = voice_of
+    # Written only when non-zero, so a project whose recordings all start with the
+    # film -- every project written before the field existed -- keeps the
+    # descriptor, and therefore the cache key, it already has.
+    if audio_offset:
+        entry["audio_offset"] = float(audio_offset)
     return entry
 
 

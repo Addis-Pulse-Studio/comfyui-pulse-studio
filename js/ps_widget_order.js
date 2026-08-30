@@ -147,6 +147,19 @@ const SPECS = {
       { name: "speaker", kind: "string" },
     ],
   },
+  PulseVoice: {
+    "3.0.0": [
+      { name: "schema_version", kind: "string" },
+      { name: "name", kind: "string" },
+      { name: "role", kind: "string" },
+      { name: "aligns_to", kind: "string" },
+      { name: "offset_seconds", kind: "number" },
+      { name: "trim_start", kind: "number" },
+      { name: "trim_end", kind: "number" },
+      { name: "speaker", kind: "string" },
+      { name: "description", kind: "string" },
+    ],
+  },
   PulseRender: {
     "3.0.0": [
       { name: "schema_version", kind: "string" },
