@@ -339,6 +339,12 @@
           "shape": 7
         },
         {
+          "name": "voice",
+          "type": "PULSE_VOICE",
+          "link": null,
+          "shape": 7
+        },
+        {
           "name": "refs.ref_image_1",
           "type": "IMAGE",
           "link": 6,
@@ -405,6 +411,12 @@
           "shape": 7
         },
         {
+          "name": "voice",
+          "type": "PULSE_VOICE",
+          "link": null,
+          "shape": 7
+        },
+        {
           "name": "refs.ref_image_1",
           "type": "IMAGE",
           "link": null,
@@ -468,6 +480,12 @@
           "name": "ref_audio",
           "type": "AUDIO",
           "link": 8,
+          "shape": 7
+        },
+        {
+          "name": "voice",
+          "type": "PULSE_VOICE",
+          "link": null,
           "shape": 7
         },
         {
@@ -584,6 +602,12 @@
           "name": "shots.shot_3",
           "type": "PULSE_SHOT",
           "link": 15,
+          "shape": 7
+        },
+        {
+          "name": "voices.voice_1",
+          "type": "PULSE_VOICE",
+          "link": null,
           "shape": 7
         }
       ],
@@ -847,7 +871,7 @@
         "Node name for S&R": "MarkdownNote"
       },
       "widgets_values": [
-        "# Pulse Slate 3 · cast and references\n\n**The feature the pack is named for.** Three images sit in the Asset Bin, each\nwith a **description** and a **retention** value, and every one is cited in the\nprose by `@Name` — never by an ordinal.\n\n## Why you never type `<Picture 2>`\n\nThe tag is assigned from *live bin order* at compile time, and MiniMax's\ntokenizer numbers by socket position: adding a reference or dragging one up the\nlist renumbers everything after it. A hand-typed ordinal goes stale the moment\nyou do that, silently. Write `@Mimi`; the compiler writes the number.\n\nA description does one more thing: it promotes the reference to a `<Subject N>`\ndefinition, which is the shape MiniMax's own reference format asks for. Clear the\ndescription and the same image is cited as a bare `<Picture i>` instead. Both are\nlegal; the first is what identity consistency is built on.\n\n## The placeholder files\n\n`example_pulse_*.png` and `.wav` are installed into ComfyUI's `input/` folder the\nfirst time this pack loads. They are flat colour and a sine tone — enough to make\nthe graph open with everything resolved. **Replace them with your own** before\nrendering anything you care about; the bin rows are where you do it.\n\n## Per-shot audio, and the two modes\n\n`ref_audio` on a `PulseShot` is scene-local: visible to that shot and no other.\nThe mode beside it is what the socket is *for*, and the two are not\ninterchangeable:\n\n- **lip_sync** — the mouth matches that recording, and the clip is trimmed to the\n  window's exact span so the two describe the same seconds. Shot 2 uses this.\n- **voice_timbre** — the model speaks the shot's own written dialogue and only\n  borrows the voice's character. Shot 3 uses this.\n\nNothing about wiring the socket tells the model which you meant; the compiler\nwrites the directive into the prose, and *that sentence is the whole mechanism*.\nSet the mode without connecting audio and the pre-flight report says so.\n\n## PulseStill, feeding a shot\n\n`PulseStill` generates a single frame from the **same subject reference** the film\nuses, and hands it to Shot 1's `refs.ref_image_1`. That is the point of the node:\na shot can open on a frame generated elsewhere in this graph, and because it came\nfrom the same reference its identity already matches.\n\nNote its prompt is plain prose with no `@`. `PulseStill` has no Asset Bin — it\ntakes references on a socket, so there is no bin for a name to resolve against and\nan `@Name` there would reach the model as literal text.\n\nInside Shot 1, that arriving frame *is* addressable: scene-local references get\nshort fixed handles, `@Ref1` here, scoped to that shot alone — so every shot can\nuse the same handle without colliding.\n"
+        "# Pulse Slate 3 · cast and references\n\n**The feature the pack is named for.** Three images sit in the Asset Bin, each\nwith a **description** and a **retention** value, and every one is cited in the\nprose by `@Name` — never by an ordinal.\n\n## Why you never type `<Picture 2>`\n\nThe tag is assigned from *live bin order* at compile time, and MiniMax's\ntokenizer numbers by socket position: adding a reference or dragging one up the\nlist renumbers everything after it. A hand-typed ordinal goes stale the moment\nyou do that, silently. Write `@Mimi`; the compiler writes the number.\n\nA description does one more thing: it promotes the reference to a `<Subject N>`\ndefinition, which is the shape MiniMax's own reference format asks for. Clear the\ndescription and the same image is cited as a bare `<Picture i>` instead. Both are\nlegal; the first is what identity consistency is built on.\n\n## The placeholder files\n\n`example_pulse_*.png` and `.wav` are installed into ComfyUI's `input/` folder the\nfirst time this pack loads. They are flat colour and a sine tone — enough to make\nthe graph open with everything resolved. **Replace them with your own** before\nrendering anything you care about; the bin rows are where you do it.\n\n## Per-shot audio, and the two modes\n\n`ref_audio` on a `PulseShot` is scene-local: visible to that shot and no other.\nThe mode beside it is what the socket is *for*, and the two are not\ninterchangeable:\n\n- **lip_sync** — the mouth matches that recording, and the clip is trimmed to the\n  window's exact span so the two describe the same seconds. Shot 2 uses this.\n- **voice_timbre** — the model speaks the shot's own written dialogue and only\n  borrows the voice's character. Shot 3 uses this.\n\nNothing about wiring the socket tells the model which you meant; the compiler\nwrites the directive into the prose, and *that sentence is the whole mechanism*.\nSet the mode without connecting audio and the pre-flight report says so.\n\n### Which seconds, though\n\n\"Trimmed to the window's exact span\" leaves one thing unsaid, and it is the thing\nthat decides whether lip sync works: `ref_audio` takes those seconds starting at\nthe window's position **on the whole film's clock**. The scope is scene-local; the\n*timing* is not. This socket expects a recording that runs alongside the entire\nfilm.\n\nA take recorded for one shot begins at that shot, not at the film. Left here it is\ncut at an offset past its own end and the window is handed silence — no error,\njust a mouth that does not track. **`PulseVoice`** is where a recording says where\nit starts; see `PulseSlate_Voice.json`. Both shots' `voice` inputs are free.\n\n**This graph's placeholder is one second long**, and the window is 12.25s, so the\npre-flight report opens by telling you so:\n\n> `@Voice` covers 0.00-1.00s on the film clock and window 1 covers 0.00-12.25s,\n> so it runs out 11.25s before it ends. That much of the window has no recording\n> behind it, and the shots there still carry written dialogue — so the model\n> speaks those words while the supplied track is silent, and the mouth moves over\n> dead air.\n\nThat is the check doing its job on a test tone, not a fault in the graph. Point\n`LoadAudio` at a real recording that covers the film and it goes quiet.\n\n## PulseStill, feeding a shot\n\n`PulseStill` generates a single frame from the **same subject reference** the film\nuses, and hands it to Shot 1's `refs.ref_image_1`. That is the point of the node:\na shot can open on a frame generated elsewhere in this graph, and because it came\nfrom the same reference its identity already matches.\n\nNote its prompt is plain prose with no `@`. `PulseStill` has no Asset Bin — it\ntakes references on a socket, so there is no bin for a name to resolve against and\nan `@Name` there would reach the model as literal text.\n\nInside Shot 1, that arriving frame *is* addressable: scene-local references get\nshort fixed handles, `@Ref1` here, scoped to that shot alone — so every shot can\nuse the same handle without colliding.\n"
       ],
       "title": "READ ME"
     }
@@ -898,7 +922,7 @@
       50,
       0,
       80,
-      3,
+      4,
       "IMAGE"
     ],
     [

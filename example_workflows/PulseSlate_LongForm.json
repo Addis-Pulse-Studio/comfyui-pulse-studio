@@ -171,6 +171,12 @@
           "shape": 7
         },
         {
+          "name": "voice",
+          "type": "PULSE_VOICE",
+          "link": null,
+          "shape": 7
+        },
+        {
           "name": "refs.ref_image_1",
           "type": "IMAGE",
           "link": null,
@@ -237,6 +243,12 @@
           "shape": 7
         },
         {
+          "name": "voice",
+          "type": "PULSE_VOICE",
+          "link": null,
+          "shape": 7
+        },
+        {
           "name": "refs.ref_image_1",
           "type": "IMAGE",
           "link": null,
@@ -299,6 +311,12 @@
         {
           "name": "ref_audio",
           "type": "AUDIO",
+          "link": null,
+          "shape": 7
+        },
+        {
+          "name": "voice",
+          "type": "PULSE_VOICE",
           "link": null,
           "shape": 7
         },
@@ -416,6 +434,12 @@
           "name": "shots.shot_3",
           "type": "PULSE_SHOT",
           "link": 8,
+          "shape": 7
+        },
+        {
+          "name": "voices.voice_1",
+          "type": "PULSE_VOICE",
+          "link": null,
           "shape": 7
         }
       ],
@@ -730,7 +754,7 @@
         "Node name for S&R": "MarkdownNote"
       },
       "widgets_values": [
-        "# Pulse Slate 3 · long path (many windows)\n\n`PulseSlate` compiles; **Pulse Render** executes. Nothing is muted, and there is\nno second branch to keep in sync.\n\n## The segment cache is the point\nEvery window is written to `ComfyUI/output/<run_dir>/<run_id>/` as it finishes,\nand the manifest is fsynced before the next one starts.\n\n- **Kill the render at window 9 of 12 and requeue** → 0–8 load from disk, only\n  9–11 render.\n- **Edit one shot** → only the window holding it re-renders. Every other window\n  is reused, at its original seed.\n- **Change the base seed, or steps, or the patch chain** → everything re-renders,\n  because all three change the output.\n\nThat last one is why `patch_fingerprint` exists. Sol-Attn, Spectrum and EasyCache\nall change what the same prompt and seed produce, so a cache that ignored them\nwould hand you a film whose shots were rendered at different sparsities and say\nnothing about it.\n\n## Run the dry run first\nSet **dry_run** and queue. You get the report and nothing else: no sampling, no\ndecode, no file writes. Check the per-shot ordinal map and the unresolved-alias\nlist *before* spending GPU hours — a wrong binding renders successfully and gives\nyou a well-formed film of the wrong person.\n\n## Seeds survive edits\nA window's seed is derived from the **set of shots in it**, not from its position.\nInserting a shot at the top no longer rerolls every window after it.\n\n## Pulse Shot\nEach `PulseShot` carries its own text, duration, first/last frames and\nscene-local references — so a shot's opening frame can come from an upstream\ngenerator in this same graph rather than from a file on disk. Its `shot_id` is\nwritten once and never changes, which is what keeps its cached segment attached\nto it when you reorder the film.\n\n## Patch the model upstream\nThis graph has no attention or memory patch on it, so it will say so on every\nqueue — three warnings, all accurate. Patches belong **upstream** of Pulse Slate\nand Pulse Render: both sample with the model handed *to* them, so a patch applied\nafter them does nothing at all.\n\nOn a 32GB card Spectrum's `system_ram` history offload is what makes a 362-frame\nwindow **fit at all**. It is not a speed setting; do not turn it off for speed.\n\nThe recommended chain, in the order that works:\n\n```\nUNETLoader\n  → SpectrumApplyMiniMaxH3        (history_storage: system_ram)\n  → PathchSageAttentionKJ         (sets Sage as the fallback backend)\n  → MiniMax H3 Scheduled Sol Attention Patch\n  → MiniMax H3 Chunk FeedForward\n  → Pulse Slate / Pulse Render\n```\n\n**Sol-Attn must come after the Sage patch.** After it, Sol adopts the Sage\nforward as its fallback, so ineligible steps run memory-efficient Sage while\neligible steps run Sol. *Before* it, the Sage patch shadows the Sol node entirely\nand it does nothing — and the graph still runs, still produces output, and warns\nyou about none of it.\n\nWire it into `model`. This graph runs `continuity: none`, so every window\nrenders through the reference checkpoint and there is no second model input\nto keep in sync — a checkpoint nothing samples with is still ~20 GB resident,\nwhich is 20 GB the render wanted. Switch continuity to `last_frame_carry` and you\nadd `model_fl2va` and a second copy of the chain on it.\n\nPulse Render detects whatever it finds and folds the settings into the cache\nkey, so changing `tau_start` re-renders the affected segments instead of\nsilently reusing segments rendered at the old sparsity.\n\nSet the Sol node's `sink_conditioning` to `exact_kv_and_rows`. Pulse Slate pairs\neach character image with its own audio track, and that pairing lives in exactly\nthe query rows that setting keeps dense.\n\n## Memory\nLeave **low_memory** on. The finished video is assembled by stream-copying the\nsegment files together, so a twelve-window film is never held in RAM at all. The\n`frames` output is only materialised if you actually wire it.\n"
+        "# Pulse Slate 3 · long path (many windows)\n\n`PulseSlate` compiles; **Pulse Render** executes. Nothing is muted, and there is\nno second branch to keep in sync.\n\n## The segment cache is the point\nEvery window is written to `ComfyUI/output/<run_dir>/<run_id>/` as it finishes,\nand the manifest is fsynced before the next one starts.\n\n- **Kill the render at window 9 of 12 and requeue** → 0–8 load from disk, only\n  9–11 render.\n- **Edit one shot** → only the window holding it re-renders. Every other window\n  is reused, at its original seed.\n- **Change the base seed, or steps, or the patch chain** → everything re-renders,\n  because all three change the output.\n\nThat last one is why `patch_fingerprint` exists. Sol-Attn, Spectrum and EasyCache\nall change what the same prompt and seed produce, so a cache that ignored them\nwould hand you a film whose shots were rendered at different sparsities and say\nnothing about it.\n\n## Run the dry run first\nSet **dry_run** and queue. You get the report and nothing else: no sampling, no\ndecode, no file writes. Check the per-shot ordinal map and the unresolved-alias\nlist *before* spending GPU hours — a wrong binding renders successfully and gives\nyou a well-formed film of the wrong person.\n\n## Seeds survive edits\nA window's seed is derived from the **set of shots in it**, not from its position.\nInserting a shot at the top no longer rerolls every window after it.\n\n## Pulse Shot\nEach `PulseShot` carries its own text, duration, first/last frames and\nscene-local references — so a shot's opening frame can come from an upstream\ngenerator in this same graph rather than from a file on disk. Its `shot_id` is\nwritten once and never changes, which is what keeps its cached segment attached\nto it when you reorder the film.\n\n## Adding a voice\nThis film has no reference audio, and the multi-window path is where adding one\nneeds the most care: a `lip_sync` clip is cut to the window it rides in, so on a\nfilm with several windows *which seconds of the file* is the whole question.\n\nWire one **`PulseVoice`** into Pulse Slate's `voices.voice_1` and it is visible to\nevery window — one wire, not one per shot. Its `aligns_to` says where the\nrecording starts: `film_clock` for a narration covering the whole timeline,\n`shot_start` for a take cut for a single shot, in which case wire it to that\nshot's own `voice` input instead. A recording that does not cover a window is\nnamed in the pre-flight report, with the shortfall in seconds, rather than\nrendering as silence. `PulseSlate_Voice.json` is that graph.\n\nWatch where the seams fall before you add one. Three 6.0s shots do **not** divide\ninto this film's two 226-frame windows: the seam lands at 9.4167s, mid-way through\nshot 2, so shot 2 is compiled into both windows and the report's *straddling\nshots* section names it. That is not an error — dropping it from the second window\nwould leave that window with no direction at all — but a voice on a straddling\nshot is handed to both windows, each trimmed to its own span, and the compiler\nreports that too.\n\nTo avoid it, give a shot a duration that is a whole number of frames on H3's\n17k+5 grid and let `partition_strategy: shot_aligned` put the seams on your cuts.\n`PulseSlate_Voice.json` does exactly that.\n\n## Patch the model upstream\nThis graph has no attention or memory patch on it, so it will say so on every\nqueue — three warnings, all accurate. Patches belong **upstream** of Pulse Slate\nand Pulse Render: both sample with the model handed *to* them, so a patch applied\nafter them does nothing at all.\n\nOn a 32GB card Spectrum's `system_ram` history offload is what makes a 362-frame\nwindow **fit at all**. It is not a speed setting; do not turn it off for speed.\n\nThe recommended chain, in the order that works:\n\n```\nUNETLoader\n  → SpectrumApplyMiniMaxH3        (history_storage: system_ram)\n  → PathchSageAttentionKJ         (sets Sage as the fallback backend)\n  → MiniMax H3 Scheduled Sol Attention Patch\n  → MiniMax H3 Chunk FeedForward\n  → Pulse Slate / Pulse Render\n```\n\n**Sol-Attn must come after the Sage patch.** After it, Sol adopts the Sage\nforward as its fallback, so ineligible steps run memory-efficient Sage while\neligible steps run Sol. *Before* it, the Sage patch shadows the Sol node entirely\nand it does nothing — and the graph still runs, still produces output, and warns\nyou about none of it.\n\nWire it into `model`. This graph runs `continuity: none`, so every window\nrenders through the reference checkpoint and there is no second model input\nto keep in sync — a checkpoint nothing samples with is still ~20 GB resident,\nwhich is 20 GB the render wanted. Switch continuity to `last_frame_carry` and you\nadd `model_fl2va` and a second copy of the chain on it.\n\nPulse Render detects whatever it finds and folds the settings into the cache\nkey, so changing `tau_start` re-renders the affected segments instead of\nsilently reusing segments rendered at the old sparsity.\n\nSet the Sol node's `sink_conditioning` to `exact_kv_and_rows`. Pulse Slate pairs\neach character image with its own audio track, and that pairing lives in exactly\nthe query rows that setting keeps dense.\n\n## Memory\nLeave **low_memory** on. The finished video is assembled by stream-copying the\nsegment files together, so a twelve-window film is never held in RAM at all. The\n`frames` output is only materialised if you actually wire it.\n"
       ],
       "title": "READ ME"
     }
