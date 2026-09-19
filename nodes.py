@@ -173,7 +173,9 @@ def _report_patches(model, unique_id, branches_used=(), fl2va_connected=False):
 
 
 SAMPLERS = ["res_multistep", "euler", "euler_ancestral", "dpmpp_2m", "dpmpp_2m_sde", "ddim"]
-SCHEDULERS = ["simple", "normal", "beta", "sgm_uniform", "karras", "exponential"]
+# "hyperflow" is HyperFlow's fixed 8-step grid (steps must be 8, sampler euler, cfg 1.0). It is registered in
+# ComfyUI's scheduler table by the ComfyUI-HyperFlow pack; without that pack, render.sample() says so by name.
+SCHEDULERS = ["simple", "normal", "beta", "sgm_uniform", "karras", "exponential", "hyperflow"]
 RESIZE_METHODS = ["crop", "pad", "stretch"]
 
 # ASPECT_RATIOS, ASPECT_OPTIONS and resolution_for moved to

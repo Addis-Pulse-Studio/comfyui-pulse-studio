@@ -131,6 +131,20 @@ def _negative_conditioning(clip):
     return clip.encode_from_tokens_scheduled(tokens)
 
 
+def _require_scheduler(scheduler):
+    """Name the missing pack instead of letting BasicScheduler fail on an unknown name.
+
+    Only 'hyperflow' can be missing: it is not a ComfyUI scheduler but one the
+    ComfyUI-HyperFlow pack adds to comfy.samplers when it loads.
+    """
+    import comfy.samplers
+    if scheduler not in comfy.samplers.SCHEDULER_HANDLERS:
+        raise ValueError(
+            f"Scheduler '{scheduler}' is not registered in this ComfyUI. 'hyperflow' comes from the "
+            "ComfyUI-HyperFlow custom node pack -- install it and restart, and load the HyperFlow LoRA "
+            "on the model with its 'HyperFlow LoRA Loader'.")
+
+
 def sample(model, positive, latent, seed, steps, sampler_name, scheduler,
            vae, audio_vae, cfg=1.0, clip=None):
     """One real H3 call: noise -> guider -> sigmas -> sample -> decode both streams."""
@@ -145,6 +159,7 @@ def sample(model, positive, latent, seed, steps, sampler_name, scheduler,
                                      conditioning=positive))[0]
 
     sampler = unpack(execute_node(stock("KSamplerSelect"), sampler_name=sampler_name))[0]
+    _require_scheduler(scheduler)
     sigmas = unpack(execute_node(stock("BasicScheduler"), model=model, scheduler=scheduler,
                                  steps=steps, denoise=1.0))[0]
     sampled = unpack(execute_node(stock("SamplerCustomAdvanced"), noise=noise, guider=guider,
