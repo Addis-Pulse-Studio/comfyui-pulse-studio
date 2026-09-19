@@ -40,11 +40,14 @@ CONNECTION_TYPES = {"MODEL", "CLIP", "VAE", "CONDITIONING", "LATENT", "IMAGE", "
                     # and its position on the film clock. Absent from this set it
                     # read as a widget, and the guard below waved through a
                     # connection input inserted ahead of an existing one.
-                    "PULSE_TIMELINE", "PULSE_SHOT", "PULSE_VOICE", "VIDEO"}
+                    # PULSE_LIPSYNC_SEGMENT carries one character's cut frames from
+                    # the lip-sync segment node to its paste.
+                    "PULSE_TIMELINE", "PULSE_SHOT", "PULSE_VOICE", "PULSE_LIPSYNC_SEGMENT",
+                    "VIDEO"}
 
 # Every node in the pack is under the slot contract, so every node is compared.
 NODE_CLASSES = ("PulseSlate", "PulseShot", "PulseVoice", "PulseRender", "PulseBench",
-                "PulseRetake", "PulseStill")
+                "PulseRetake", "PulseStill", "PulseLipSyncSegment", "PulseLipSyncPaste")
 
 # Dot-namespaced growing socket groups (§4). They are declared in Python by a
 # loop rather than as dict literals, so they are deliberately invisible to the
@@ -336,11 +339,15 @@ class TestInputAndOutputOrderIsFrozen(unittest.TestCase):
         # `voice` is appended after ref_audio, never inserted before it: an
         # optional input's link endpoint is positional in a saved node.
         "PulseShot": ["start_image", "end_image", "ref_audio", "voice"],
-        "PulseVoice": ["audio"],
+        # `final_audio` is appended after `audio`, for the same reason `voice` is
+        # appended on PulseShot.
+        "PulseVoice": ["audio", "final_audio"],
         "PulseRender": ["timeline", "model", "vae", "audio_vae", "model_fl2va"],
         "PulseBench": [],
         "PulseRetake": ["model_fl2va", "clip", "vae", "audio_vae", "images", "base_audio"],
         "PulseStill": ["model", "clip", "vae", "audio_vae", "source_image", "ref_images"],
+        "PulseLipSyncSegment": ["timeline", "images"],
+        "PulseLipSyncPaste": ["images", "corrected_images", "segment"],
     }
 
     EXPECTED_OUTPUTS = {
@@ -359,6 +366,9 @@ class TestInputAndOutputOrderIsFrozen(unittest.TestCase):
         "PulseBench": (["STRING"], ["table"]),
         "PulseRetake": (["IMAGE", "AUDIO", "STRING"], ["images", "audio", "plan"]),
         "PulseStill": (["IMAGE", "STRING"], ["image", "plan"]),
+        "PulseLipSyncSegment": (["IMAGE", "AUDIO", "PULSE_LIPSYNC_SEGMENT", "STRING"],
+                                ["images", "audio", "segment", "report"]),
+        "PulseLipSyncPaste": (["IMAGE", "STRING"], ["images", "report"]),
     }
 
     #: §4. Both languages must agree on how many sockets each group has, or the

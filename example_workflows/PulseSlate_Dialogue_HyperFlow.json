@@ -1,0 +1,1967 @@
+{
+ "id": "pulseslate-dialogue-hyperflow",
+ "revision": 0,
+ "last_node_id": 60,
+ "last_link_id": 56,
+ "nodes": [
+  {
+   "id": 10,
+   "type": "UNETLoader",
+   "pos": [
+    20,
+    40
+   ],
+   "size": [
+    420,
+    90
+   ],
+   "flags": {},
+   "order": 0,
+   "mode": 0,
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "MODEL",
+     "type": "MODEL",
+     "links": [
+      1
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "UNETLoader"
+   },
+   "widgets_values": [
+    "minimax\\higher\\minimax_h3_ref2va_int8_convrot.safetensors",
+    "default"
+   ],
+   "title": "MiniMax H3 REF2VA (non-pruned)"
+  },
+  {
+   "id": 11,
+   "type": "UNETLoader",
+   "pos": [
+    20,
+    150
+   ],
+   "size": [
+    420,
+    90
+   ],
+   "flags": {},
+   "order": 1,
+   "mode": 0,
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "MODEL",
+     "type": "MODEL",
+     "links": [
+      2
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "UNETLoader"
+   },
+   "widgets_values": [
+    "minimax\\higher\\minimax_h3_fl2va_int8_convrot.safetensors",
+    "default"
+   ],
+   "title": "MiniMax H3 FL2VA (non-pruned) · continuation windows"
+  },
+  {
+   "id": 12,
+   "type": "CLIPLoader",
+   "pos": [
+    20,
+    260
+   ],
+   "size": [
+    420,
+    110
+   ],
+   "flags": {},
+   "order": 2,
+   "mode": 0,
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "CLIP",
+     "type": "CLIP",
+     "links": [
+      8
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "CLIPLoader"
+   },
+   "widgets_values": [
+    "minimax\\qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+    "minimax",
+    "default"
+   ]
+  },
+  {
+   "id": 13,
+   "type": "VAELoader",
+   "pos": [
+    20,
+    390
+   ],
+   "size": [
+    420,
+    60
+   ],
+   "flags": {},
+   "order": 3,
+   "mode": 0,
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "VAE",
+     "type": "VAE",
+     "links": [
+      9,
+      20
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "VAELoader"
+   },
+   "widgets_values": [
+    "minimax\\minimax_h3_video_vae_fp16.safetensors"
+   ],
+   "title": "video VAE"
+  },
+  {
+   "id": 14,
+   "type": "VAELoader",
+   "pos": [
+    20,
+    470
+   ],
+   "size": [
+    420,
+    60
+   ],
+   "flags": {},
+   "order": 4,
+   "mode": 0,
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "VAE",
+     "type": "VAE",
+     "links": [
+      10,
+      21
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "VAELoader"
+   },
+   "widgets_values": [
+    "minimax\\minimax_h3_audio_vae_fp32.safetensors"
+   ],
+   "title": "audio VAE"
+  },
+  {
+   "id": 15,
+   "type": "HyperFlowLoRALoader",
+   "pos": [
+    20,
+    580
+   ],
+   "size": [
+    420,
+    90
+   ],
+   "flags": {},
+   "order": 5,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "model",
+     "type": "MODEL",
+     "link": 1
+    }
+   ],
+   "outputs": [
+    {
+     "name": "MODEL",
+     "type": "MODEL",
+     "links": [
+      3
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "HyperFlowLoRALoader"
+   },
+   "widgets_values": [
+    "minimaxh3\\minimax_h3_hyperflow_8step_v1.0.safetensors",
+    1.0
+   ],
+   "title": "HyperFlow 8-step · ref2va"
+  },
+  {
+   "id": 16,
+   "type": "HyperFlowLoRALoader",
+   "pos": [
+    20,
+    690
+   ],
+   "size": [
+    420,
+    90
+   ],
+   "flags": {},
+   "order": 6,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "model",
+     "type": "MODEL",
+     "link": 2
+    }
+   ],
+   "outputs": [
+    {
+     "name": "MODEL",
+     "type": "MODEL",
+     "links": [
+      4
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "HyperFlowLoRALoader"
+   },
+   "widgets_values": [
+    "minimaxh3\\minimax_h3_hyperflow_8step_v1.0.safetensors",
+    1.0
+   ],
+   "title": "HyperFlow 8-step · fl2va"
+  },
+  {
+   "id": 17,
+   "type": "MiniMaxH3SigmaShift",
+   "pos": [
+    20,
+    800
+   ],
+   "size": [
+    420,
+    80
+   ],
+   "flags": {},
+   "order": 7,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "model",
+     "type": "MODEL",
+     "link": 3
+    }
+   ],
+   "outputs": [
+    {
+     "name": "MODEL",
+     "type": "MODEL",
+     "links": [
+      7,
+      19
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "MiniMaxH3SigmaShift"
+   },
+   "widgets_values": [
+    12,
+    3
+   ],
+   "title": "Shift 12 / 3 · ref2va"
+  },
+  {
+   "id": 18,
+   "type": "MiniMaxH3SigmaShift",
+   "pos": [
+    20,
+    900
+   ],
+   "size": [
+    420,
+    80
+   ],
+   "flags": {},
+   "order": 8,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "model",
+     "type": "MODEL",
+     "link": 4
+    }
+   ],
+   "outputs": [
+    {
+     "name": "MODEL",
+     "type": "MODEL",
+     "links": [
+      11,
+      22
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "MiniMaxH3SigmaShift"
+   },
+   "widgets_values": [
+    12,
+    3
+   ],
+   "title": "Shift 12 / 3 · fl2va"
+  },
+  {
+   "id": 30,
+   "type": "LoadAudio",
+   "pos": [
+    480,
+    40
+   ],
+   "size": [
+    360,
+    140
+   ],
+   "flags": {},
+   "order": 9,
+   "mode": 0,
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "AUDIO",
+     "type": "AUDIO",
+     "links": [
+      5
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "LoadAudio"
+   },
+   "widgets_values": [
+    "example_pulse_voice.wav",
+    null,
+    null
+   ],
+   "title": "Ada's dialogue track (full length, film clock)"
+  },
+  {
+   "id": 31,
+   "type": "LoadAudio",
+   "pos": [
+    480,
+    200
+   ],
+   "size": [
+    360,
+    140
+   ],
+   "flags": {},
+   "order": 10,
+   "mode": 0,
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "AUDIO",
+     "type": "AUDIO",
+     "links": [
+      6
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "LoadAudio"
+   },
+   "widgets_values": [
+    "example_pulse_voice.wav",
+    null,
+    null
+   ],
+   "title": "Ben's dialogue track (full length, film clock)"
+  },
+  {
+   "id": 32,
+   "type": "PulseVoice",
+   "pos": [
+    480,
+    360
+   ],
+   "size": [
+    360,
+    260
+   ],
+   "flags": {},
+   "order": 11,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "audio",
+     "type": "AUDIO",
+     "link": 5
+    },
+    {
+     "name": "final_audio",
+     "type": "AUDIO",
+     "link": null,
+     "shape": 7
+    }
+   ],
+   "outputs": [
+    {
+     "name": "voice",
+     "type": "PULSE_VOICE",
+     "links": [
+      16
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "PulseVoice"
+   },
+   "widgets_values": [
+    "3.0.0",
+    "AdaVoice",
+    "lip_sync",
+    "film_clock",
+    0.0,
+    0.0,
+    -1.0,
+    "@Ada",
+    "Ada's lines for the whole scene; silence while Ben speaks"
+   ],
+   "title": "Voice · @Ada (S1)"
+  },
+  {
+   "id": 33,
+   "type": "PulseVoice",
+   "pos": [
+    480,
+    640
+   ],
+   "size": [
+    360,
+    260
+   ],
+   "flags": {},
+   "order": 12,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "audio",
+     "type": "AUDIO",
+     "link": 6
+    },
+    {
+     "name": "final_audio",
+     "type": "AUDIO",
+     "link": null,
+     "shape": 7
+    }
+   ],
+   "outputs": [
+    {
+     "name": "voice",
+     "type": "PULSE_VOICE",
+     "links": [
+      17
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "PulseVoice"
+   },
+   "widgets_values": [
+    "3.0.0",
+    "BenVoice",
+    "lip_sync",
+    "film_clock",
+    0.0,
+    0.0,
+    -1.0,
+    "@Ben",
+    "Ben's lines for the whole scene; silence while Ada speaks"
+   ],
+   "title": "Voice · @Ben (S2)"
+  },
+  {
+   "id": 40,
+   "type": "PulseShot",
+   "pos": [
+    880,
+    40
+   ],
+   "size": [
+    400,
+    300
+   ],
+   "flags": {},
+   "order": 13,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "start_image",
+     "type": "IMAGE",
+     "link": null
+    },
+    {
+     "name": "end_image",
+     "type": "IMAGE",
+     "link": null
+    },
+    {
+     "name": "ref_audio",
+     "type": "AUDIO",
+     "link": null
+    },
+    {
+     "name": "voice",
+     "type": "PULSE_VOICE",
+     "link": null
+    },
+    {
+     "name": "refs.ref_image_1",
+     "type": "IMAGE",
+     "link": null
+    }
+   ],
+   "outputs": [
+    {
+     "name": "shot",
+     "type": "PULSE_SHOT",
+     "links": [
+      12
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "PulseShot"
+   },
+   "widgets_values": [
+    "3.0.0",
+    "c3f6138a-a53f-5add-8cbb-2d808ca51bfc",
+    "The question",
+    "Locked-off medium two-shot at eye level across a small wooden cafe table: @Ada sits on the left third of the frame facing right, @Ben sits on the right third facing left, both faces clearly visible and lit, the centre line of the frame between them stays clear. @Ada leans in slightly and speaks while @Ben listens, nodding once.",
+    "@Ada speaks the line carried in @AdaVoice; @Ben stays silent and listens. Low cafe room tone.",
+    6.5,
+    "inherit",
+    "lip_sync",
+    "@Ada"
+   ],
+   "title": "Shot 1 · The question"
+  },
+  {
+   "id": 41,
+   "type": "PulseShot",
+   "pos": [
+    880,
+    370
+   ],
+   "size": [
+    400,
+    300
+   ],
+   "flags": {},
+   "order": 14,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "start_image",
+     "type": "IMAGE",
+     "link": null
+    },
+    {
+     "name": "end_image",
+     "type": "IMAGE",
+     "link": null
+    },
+    {
+     "name": "ref_audio",
+     "type": "AUDIO",
+     "link": null
+    },
+    {
+     "name": "voice",
+     "type": "PULSE_VOICE",
+     "link": null
+    },
+    {
+     "name": "refs.ref_image_1",
+     "type": "IMAGE",
+     "link": null
+    }
+   ],
+   "outputs": [
+    {
+     "name": "shot",
+     "type": "PULSE_SHOT",
+     "links": [
+      13
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "PulseShot"
+   },
+   "widgets_values": [
+    "3.0.0",
+    "8a711e20-e3d7-5b5b-bde9-2ec472bdb479",
+    "The answer",
+    "Locked-off medium two-shot at eye level across a small wooden cafe table: @Ada sits on the left third of the frame facing right, @Ben sits on the right third facing left, both faces clearly visible and lit, the centre line of the frame between them stays clear. @Ben sets down his cup and answers while @Ada watches him.",
+    "@Ben speaks the line carried in @BenVoice; @Ada stays silent. Low cafe room tone.",
+    6.4583,
+    "inherit",
+    "lip_sync",
+    "@Ben"
+   ],
+   "title": "Shot 2 · The answer"
+  },
+  {
+   "id": 42,
+   "type": "PulseShot",
+   "pos": [
+    880,
+    700
+   ],
+   "size": [
+    400,
+    300
+   ],
+   "flags": {},
+   "order": 15,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "start_image",
+     "type": "IMAGE",
+     "link": null
+    },
+    {
+     "name": "end_image",
+     "type": "IMAGE",
+     "link": null
+    },
+    {
+     "name": "ref_audio",
+     "type": "AUDIO",
+     "link": null
+    },
+    {
+     "name": "voice",
+     "type": "PULSE_VOICE",
+     "link": null
+    },
+    {
+     "name": "refs.ref_image_1",
+     "type": "IMAGE",
+     "link": null
+    }
+   ],
+   "outputs": [
+    {
+     "name": "shot",
+     "type": "PULSE_SHOT",
+     "links": [
+      14
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "PulseShot"
+   },
+   "widgets_values": [
+    "3.0.0",
+    "46958f54-ab6b-5fad-8794-75946c9a1585",
+    "Back and forth",
+    "Locked-off medium two-shot at eye level across a small wooden cafe table: @Ada sits on the left third of the frame facing right, @Ben sits on the right third facing left, both faces clearly visible and lit, the centre line of the frame between them stays clear. They trade short lines, each turning slightly toward whoever is speaking.",
+    "@Ada and @Ben speak in turn, exactly as carried in @AdaVoice and @BenVoice, never over each other.",
+    6.5,
+    "inherit",
+    "lip_sync",
+    ""
+   ],
+   "title": "Shot 3 · Back and forth"
+  },
+  {
+   "id": 43,
+   "type": "PulseShot",
+   "pos": [
+    880,
+    1030
+   ],
+   "size": [
+    400,
+    300
+   ],
+   "flags": {},
+   "order": 16,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "start_image",
+     "type": "IMAGE",
+     "link": null
+    },
+    {
+     "name": "end_image",
+     "type": "IMAGE",
+     "link": null
+    },
+    {
+     "name": "ref_audio",
+     "type": "AUDIO",
+     "link": null
+    },
+    {
+     "name": "voice",
+     "type": "PULSE_VOICE",
+     "link": null
+    },
+    {
+     "name": "refs.ref_image_1",
+     "type": "IMAGE",
+     "link": null
+    }
+   ],
+   "outputs": [
+    {
+     "name": "shot",
+     "type": "PULSE_SHOT",
+     "links": [
+      15
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "PulseShot"
+   },
+   "widgets_values": [
+    "3.0.0",
+    "bffe744b-fe04-5bec-97a6-bc7a061e9b08",
+    "The last word",
+    "Locked-off medium two-shot at eye level across a small wooden cafe table: @Ada sits on the left third of the frame facing right, @Ben sits on the right third facing left, both faces clearly visible and lit, the centre line of the frame between them stays clear. @Ada has the last line and smiles; @Ben laughs quietly and looks down.",
+    "@Ada speaks the line carried in @AdaVoice; @Ben answers only with a quiet laugh. Low cafe room tone.",
+    6.4583,
+    "inherit",
+    "lip_sync",
+    "@Ada"
+   ],
+   "title": "Shot 4 · The last word"
+  },
+  {
+   "id": 20,
+   "type": "PulseSlate",
+   "pos": [
+    1320,
+    40
+   ],
+   "size": [
+    640,
+    1500
+   ],
+   "flags": {},
+   "order": 17,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "model",
+     "type": "MODEL",
+     "link": 7
+    },
+    {
+     "name": "clip",
+     "type": "CLIP",
+     "link": 8
+    },
+    {
+     "name": "vae",
+     "type": "VAE",
+     "link": 9
+    },
+    {
+     "name": "audio_vae",
+     "type": "VAE",
+     "link": 10
+    },
+    {
+     "name": "model_fl2va",
+     "type": "MODEL",
+     "link": 11
+    },
+    {
+     "name": "ref_video",
+     "type": "IMAGE",
+     "link": null
+    },
+    {
+     "name": "ref_video_audio",
+     "type": "AUDIO",
+     "link": null
+    },
+    {
+     "name": "ref_music",
+     "type": "AUDIO",
+     "link": null
+    },
+    {
+     "name": "refs.ref_image_1",
+     "type": "IMAGE",
+     "link": null
+    },
+    {
+     "name": "shots.shot_1",
+     "type": "PULSE_SHOT",
+     "link": 12
+    },
+    {
+     "name": "shots.shot_2",
+     "type": "PULSE_SHOT",
+     "link": 13
+    },
+    {
+     "name": "shots.shot_3",
+     "type": "PULSE_SHOT",
+     "link": 14
+    },
+    {
+     "name": "shots.shot_4",
+     "type": "PULSE_SHOT",
+     "link": 15
+    },
+    {
+     "name": "shots.shot_5",
+     "type": "PULSE_SHOT",
+     "link": null
+    },
+    {
+     "name": "voices.voice_1",
+     "type": "PULSE_VOICE",
+     "link": 16
+    },
+    {
+     "name": "voices.voice_2",
+     "type": "PULSE_VOICE",
+     "link": 17
+    },
+    {
+     "name": "voices.voice_3",
+     "type": "PULSE_VOICE",
+     "link": null
+    }
+   ],
+   "outputs": [
+    {
+     "name": "timeline",
+     "type": "PULSE_TIMELINE",
+     "links": [
+      18,
+      40,
+      47
+     ]
+    },
+    {
+     "name": "positive",
+     "type": "CONDITIONING",
+     "links": []
+    },
+    {
+     "name": "latent",
+     "type": "LATENT",
+     "links": []
+    },
+    {
+     "name": "combined_audio",
+     "type": "AUDIO",
+     "links": []
+    },
+    {
+     "name": "images",
+     "type": "IMAGE",
+     "links": []
+    },
+    {
+     "name": "compiled_prompt",
+     "type": "STRING",
+     "links": []
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "PulseSlate"
+   },
+   "widgets_values": [
+    "3.0.0",
+    "{\"schema\": 2, \"cast\": [], \"assets\": [{\"id\": \"asset_ada\", \"kind\": \"image\", \"name\": \"Ada\", \"file\": \"example_pulse_subject_a.png\", \"description\": \"character A, seated on the left: replace the file and describe their face, hair and clothing\", \"retention\": \"fully_preserved\"}, {\"id\": \"asset_ben\", \"kind\": \"image\", \"name\": \"Ben\", \"file\": \"example_pulse_subject_b.png\", \"description\": \"character B, seated on the right: replace the file and describe their face, hair and clothing\", \"retention\": \"fully_preserved\"}]}",
+    "style: Live-action, cinematic 35mm look, warm practical cafe lighting, shallow depth of field, locked-off camera, soft film grain.\nidentity: @Ada stays on the left and @Ben stays on the right in every shot, with the same faces, hair and clothing throughout.\nsoundscape: Quiet cafe room tone under the dialogue; no music, no third voice.\nmusic: None.",
+    "",
+    25.9166,
+    "16:9 landscape",
+    1344,
+    768,
+    8,
+    "euler",
+    "hyperflow",
+    1.0,
+    20260918,
+    "fixed",
+    "balanced",
+    15,
+    "crop",
+    "image",
+    true,
+    4,
+    "match",
+    12,
+    3,
+    3,
+    "none",
+    ""
+   ],
+   "title": "① Pulse Slate · 2-character dialogue (HyperFlow 8-step)"
+  },
+  {
+   "id": 21,
+   "type": "PulseRender",
+   "pos": [
+    2000,
+    40
+   ],
+   "size": [
+    420,
+    330
+   ],
+   "flags": {},
+   "order": 18,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "timeline",
+     "type": "PULSE_TIMELINE",
+     "link": 18
+    },
+    {
+     "name": "model",
+     "type": "MODEL",
+     "link": 19
+    },
+    {
+     "name": "vae",
+     "type": "VAE",
+     "link": 20
+    },
+    {
+     "name": "audio_vae",
+     "type": "VAE",
+     "link": 21
+    },
+    {
+     "name": "model_fl2va",
+     "type": "MODEL",
+     "link": 22
+    }
+   ],
+   "outputs": [
+    {
+     "name": "video",
+     "type": "VIDEO",
+     "links": [
+      23
+     ]
+    },
+    {
+     "name": "frames",
+     "type": "IMAGE",
+     "links": [
+      41,
+      44
+     ]
+    },
+    {
+     "name": "audio",
+     "type": "AUDIO",
+     "links": [
+      55
+     ]
+    },
+    {
+     "name": "segment_paths",
+     "type": "STRING",
+     "links": []
+    },
+    {
+     "name": "report",
+     "type": "STRING",
+     "links": [
+      24
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "PulseRender"
+   },
+   "widgets_values": [
+    "3.0.0",
+    "auto",
+    "pulseslate_dialogue_hyperflow",
+    "",
+    true,
+    true,
+    true,
+    false,
+    true,
+    "audio+colour",
+    "lock_source",
+    0.35
+   ],
+   "title": "② Pulse Render · lock_source · dry_run ON first"
+  },
+  {
+   "id": 22,
+   "type": "SaveVideo",
+   "pos": [
+    2000,
+    400
+   ],
+   "size": [
+    420,
+    320
+   ],
+   "flags": {},
+   "order": 19,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "video",
+     "type": "VIDEO",
+     "link": 23
+    }
+   ],
+   "outputs": [],
+   "properties": {
+    "Node name for S&R": "SaveVideo"
+   },
+   "widgets_values": [
+    "video/dialogue_hyperflow",
+    "auto",
+    "auto"
+   ]
+  },
+  {
+   "id": 23,
+   "type": "PreviewAny",
+   "pos": [
+    2000,
+    760
+   ],
+   "size": [
+    420,
+    300
+   ],
+   "flags": {},
+   "order": 20,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "source",
+     "type": "*",
+     "link": 24
+    }
+   ],
+   "outputs": [
+    {
+     "name": "STRING",
+     "type": "STRING",
+     "links": []
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "PreviewAny"
+   },
+   "widgets_values": [],
+   "title": "③ report: check both voices bound to @Ada / @Ben"
+  },
+  {
+   "id": 60,
+   "type": "MarkdownNote",
+   "pos": [
+    20,
+    1010
+   ],
+   "size": [
+    840,
+    760
+   ],
+   "flags": {},
+   "order": 31,
+   "mode": 0,
+   "inputs": [],
+   "outputs": [],
+   "properties": {
+    "Node name for S&R": "MarkdownNote"
+   },
+   "widgets_values": [
+    "## 2-character dialogue · MiniMax H3 + HyperFlow 8-step\n\nTwo faces, two voices: each character's identity is bound to its own dialogue track.\n\n**What to swap in**\n- Asset Bin on Pulse Slate: point **Ada** and **Ben** at your two character images and describe each one. Ada must sit on the **left** and Ben on the **right**; every shot's visual keeps that layout.\n- The two LoadAudio nodes: one **full-length track per character**, both the length of the scene, on the same clock, with silence while the other character speaks. Set `duration_seconds` on Pulse Slate to that length (placeholder: 25.92 s = 622 frames = two 311-frame windows) and retime the shots so each one covers its lines.\n\n**How the timing is kept**\n- Each PulseVoice is `lip_sync` on `film_clock` and names its speaker (`@Ada` → S1, `@Ben` → S2), so every window receives exactly its own seconds of each track, and the prompt says whose voice is whose.\n- Pulse Render `audio_mode` is **lock_source**: each window's lip-sync mix is also written into H3's *target* audio latent and held there, so the real waveform drives the mouths at every step instead of only being described to the model. (`reference_only` is the old behaviour; `remix_source` lets the model re-voice it by `remix_strength`.)\n- Pulse Render `use_reference_audio` is **on**, so the finished film carries your recordings, not H3's decode of them. Wire a clean take into a PulseVoice's `final_audio` and that is what gets muxed, at exactly the same seconds, while `audio` keeps driving the mouth.\n\n**Model chain** (replaces TaoMate 3-step on the pruned checkpoint): non-pruned `ref2va` and `fl2va` int8_convrot → **HyperFlow LoRA Loader** → Shift 12/3. Pulse Slate samples with **8 steps · euler · scheduler `hyperflow` · cfg 1.0**; nothing else is valid with HyperFlow. Sparse attention is left out: HyperFlow is validated on dense attention.\n\n**First run:** Pulse Render `dry_run` is **on**. Read the report: two voices bound to @Ada / @Ben, ref2va windows, 8 steps. Then turn dry_run off.\n\n**Lip-sync correction (bypassed).** Only if lock_source still falls short: select the right-hand group and press Ctrl+B. **Pulse Lip-Sync Segment** cuts out one character at a time: only the frames where *their own* recording is audible (plus 0.25 s handles), only their half of the frame (`box`), and only their voice, relabelled 24→25 fps for LatentSync (which assumes 25 fps; without it the mouth drifts ~4 % per second). **Pulse Lip-Sync Paste** writes the corrected frames back at exactly those frames, feathered, and the Ben pass runs on Ada's result. Change the boxes if your characters are framed differently."
+   ],
+   "title": "Read me"
+  },
+  {
+   "id": 50,
+   "type": "PulseLipSyncSegment",
+   "pos": [
+    2480,
+    40
+   ],
+   "size": [
+    320,
+    330
+   ],
+   "flags": {},
+   "order": 22,
+   "mode": 4,
+   "inputs": [
+    {
+     "name": "timeline",
+     "type": "PULSE_TIMELINE",
+     "link": 40
+    },
+    {
+     "name": "images",
+     "type": "IMAGE",
+     "link": 41
+    }
+   ],
+   "outputs": [
+    {
+     "name": "images",
+     "type": "IMAGE",
+     "links": [
+      42
+     ]
+    },
+    {
+     "name": "audio",
+     "type": "AUDIO",
+     "links": [
+      43
+     ]
+    },
+    {
+     "name": "segment",
+     "type": "PULSE_LIPSYNC_SEGMENT",
+     "links": [
+      46
+     ]
+    },
+    {
+     "name": "report",
+     "type": "STRING",
+     "links": []
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "PulseLipSyncSegment"
+   },
+   "widgets_values": [
+    "3.0.0",
+    "@Ada",
+    "final",
+    "box",
+    0.0,
+    0.0,
+    0.5,
+    1.0,
+    0.25,
+    -40.0,
+    25.0
+   ],
+   "title": "Segment · @Ada · left half"
+  },
+  {
+   "id": 54,
+   "type": "LatentSyncNode",
+   "pos": [
+    2820,
+    40
+   ],
+   "size": [
+    300,
+    150
+   ],
+   "flags": {},
+   "order": 23,
+   "mode": 4,
+   "inputs": [
+    {
+     "name": "images",
+     "type": "IMAGE",
+     "link": 42
+    },
+    {
+     "name": "audio",
+     "type": "AUDIO",
+     "link": 43
+    }
+   ],
+   "outputs": [
+    {
+     "name": "images",
+     "type": "IMAGE",
+     "links": [
+      45
+     ]
+    },
+    {
+     "name": "audio",
+     "type": "AUDIO",
+     "links": []
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "LatentSyncNode"
+   },
+   "widgets_values": [
+    1247,
+    1.5,
+    20
+   ],
+   "title": "LatentSync · Ada"
+  },
+  {
+   "id": 56,
+   "type": "PulseLipSyncPaste",
+   "pos": [
+    3160,
+    40
+   ],
+   "size": [
+    300,
+    110
+   ],
+   "flags": {},
+   "order": 24,
+   "mode": 4,
+   "inputs": [
+    {
+     "name": "images",
+     "type": "IMAGE",
+     "link": 44
+    },
+    {
+     "name": "corrected_images",
+     "type": "IMAGE",
+     "link": 45
+    },
+    {
+     "name": "segment",
+     "type": "PULSE_LIPSYNC_SEGMENT",
+     "link": 46
+    }
+   ],
+   "outputs": [
+    {
+     "name": "images",
+     "type": "IMAGE",
+     "links": [
+      48,
+      51
+     ]
+    },
+    {
+     "name": "report",
+     "type": "STRING",
+     "links": []
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "PulseLipSyncPaste"
+   },
+   "widgets_values": [
+    "3.0.0",
+    12
+   ],
+   "title": "Paste · @Ada"
+  },
+  {
+   "id": 51,
+   "type": "PulseLipSyncSegment",
+   "pos": [
+    2480,
+    400
+   ],
+   "size": [
+    320,
+    330
+   ],
+   "flags": {},
+   "order": 25,
+   "mode": 4,
+   "inputs": [
+    {
+     "name": "timeline",
+     "type": "PULSE_TIMELINE",
+     "link": 47
+    },
+    {
+     "name": "images",
+     "type": "IMAGE",
+     "link": 48
+    }
+   ],
+   "outputs": [
+    {
+     "name": "images",
+     "type": "IMAGE",
+     "links": [
+      49
+     ]
+    },
+    {
+     "name": "audio",
+     "type": "AUDIO",
+     "links": [
+      50
+     ]
+    },
+    {
+     "name": "segment",
+     "type": "PULSE_LIPSYNC_SEGMENT",
+     "links": [
+      53
+     ]
+    },
+    {
+     "name": "report",
+     "type": "STRING",
+     "links": []
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "PulseLipSyncSegment"
+   },
+   "widgets_values": [
+    "3.0.0",
+    "@Ben",
+    "final",
+    "box",
+    0.5,
+    0.0,
+    0.5,
+    1.0,
+    0.25,
+    -40.0,
+    25.0
+   ],
+   "title": "Segment · @Ben · right half"
+  },
+  {
+   "id": 55,
+   "type": "LatentSyncNode",
+   "pos": [
+    2820,
+    400
+   ],
+   "size": [
+    300,
+    150
+   ],
+   "flags": {},
+   "order": 26,
+   "mode": 4,
+   "inputs": [
+    {
+     "name": "images",
+     "type": "IMAGE",
+     "link": 49
+    },
+    {
+     "name": "audio",
+     "type": "AUDIO",
+     "link": 50
+    }
+   ],
+   "outputs": [
+    {
+     "name": "images",
+     "type": "IMAGE",
+     "links": [
+      52
+     ]
+    },
+    {
+     "name": "audio",
+     "type": "AUDIO",
+     "links": []
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "LatentSyncNode"
+   },
+   "widgets_values": [
+    1247,
+    1.5,
+    20
+   ],
+   "title": "LatentSync · Ben"
+  },
+  {
+   "id": 57,
+   "type": "PulseLipSyncPaste",
+   "pos": [
+    3160,
+    400
+   ],
+   "size": [
+    300,
+    110
+   ],
+   "flags": {},
+   "order": 27,
+   "mode": 4,
+   "inputs": [
+    {
+     "name": "images",
+     "type": "IMAGE",
+     "link": 51
+    },
+    {
+     "name": "corrected_images",
+     "type": "IMAGE",
+     "link": 52
+    },
+    {
+     "name": "segment",
+     "type": "PULSE_LIPSYNC_SEGMENT",
+     "link": 53
+    }
+   ],
+   "outputs": [
+    {
+     "name": "images",
+     "type": "IMAGE",
+     "links": [
+      54
+     ]
+    },
+    {
+     "name": "report",
+     "type": "STRING",
+     "links": []
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "PulseLipSyncPaste"
+   },
+   "widgets_values": [
+    "3.0.0",
+    12
+   ],
+   "title": "Paste · @Ben"
+  },
+  {
+   "id": 58,
+   "type": "CreateVideo",
+   "pos": [
+    3160,
+    560
+   ],
+   "size": [
+    300,
+    100
+   ],
+   "flags": {},
+   "order": 28,
+   "mode": 4,
+   "inputs": [
+    {
+     "name": "images",
+     "type": "IMAGE",
+     "link": 54
+    },
+    {
+     "name": "audio",
+     "type": "AUDIO",
+     "link": 55
+    }
+   ],
+   "outputs": [
+    {
+     "name": "VIDEO",
+     "type": "VIDEO",
+     "links": [
+      56
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "CreateVideo"
+   },
+   "widgets_values": [
+    24,
+    8,
+    "sRGB",
+    "none"
+   ],
+   "title": "24 fps under the exact takes"
+  },
+  {
+   "id": 59,
+   "type": "SaveVideo",
+   "pos": [
+    3160,
+    700
+   ],
+   "size": [
+    320,
+    160
+   ],
+   "flags": {},
+   "order": 29,
+   "mode": 4,
+   "inputs": [
+    {
+     "name": "video",
+     "type": "VIDEO",
+     "link": 56
+    }
+   ],
+   "outputs": [],
+   "properties": {
+    "Node name for S&R": "SaveVideo"
+   },
+   "widgets_values": [
+    "video/dialogue_hyperflow_lipsync",
+    "auto",
+    "auto"
+   ]
+  }
+ ],
+ "links": [
+  [
+   1,
+   10,
+   0,
+   15,
+   0,
+   "MODEL"
+  ],
+  [
+   2,
+   11,
+   0,
+   16,
+   0,
+   "MODEL"
+  ],
+  [
+   3,
+   15,
+   0,
+   17,
+   0,
+   "MODEL"
+  ],
+  [
+   4,
+   16,
+   0,
+   18,
+   0,
+   "MODEL"
+  ],
+  [
+   5,
+   30,
+   0,
+   32,
+   0,
+   "AUDIO"
+  ],
+  [
+   6,
+   31,
+   0,
+   33,
+   0,
+   "AUDIO"
+  ],
+  [
+   7,
+   17,
+   0,
+   20,
+   0,
+   "MODEL"
+  ],
+  [
+   8,
+   12,
+   0,
+   20,
+   1,
+   "CLIP"
+  ],
+  [
+   9,
+   13,
+   0,
+   20,
+   2,
+   "VAE"
+  ],
+  [
+   10,
+   14,
+   0,
+   20,
+   3,
+   "VAE"
+  ],
+  [
+   11,
+   18,
+   0,
+   20,
+   4,
+   "MODEL"
+  ],
+  [
+   12,
+   40,
+   0,
+   20,
+   9,
+   "PULSE_SHOT"
+  ],
+  [
+   13,
+   41,
+   0,
+   20,
+   10,
+   "PULSE_SHOT"
+  ],
+  [
+   14,
+   42,
+   0,
+   20,
+   11,
+   "PULSE_SHOT"
+  ],
+  [
+   15,
+   43,
+   0,
+   20,
+   12,
+   "PULSE_SHOT"
+  ],
+  [
+   16,
+   32,
+   0,
+   20,
+   14,
+   "PULSE_VOICE"
+  ],
+  [
+   17,
+   33,
+   0,
+   20,
+   15,
+   "PULSE_VOICE"
+  ],
+  [
+   18,
+   20,
+   0,
+   21,
+   0,
+   "PULSE_TIMELINE"
+  ],
+  [
+   19,
+   17,
+   0,
+   21,
+   1,
+   "MODEL"
+  ],
+  [
+   20,
+   13,
+   0,
+   21,
+   2,
+   "VAE"
+  ],
+  [
+   21,
+   14,
+   0,
+   21,
+   3,
+   "VAE"
+  ],
+  [
+   22,
+   18,
+   0,
+   21,
+   4,
+   "MODEL"
+  ],
+  [
+   23,
+   21,
+   0,
+   22,
+   0,
+   "VIDEO"
+  ],
+  [
+   24,
+   21,
+   4,
+   23,
+   0,
+   "STRING"
+  ],
+  [
+   40,
+   20,
+   0,
+   50,
+   0,
+   "PULSE_TIMELINE"
+  ],
+  [
+   41,
+   21,
+   1,
+   50,
+   1,
+   "IMAGE"
+  ],
+  [
+   42,
+   50,
+   0,
+   54,
+   0,
+   "IMAGE"
+  ],
+  [
+   43,
+   50,
+   1,
+   54,
+   1,
+   "AUDIO"
+  ],
+  [
+   44,
+   21,
+   1,
+   56,
+   0,
+   "IMAGE"
+  ],
+  [
+   45,
+   54,
+   0,
+   56,
+   1,
+   "IMAGE"
+  ],
+  [
+   46,
+   50,
+   2,
+   56,
+   2,
+   "PULSE_LIPSYNC_SEGMENT"
+  ],
+  [
+   47,
+   20,
+   0,
+   51,
+   0,
+   "PULSE_TIMELINE"
+  ],
+  [
+   48,
+   56,
+   0,
+   51,
+   1,
+   "IMAGE"
+  ],
+  [
+   49,
+   51,
+   0,
+   55,
+   0,
+   "IMAGE"
+  ],
+  [
+   50,
+   51,
+   1,
+   55,
+   1,
+   "AUDIO"
+  ],
+  [
+   51,
+   56,
+   0,
+   57,
+   0,
+   "IMAGE"
+  ],
+  [
+   52,
+   55,
+   0,
+   57,
+   1,
+   "IMAGE"
+  ],
+  [
+   53,
+   51,
+   2,
+   57,
+   2,
+   "PULSE_LIPSYNC_SEGMENT"
+  ],
+  [
+   54,
+   57,
+   0,
+   58,
+   0,
+   "IMAGE"
+  ],
+  [
+   55,
+   21,
+   2,
+   58,
+   1,
+   "AUDIO"
+  ],
+  [
+   56,
+   58,
+   0,
+   59,
+   0,
+   "VIDEO"
+  ]
+ ],
+ "groups": [
+  {
+   "id": 1,
+   "title": "LOADERS + HyperFlow (both checkpoints)",
+   "bounding": [
+    0,
+    0,
+    460,
+    1000
+   ],
+   "color": "#a1309b",
+   "flags": {}
+  },
+  {
+   "id": 2,
+   "title": "VOICES · one track per character",
+   "bounding": [
+    460,
+    0,
+    400,
+    920
+   ],
+   "color": "#3f789e",
+   "flags": {}
+  },
+  {
+   "id": 3,
+   "title": "SHOTS · Ada left, Ben right",
+   "bounding": [
+    860,
+    0,
+    440,
+    1380
+   ],
+   "color": "#3f789e",
+   "flags": {}
+  },
+  {
+   "id": 4,
+   "title": "① COMPILE",
+   "bounding": [
+    1300,
+    0,
+    680,
+    1560
+   ],
+   "color": "#3f789e",
+   "flags": {}
+  },
+  {
+   "id": 5,
+   "title": "② RENDER",
+   "bounding": [
+    1980,
+    0,
+    460,
+    1080
+   ],
+   "color": "#88A",
+   "flags": {}
+  },
+  {
+   "id": 6,
+   "title": "OPTIONAL · per-character lip-sync correction (Ctrl+B to enable)",
+   "bounding": [
+    2460,
+    0,
+    1040,
+    900
+   ],
+   "color": "#8A5A9E",
+   "flags": {}
+  }
+ ],
+ "config": {},
+ "extra": {
+  "ds": {
+   "scale": 0.55,
+   "offset": [
+    0,
+    0
+   ]
+  }
+ },
+ "version": 0.4
+}

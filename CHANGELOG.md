@@ -4,6 +4,48 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+### A recording can drive the mouth, not just describe the voice
+
+A `lip_sync` recording has always entered H3 as a *reference* block: the model
+reads it and re-synthesises a track of its own for the target rows. On a
+two-hander that is where lip sync goes soft. The mouth follows the model's
+re-voicing of the take rather than the take itself.
+
+`PulseRender.audio_mode` adds `lock_source`. It writes each window's lip-sync mix
+(`render.window_voice_mix`, the per-window half of what `reference_audio_track`
+always built) into the **target** audio latent, and masks it at 0 with a nested
+`noise_mask`. H3 labels those rows with its conditioning timestep, so the sampler
+never regenerates them, and HyperFlow pins them (`r = t`) like any other anchor.
+`remix_source` masks at `remix_strength` instead.
+
+The default is `reference_only`, so **no existing render changes**. The mode
+enters `cache_key_material` only when it is something else, and only on a window
+that carries a lip-sync recording, so every key already on disk stays where it is.
+
+### A take for the mouth and a take for the film
+
+`PulseVoice.final_audio` is an optional clean take. `audio` drives the mouth, and
+`final_audio` is what `use_reference_audio` muxes, with the same trim at the same
+seconds. It is kept in a side-channel slot beside the drive recording
+(`VOICE_FINAL_SUFFIX`) and is in no cache key, because nothing that conditions the
+model reads it.
+
+### Correcting one character at a time
+
+`PulseLipSyncSegment` and `PulseLipSyncPaste` give a lip-sync model one character
+at a time. Segment cuts only the frames where that character's own recordings are
+audible and, in a two-shot, only their face region, together with only their
+recording (relabelled for 25 fps). Paste writes the result back where it came from.
+
+Handles reach into silence only. They stop where anyone else is audible, so a
+0.25 s handle at a cut between two speakers cannot close the other one's mouth for
+six frames. `comfyui_pulse_studio/lipsync.py` holds the span arithmetic, headless.
+The dialogue example's hand-cropped halves-of-the-frame chain is replaced by these
+two nodes.
+
+The drive/final pattern follows T8mars/comfyui-minimax-h3-audio-T8 (GPL-3.0),
+which was consulted for the idea only. No code from it is here.
+
 ### A recording says where on the film clock it starts
 
 `PulseVoice` is a new node: one recording, plus what it is for, whose it is, and

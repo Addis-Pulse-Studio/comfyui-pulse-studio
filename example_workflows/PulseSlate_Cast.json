@@ -780,7 +780,9 @@
         false,
         false,
         false,
-        "audio+colour"
+        "audio+colour",
+        "reference_only",
+        0.35
       ],
       "title": "② Pulse Render · execute"
     },
