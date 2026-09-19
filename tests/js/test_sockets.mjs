@@ -122,6 +122,88 @@ test("connection changes are deferred a tick", () => {
             "sync must not run synchronously inside onConnectionsChange");
 });
 
+// ── sync() against frontend 1.53's graph, end to end ─────────────────────────
+// The real module, with ComfyUI's app import stubbed out. Frontend 1.53 keeps
+// graph.links as a Map and gives every widget an input slot of its own; a saved
+// wire is resolved by the slot number on its link. A sync that could not find
+// the links in that Map left every shot wire pointing at its old slot number,
+// which by then held global_prompt, shot_prompt, duration_seconds, aspect_ratio
+// and width -- the exact validation error a 6-shot PulseSlate graph produced.
+globalThis.LiteGraph = { HollowCircle: 7 };
+const moduleSource = SOURCE
+  .replace(/import \{ app \} from "[^"]+";/, "const app = { registerExtension() {} };");
+const sockets = await import("data:text/javascript;base64," +
+                             Buffer.from(moduleSource).toString("base64"));
+
+const FIXED = ["model", "clip", "vae", "audio_vae", "model_fl2va", "ref_video",
+               "ref_video_audio", "ref_music"];
+const WIDGETS = ["global_prompt", "shot_prompt", "duration_seconds", "aspect_ratio", "width"];
+
+function slateNode(inputs, links) {
+  return { comfyClass: "PulseSlate", id: 20, inputs, graph: { links } };
+}
+
+test("linkById reads a Map (frontend 1.53) and a plain object (older builds)", () => {
+  const link = { id: 5 };
+  assert.equal(sockets.linkById(new Map([[5, link]]), 5), link);
+  assert.equal(sockets.linkById({ 5: link }, 5), link);
+  assert.equal(sockets.linkById(new Map(), 5), undefined);
+});
+
+test("six shot wires stay on the shot sockets after a sync on a 1.53 graph", () => {
+  // The creation-time layout frontend 1.53 leaves behind: widget slots sit ahead
+  // of the growing groups, and every wire still carries its saved slot number.
+  const links = new Map();
+  const inputs = FIXED.map((name) => ({ name, type: "*", link: null }));
+  for (const name of WIDGETS) inputs.push({ name, type: "STRING", link: null, widget: { name } });
+  inputs.push({ name: "refs.ref_image_1", type: "IMAGE", link: null });
+  for (let k = 1; k <= 6; k++) {
+    const id = 32 + k;
+    inputs.push({ name: `shots.shot_${k}`, type: "PULSE_SHOT", link: id });
+    links.set(id, { id, type: "PULSE_SHOT", target_id: 20, target_slot: 8 + k });
+  }
+  inputs.push({ name: "voices.voice_1", type: "PULSE_VOICE", link: null });
+  const node = slateNode(inputs, links);
+
+  sockets.sync(node);
+
+  for (const [id, link] of links) {
+    const target = node.inputs[link.target_slot];
+    assert.equal(target.link, id, `link ${id} points at slot ${link.target_slot}`);
+    assert.ok(target.name.startsWith("shots.shot_"),
+              `link ${id} landed on ${target.name}, not a shot socket`);
+  }
+  // The shot sockets come before the widget inputs, where the saved graph has them.
+  assert.deepEqual(node.inputs.slice(8, 16).map((i) => i.name),
+                   ["refs.ref_image_1", "shots.shot_1", "shots.shot_2", "shots.shot_3",
+                    "shots.shot_4", "shots.shot_5", "shots.shot_6", "shots.shot_7"]);
+  for (const name of WIDGETS) {
+    const widget = node.inputs.find((i) => i.name === name);
+    assert.equal(widget.link, null, `${name} must stay a widget, not a socket with a wire`);
+  }
+});
+
+test("a saved layout laid over the default one keeps one of each socket", () => {
+  // LiteGraph.configure copies the saved inputs over the creation-time array
+  // index by index, so a shorter saved array leaves the default tail behind.
+  const links = new Map([[40, { id: 40, target_id: 20, target_slot: 9 }]]);
+  const inputs = [
+    ...FIXED.map((name) => ({ name, type: "*", link: null })),
+    { name: "refs.ref_image_1", type: "IMAGE", link: null },
+    { name: "shots.shot_1", type: "PULSE_SHOT", link: 40 },
+    { name: "shots.shot_2", type: "PULSE_SHOT", link: null },
+    { name: "global_prompt", type: "STRING", link: null, widget: { name: "global_prompt" } },
+    { name: "shots.shot_1", type: "PULSE_SHOT", link: null },
+    { name: "global_prompt", type: "STRING", link: null, widget: { name: "global_prompt" } },
+  ];
+  const node = slateNode(inputs, links);
+  sockets.sync(node);
+  const names = node.inputs.map((i) => i.name);
+  assert.equal(names.filter((n) => n === "shots.shot_1").length, 1);
+  assert.equal(names.filter((n) => n === "global_prompt").length, 1);
+  assert.equal(node.inputs[links.get(40).target_slot].name, "shots.shot_1");
+});
+
 if (failures) {
   console.error(`\n${failures} JS socket test(s) failed:\n`);
   process.exit(1);
