@@ -96,6 +96,42 @@ function labelFor(name) {
 }
 
 /**
+ * The link object for an id, on any frontend. LiteGraph used to keep
+ * `graph.links` as a plain object keyed by id; frontend 1.53 keeps a Map. Read
+ * it the old way on a Map and every lookup is `undefined` -- which is how a
+ * rebuild used to leave each wire pointing at its old slot number, and the
+ * frontend, which resolves a wire by slot number, then delivered PULSE_SHOT to
+ * whatever widget input had moved into that slot.
+ */
+export function linkById(links, id) {
+  if (links == null || id == null) return undefined;
+  if (typeof links.get === "function") return links.get(id) ?? links.get(Number(id));
+  return links[id];
+}
+
+/**
+ * Where each socket goes. Plain connection sockets first, then the growing
+ * groups, then the widget inputs frontend 1.53 gives every widget -- the order
+ * the frontend itself creates them in, and the layout every shipped graph
+ * saves, so a saved slot number means the same socket on every build. Duplicate
+ * names (a saved array laid over the node's default one leaves copies behind)
+ * keep one entry, preferring the one that carries a wire.
+ */
+export function orderInputs(fixed, rebuilt) {
+  const seen = new Map();
+  for (const input of fixed) {
+    const key = input?.name;
+    if (key == null) continue;
+    const kept = seen.get(key);
+    if (!kept || (kept.link == null && input.link != null)) seen.set(key, input);
+  }
+  const unique = fixed.filter((input) => input?.name == null || seen.get(input.name) === input);
+  const sockets = unique.filter((input) => !input?.widget);
+  const widgets = unique.filter((input) => input?.widget);
+  return [...sockets, ...rebuilt, ...widgets];
+}
+
+/**
  * Rebuild a node's dynamic socket tail. Safe to call at any time.
  */
 export function sync(node) {
@@ -132,7 +168,7 @@ export function sync(node) {
                ? { tooltip: options.tooltip } : {}) };
   });
 
-  const next = [...fixed, ...rebuilt];
+  const next = orderInputs(fixed, rebuilt);
   const unchanged = next.length === inputs.length
     && next.every((input, i) => input === inputs[i]);
   if (unchanged) return;
@@ -145,7 +181,7 @@ export function sync(node) {
   if (graph?.links) {
     node.inputs.forEach((input, slot) => {
       if (input.link == null) return;
-      const link = graph.links[input.link];
+      const link = linkById(graph.links, input.link);
       if (link) {
         link.target_id = node.id;
         link.target_slot = slot;
