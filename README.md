@@ -664,6 +664,12 @@ On a shot carrying both, `voice` wins over `ref_audio` and the report says so.
 into the finished film, each placed at its own offset — not just the first one it
 finds, which is what a two-hander used to lose a character to.
 
+An optional **`final_audio`** socket takes a clean take for the finished film, such
+as a dry stem or an unprocessed master. `audio` still drives the mouth. When
+`use_reference_audio` is on, `final_audio` is what gets muxed, with the same trim
+and at the same seconds. The two must line up sample for sample, and the report
+says so when their lengths differ.
+
 `example_workflows/PulseSlate_Voice.json` is the whole thing in one graph.
 
 ### Pulse Render
@@ -694,10 +700,45 @@ Executes a `PULSE_TIMELINE`, reusing every window already on disk. See
   already encoded, so only one side of that seam can move — and the report says so
   rather than quietly doing half the job.
 
+- `audio_mode` sets what a `lip_sync` recording does to the window it rides in.
+  - `reference_only` is the default and matches every render before this widget
+    existed. The recording is a reference block that the model reads and
+    re-voices.
+  - `lock_source` also writes the window's lip-sync mix into the *target* audio
+    latent and masks it at 0. The real waveform then drives the mouth at every
+    step, and H3 never regenerates it. Pair it with `use_reference_audio` to put
+    the exact takes in the film; the report warns if you don't.
+  - `remix_source` re-noises the locked mix to `remix_strength`. HyperFlow wasn't
+    trained on partly masked rows, so use `lock_source` with it.
+
+  The mode reaches the cache key only when it isn't `reference_only`, and only on
+  windows that carry a lip-sync recording. Every key already on disk stays put.
+
 Every approximation patched onto the incoming model is detected and folded into
 the cache key. Sol-Attn, Spectrum and EasyCache all change what the same prompt at
 the same seed produces, and a cache that ignored them would hand you a film whose
 shots were rendered at different sparsities without saying so.
+
+### Pulse Lip-Sync Segment / Pulse Lip-Sync Paste
+
+Per-character correction for when `lock_source` isn't enough, such as a fast line,
+a profile, or a small face. A lip-sync model (LatentSync and the like) run over the
+whole film with the whole mix repaints whatever face it finds to whoever is
+talking. The second character's lines then land on the first character's mouth.
+
+**Segment** hands the model one character. It takes the timeline, Pulse Render's
+`frames` and an `@Name`:
+- It finds that character's voices: a PulseVoice whose `speaker` names them, or a
+  voice wired to a shot they speak in.
+- It keeps only the frames where their own recording is audible (`threshold_db`),
+  plus `handle_seconds`. A handle stops where another character becomes audible,
+  so it never repaints their mouth at a cut.
+- With `region = box`, it keeps only their face region, for a two-shot.
+- It cuts only their recording, relabelled 24 → 25 fps for LatentSync.
+
+**Paste** writes the result back at exactly those frames and that region, with a
+feathered edge. Chain one pair per character.
+`example_workflows/PulseSlate_Dialogue_HyperFlow.json` ships the chain bypassed.
 
 ### Pulse Bench
 

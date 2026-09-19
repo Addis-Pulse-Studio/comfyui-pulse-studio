@@ -45,11 +45,14 @@ from .comfyui_pulse_studio.bench import format_table, group_by_fingerprint, load
 from .comfyui_pulse_studio.canvas import ASPECT_OPTIONS, ASPECT_RATIOS, resolution_for
 from .comfyui_pulse_studio.compiler import CarryPolicy, compile_timeline
 from .comfyui_pulse_studio.constants import (
+    AUDIO_MODE_REFERENCE,
+    AUDIO_MODES,
     AUDIO_ROLE_LIP_SYNC,
     AUDIO_ROLE_TIMBRE,
     AUDIO_ROLES,
     BRANCH_FL2VA,
     DEFAULT_AUDIO_CARRY_SECONDS,
+    DEFAULT_REMIX_STRENGTH,
     FPS,
     MAX_REF_AUDIOS,
     MAX_REF_AUDIOS_CEILING,
@@ -61,12 +64,14 @@ from .comfyui_pulse_studio.constants import (
     SCHEMA_VERSION,
     SEAM_DEFAULT,
     SEAM_MODES,
+    VOICE_FINAL_SUFFIX,
 )
 from .comfyui_pulse_studio.fingerprint import (
     describe_model_patches,
     patch_fingerprint,
     patch_warnings,
 )
+from .comfyui_pulse_studio import lipsync
 from .comfyui_pulse_studio.frames import POLICIES
 from .comfyui_pulse_studio.patches import check_model_patches, check_single_checkpoint
 from .comfyui_pulse_studio.pulse_timeline import (
@@ -173,7 +178,9 @@ def _report_patches(model, unique_id, branches_used=(), fl2va_connected=False):
 
 
 SAMPLERS = ["res_multistep", "euler", "euler_ancestral", "dpmpp_2m", "dpmpp_2m_sde", "ddim"]
-SCHEDULERS = ["simple", "normal", "beta", "sgm_uniform", "karras", "exponential"]
+# "hyperflow" is HyperFlow's fixed 8-step grid (steps must be 8, sampler euler, cfg 1.0). It is registered in
+# ComfyUI's scheduler table by the ComfyUI-HyperFlow pack; without that pack, render.sample() says so by name.
+SCHEDULERS = ["simple", "normal", "beta", "sgm_uniform", "karras", "exponential", "hyperflow"]
 RESIZE_METHODS = ["crop", "pad", "stretch"]
 
 # ASPECT_RATIOS, ASPECT_OPTIONS and resolution_for moved to
@@ -298,6 +305,13 @@ class PulseVoice:
                 "audio": ("AUDIO", {"tooltip":
                     "The recording. Without it this node describes nothing and is "
                     "ignored, with a note saying so."}),
+                # Appended after `audio`, never before it: an optional input's link
+                # endpoint is positional in a saved node.
+                "final_audio": ("AUDIO", {"tooltip":
+                    "Optional clean take for the finished film -- a dry stem, an "
+                    "unprocessed master. `audio` still drives the mouth; this is "
+                    "what PulseRender muxes when use_reference_audio is on. It must "
+                    "line up with `audio` sample for sample, and gets the same trim."}),
             },
             "hidden": HIDDEN_INPUTS,
         }
@@ -312,7 +326,7 @@ class PulseVoice:
 
     def execute(self, schema_version, name, role, aligns_to, offset_seconds,
                 trim_start, trim_end, speaker, description, audio=None,
-                unique_id=None, **kwargs):
+                final_audio=None, unique_id=None, **kwargs):
         return ({
             "name": (name or "").strip() or "Voice",
             "role": role or AUDIO_ROLE_LIP_SYNC,
@@ -327,6 +341,7 @@ class PulseVoice:
             "speaker": (speaker or "").strip(),
             "description": (description or "").strip(),
             "audio": audio,
+            "final_audio": final_audio,
         },)
 
 
@@ -824,7 +839,7 @@ def _voice_asset(payload, slot, name, base_seconds=0.0):
     feature turns on -- it is what the executor subtracts to convert a window's
     film-clock start into this recording's own.
 
-    Returns (asset, tensor, notes). The tensor is the *trimmed* recording, not the
+    Returns (asset, tensor, notes, final). The tensor is the *trimmed* recording, not the
     one on the socket: a trim asked for on a socket-borne clip has nowhere else to
     happen -- `media.load_audio` only ever trimmed a file on disk -- and storing
     the trimmed one keeps the offset, the measured length and the muxed track all
@@ -836,7 +851,7 @@ def _voice_asset(payload, slot, name, base_seconds=0.0):
     audio = payload.get("audio")
     if audio is None:
         return None, None, ["voice %r has nothing connected to its `audio` input, so "
-                            "it describes no recording and was ignored." % (name,)]
+                            "it describes no recording and was ignored." % (name,)], None
 
     notes = []
     aligns_to = payload.get("aligns_to") or VOICE_ALIGN_FILM
@@ -855,6 +870,20 @@ def _voice_asset(payload, slot, name, base_seconds=0.0):
     if trim_note:
         notes.append("voice %r: %s" % (name, trim_note))
 
+    # The clean take gets the drive recording's trim, so the two keep describing
+    # the same seconds -- the whole contract of having two of them.
+    final = payload.get("final_audio")
+    if final is not None:
+        final, _ = media.audio_trim(
+            final, payload.get("trim_start"), payload.get("trim_end"))
+        drive_seconds = media.audio_length_seconds(audio) or 0.0
+        final_seconds = media.audio_length_seconds(final) or 0.0
+        if abs(drive_seconds - final_seconds) > 1.0 / FPS:
+            notes.append(
+                "voice %r: final_audio is %.2fs and audio is %.2fs. They are placed "
+                "at the same start, so the film's track and the mouth drift apart "
+                "wherever the two recordings differ." % (name, final_seconds, drive_seconds))
+
     asset = Asset(
         socket_asset_id(slot), KIND_AUDIO, name=name, file="",
         description=payload.get("description") or "",
@@ -865,7 +894,7 @@ def _voice_asset(payload, slot, name, base_seconds=0.0):
         # before the film does" instead of the render coming back quietly silent.
         # Measured *after* the trim, because the trim is what the window sees.
         source_seconds=media.audio_length_seconds(audio))
-    return asset, audio, notes
+    return asset, audio, notes, final
 
 
 def _attach_global_refs(timeline, side, kwargs, ref_video, ref_video_audio, ref_music,
@@ -916,8 +945,8 @@ def _attach_global_refs(timeline, side, kwargs, ref_video, ref_video_audio, ref_
     for i, payload in voices:
         name = timeline.assets.unique_name(payload.get("name") or "Voice", KIND_AUDIO)
         slot = "slate.voice_%d" % i
-        asset, tensor, voice_notes = _voice_asset(payload, slot, name,
-                                                  base_seconds=None)
+        asset, tensor, voice_notes, final = _voice_asset(payload, slot, name,
+                                                         base_seconds=None)
         notes.extend(voice_notes)
         if asset is None:
             continue
@@ -928,6 +957,8 @@ def _attach_global_refs(timeline, side, kwargs, ref_video, ref_video_audio, ref_
             continue
         timeline.assets.add(asset, limits=timeline.limits)
         side.put(slot, tensor, digest=media.audio_digest(tensor))
+        if final is not None:
+            side.put(slot + VOICE_FINAL_SUFFIX, final)
         if payload.get("speaker"):
             pending_owners.append((asset, payload["speaker"], name))
 
@@ -1024,13 +1055,15 @@ def _apply_shot_nodes(timeline, side, payloads, project_continuity):
             # the seconds it expects or a span of silence.
             audio_connected = True
             slot = "shot.%s.voice" % shot_id
-            asset, tensor, voice_notes = _voice_asset(
+            asset, tensor, voice_notes, final = _voice_asset(
                 voice, slot, voice.get("name") or "Voice",
                 base_seconds=shots[-1].start)
             notes.extend(voice_notes)
             if asset is not None:
                 local.append(asset)
                 side.put(slot, tensor, digest=media.audio_digest(tensor))
+                if final is not None:
+                    side.put(slot + VOICE_FINAL_SUFFIX, final)
                 if voice.get("speaker") and not payload.get("speaker"):
                     # A voice naming its owner speaks for the shot it is wired to:
                     # `_bind_speakers` resolves the shot's own field against the
@@ -1497,6 +1530,22 @@ class PulseRender:
                     "seam.\n\n"
                     "'off' is there so you can A/B it -- colour matching occasionally "
                     "makes things worse."}),
+                "audio_mode": (list(AUDIO_MODES), {"default": AUDIO_MODE_REFERENCE,
+                                                   "tooltip":
+                    "What a lip_sync recording does to the window it rides in. "
+                    "'reference_only': a reference block the model reads and "
+                    "re-voices -- what every render before this widget did. "
+                    "'lock_source': the window's lip-sync mix is also written into the "
+                    "target audio latent and held there, so the mouth is driven by the "
+                    "real waveform at every step. 'remix_source': the same, re-noised "
+                    "to remix_strength. Pair lock_source with use_reference_audio to "
+                    "put the exact takes in the film."}),
+                "remix_strength": ("FLOAT", {"default": DEFAULT_REMIX_STRENGTH,
+                                             "min": 0.0, "max": 1.0, "step": 0.01,
+                                             "tooltip":
+                    "remix_source only: how far the recording is re-noised. 0 is "
+                    "lock_source. HyperFlow was not trained on partly masked rows; "
+                    "lock_source is the mode to use with it."}),
                 # ── append new widgets HERE, at the end, and nowhere else ────
             },
             "optional": {
@@ -1518,6 +1567,7 @@ class PulseRender:
     def execute(self, timeline, model, vae, audio_vae, schema_version, cache_mode,
                 run_dir, run_id, save_segments, low_memory, dry_run, prune_unused,
                 use_reference_audio=False, seam_treatment=SEAM_DEFAULT,
+                audio_mode=AUDIO_MODE_REFERENCE, remix_strength=DEFAULT_REMIX_STRENGTH,
                 model_fl2va=None, unique_id=None, prompt=None):
         document, side = _unwrap_timeline(timeline)
         if document is None:
@@ -1530,7 +1580,8 @@ class PulseRender:
             cache_mode=cache_mode, run_dir=run_dir, run_id=run_id,
             save_segments=save_segments, low_memory=low_memory, dry_run=dry_run,
             prune_unused=prune_unused, use_reference_audio=use_reference_audio,
-            seam_treatment=seam_treatment,
+            seam_treatment=seam_treatment, audio_mode=audio_mode,
+            remix_strength=remix_strength,
             # §8: never assemble a frame stack nobody asked for.
             want_frames=render.output_is_connected(prompt, unique_id, 1))
 
@@ -1882,6 +1933,174 @@ class PulseStill:
         return (images[index:index + 1], repr(plan))
 
 
+# ── Per-character lip-sync correction ──────────────────────────────────────
+
+class PulseLipSyncSegment:
+    """One character's frames and voice, cut out for a lip-sync pass.
+
+    `lock_source` is usually enough. When it is not -- a fast line, a profile, a
+    face small in frame -- the fix is a lip-sync model run over the result. Run
+    over the whole film with the whole mix, that model repaints whatever face it
+    finds to whoever is speaking, so a second character's lines land on the first
+    character's mouth. This node hands it one character: only the seconds their
+    own recording is audible, only their face region if the shot holds two, and
+    only their recording. `PulseLipSyncPaste` puts the result back.
+    """
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "timeline": ("PULSE_TIMELINE", {"tooltip":
+                    "The Pulse Slate timeline the film was rendered from. It says "
+                    "which recordings belong to which character."}),
+                "images": ("IMAGE", {"tooltip": "Pulse Render's `frames` output."}),
+
+                "schema_version": schema_widget(),
+
+                "speaker": ("STRING", {"default": "@Speaker", "multiline": False,
+                                       "tooltip":
+                    "The character to correct, as the @Name the Asset Bin shows for "
+                    "their face. Their voices are the ones whose PulseVoice `speaker` "
+                    "names them, and the ones wired to shots they speak in."}),
+                "audio_source": (["final", "drive"], {"default": "final", "tooltip":
+                    "Which recording the lip-sync model hears: each PulseVoice's "
+                    "final_audio where it has one, or the recording that drove H3."}),
+                "region": (["full_frame", "box"], {"default": "full_frame", "tooltip":
+                    "'box' crops to this character's face region, for a two-shot -- "
+                    "the lip-sync model then only sees the one face."}),
+                "box_x": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.01}),
+                "box_y": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.01}),
+                "box_w": ("FLOAT", {"default": 1.0, "min": 0.01, "max": 1.0, "step": 0.01}),
+                "box_h": ("FLOAT", {"default": 1.0, "min": 0.01, "max": 1.0, "step": 0.01}),
+                "handle_seconds": ("FLOAT", {"default": 0.25, "min": 0.0, "max": 5.0,
+                                             "step": 0.01, "tooltip":
+                    "Extra frames either side of every line, so the mouth has room to "
+                    "open and close. A handle stops where another character is "
+                    "audible, so it never repaints their mouth."}),
+                "threshold_db": ("FLOAT", {"default": lipsync.DEFAULT_THRESHOLD_DB,
+                                           "min": -90.0, "max": 0.0, "step": 1.0,
+                                           "tooltip":
+                    "A recording louder than this is speaking. Raise it if room tone "
+                    "reads as speech; lower it for a quiet take."}),
+                "lipsync_fps": ("FLOAT", {"default": 25.0, "min": 1.0, "max": 240.0,
+                                          "step": 0.001, "tooltip":
+                    "The frame rate the lip-sync model assumes. LatentSync writes 25 "
+                    "fps, so the audio is relabelled 24 -> 25 (no resampling) and every "
+                    "mouth shape stays on its frame. 24 leaves it alone."}),
+                # ── append new widgets HERE, at the end, and nowhere else ────
+            },
+            "hidden": HIDDEN_INPUTS,
+        }
+
+    RETURN_TYPES = ("IMAGE", "AUDIO", "PULSE_LIPSYNC_SEGMENT", "STRING")
+    RETURN_NAMES = ("images", "audio", "segment", "report")
+    FUNCTION = "execute"
+    CATEGORY = "AddisPulse/H3"
+    DESCRIPTION = ("Cuts one character's frames (only while their voice is audible) "
+                   "and their own recording out of a rendered film, for a lip-sync "
+                   "model. Pulse Lip-Sync Paste puts the result back.")
+
+    def execute(self, timeline, images, schema_version, speaker, audio_source, region,
+                box_x, box_y, box_w, box_h, handle_seconds, threshold_db, lipsync_fps,
+                unique_id=None, **kwargs):
+        document, side = _unwrap_timeline(timeline)
+        if document is None or side.timeline is None or side.plan is None:
+            raise ValueError("Connect a Pulse Slate node's `timeline` output.")
+        owner = lipsync.resolve_owner(side.timeline, speaker)
+        voices = lipsync.owner_voice_ids(side.timeline, owner.asset_id)
+        if not voices:
+            raise ValueError(
+                "@%s has no lip_sync recording bound to them. Name them in a "
+                "PulseVoice's `speaker`, or wire the voice to a shot they speak in."
+                % owner.name)
+        windows = document.get("windows") or []
+        fps = float((windows[0].get("fps") if windows else None) or FPS)
+        track = render.reference_audio_track(side.plan.windows, windows, side, fps=fps,
+                                             asset_ids=voices,
+                                             final=(audio_source == "final"))
+        if track is None:
+            raise ValueError("@%s's recordings reach no window of this film." % owner.name)
+        spans = lipsync.active_spans(media.rms_levels_db(track, lipsync.LEVEL_HOP_SECONDS),
+                                     threshold_db=threshold_db)
+        # Everyone else who is audible: the handles must not reach into their lines.
+        other_spans = []
+        others = lipsync.lip_sync_voice_ids(side.timeline) - voices
+        if others:
+            other_track = render.reference_audio_track(side.plan.windows, windows, side,
+                                                       fps=fps, asset_ids=others,
+                                                       final=(audio_source == "final"))
+            if other_track is not None:
+                other_spans = lipsync.active_spans(
+                    media.rms_levels_db(other_track, lipsync.LEVEL_HOP_SECONDS),
+                    threshold_db=threshold_db)
+        frame_spans = lipsync.speaker_frames(spans, other_spans, fps, images.shape[0],
+                                             handle_seconds)
+        if not frame_spans:
+            raise ValueError("@%s's recordings never rise above %.0f dB, so there is "
+                             "nothing to correct. Lower threshold_db."
+                             % (owner.name, threshold_db))
+        box = None if region == "full_frame" else (box_x, box_y, box_w, box_h)
+        frames, segment = media.cut_segment(images, frame_spans, box)
+        audio = media.cut_audio(track, segment["spans"], fps)
+        audio = dict(audio, sample_rate=int(round(audio["sample_rate"] * lipsync_fps / fps)))
+        segment["speaker"] = "@" + owner.name
+        notes = []
+        rendered = sum(w.get("frames") or 0 for w in windows)
+        if rendered and rendered != images.shape[0]:
+            notes.append("%d frames here for a %d-frame film; the spans were clipped."
+                         % (images.shape[0], rendered))
+            _warn_on_node(unique_id, notes)
+        report = "\n".join(
+            ["@%s: %d frame(s) in %d span(s): %s" % (
+                owner.name, len(segment["indices"]), len(segment["spans"]),
+                ", ".join("%.2f-%.2fs" % (a / fps, b / fps) for a, b in segment["spans"])),
+             "region: %s" % (segment["box"],),
+             "audio: %s, relabelled for %g fps" % (audio_source, lipsync_fps)] + notes)
+        return (frames, audio, segment, report)
+
+
+class PulseLipSyncPaste:
+    """Put one character's corrected frames back where they were cut from."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "images": ("IMAGE", {"tooltip":
+                    "The film the segment was cut from, or the previous paste's output "
+                    "when several characters are corrected in a chain."}),
+                "corrected_images": ("IMAGE", {"tooltip": "The lip-sync model's output."}),
+                "segment": ("PULSE_LIPSYNC_SEGMENT",),
+
+                "schema_version": schema_widget(),
+
+                "feather_px": ("INT", {"default": 12, "min": 0, "max": 256, "tooltip":
+                    "Blend width at the region's edges. Edges on the frame border are "
+                    "not blended."}),
+                # ── append new widgets HERE, at the end, and nowhere else ────
+            },
+            "hidden": HIDDEN_INPUTS,
+        }
+
+    RETURN_TYPES = ("IMAGE", "STRING")
+    RETURN_NAMES = ("images", "report")
+    FUNCTION = "execute"
+    CATEGORY = "AddisPulse/H3"
+    DESCRIPTION = ("Writes a lip-sync model's output back over exactly the frames and "
+                   "face region Pulse Lip-Sync Segment cut; everyone else's frames are "
+                   "untouched.")
+
+    def execute(self, images, corrected_images, segment, schema_version, feather_px,
+                unique_id=None, **kwargs):
+        out, notes = media.paste_segment(images, corrected_images, segment, feather_px)
+        if notes:
+            _warn_on_node(unique_id, ["%s: %s" % (segment.get("speaker", "?"), n)
+                                      for n in notes])
+        return (out, "\n".join(["%s: %d frame(s) replaced" % (
+            segment.get("speaker", "?"), len(segment["indices"]))] + notes))
+
+
 NODE_CLASS_MAPPINGS = {
     "PulseSlate": PulseSlate,
     "PulseShot": PulseShot,
@@ -1890,6 +2109,8 @@ NODE_CLASS_MAPPINGS = {
     "PulseBench": PulseBench,
     "PulseRetake": PulseRetake,
     "PulseStill": PulseStill,
+    "PulseLipSyncSegment": PulseLipSyncSegment,
+    "PulseLipSyncPaste": PulseLipSyncPaste,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -1900,4 +2121,6 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "PulseBench": "Pulse Bench",
     "PulseRetake": "Pulse Retake · MiniMax H3",
     "PulseStill": "Pulse Still · MiniMax H3",
+    "PulseLipSyncSegment": "Pulse Lip-Sync Segment (one character)",
+    "PulseLipSyncPaste": "Pulse Lip-Sync Paste",
 }

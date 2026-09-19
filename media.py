@@ -1008,3 +1008,117 @@ def peak_vram_bytes():
     except Exception:  # pragma: no cover - no CUDA in the test env
         pass
     return 0
+
+
+# ── one character's frames, for a lip-sync pass ─────────────────────────────
+# See comfyui_pulse_studio/lipsync.py for why a correction pass has to be handed
+# one speaker at a time. These are the tensor halves of it: measure a voice's
+# level, cut that speaker's frames (and face region) out, put the corrected ones
+# back where they came from.
+
+def rms_levels_db(audio, hop_seconds=0.01):
+    """The level of `audio` in dBFS per `hop_seconds`, channels summed to mono."""
+    rate = int(audio["sample_rate"])
+    wave = audio["waveform"][0].to(torch.float32).mean(dim=0)
+    hop = max(1, round(hop_seconds * rate))
+    usable = wave.shape[-1] // hop * hop
+    if usable == 0:
+        return []
+    rms = wave[:usable].view(-1, hop).pow(2).mean(dim=1).sqrt()
+    return (20.0 * torch.log10(rms.clamp(min=1e-9))).tolist()
+
+
+def box_pixels(height, width, box):
+    """Normalised (x, y, w, h) -> even-sized pixel (x0, y0, x1, y1). None = the whole frame."""
+    if box is None:
+        return 0, 0, width, height
+    x, y, w, h = (float(v) for v in box)
+    x0 = min(max(0, round(x * width)), width - 2)
+    y0 = min(max(0, round(y * height)), height - 2)
+    x1 = min(width, max(x0 + 2, round((x + w) * width)))
+    y1 = min(height, max(y0 + 2, round((y + h) * height)))
+    return x0, y0, x1 - (x1 - x0) % 2, y1 - (y1 - y0) % 2
+
+
+def cut_segment(images, frame_spans, box=None):
+    """The frames of `frame_spans` ([first, end) pairs), cropped to `box`, and what pasting needs."""
+    n, height, width = images.shape[0], images.shape[1], images.shape[2]
+    spans = [(max(0, a), min(n, b)) for a, b in frame_spans if min(n, b) > max(0, a)]
+    indices = [i for a, b in spans for i in range(a, b)]
+    if not indices:
+        raise ValueError("this speaker has no frames in the film")
+    x0, y0, x1, y1 = box_pixels(height, width, box)
+    segment = {"indices": indices, "spans": spans, "box": (x0, y0, x1, y1),
+               "frames": n, "height": height, "width": width}
+    return images[indices, y0:y1, x0:x1, :].clone(), segment
+
+
+def cut_audio(audio, frame_spans, fps):
+    """The audio under `frame_spans`, joined -- the same seconds `cut_segment` took."""
+    rate = int(audio["sample_rate"])
+    pieces = []
+    for a, b in frame_spans:
+        start, stop = round(a / fps * rate), round(b / fps * rate)
+        piece = audio["waveform"][..., start:stop]
+        if piece.shape[-1] < stop - start:
+            piece = torch.nn.functional.pad(piece, (0, stop - start - piece.shape[-1]))
+        pieces.append(piece)
+    return {"waveform": torch.cat(pieces, dim=-1), "sample_rate": rate}
+
+
+def _feather(h, w, feather, edges):
+    """[h, w, 1] weights rising 0 -> 1 over `feather` px from each flagged edge."""
+    ramp_x, ramp_y = torch.ones(w), torch.ones(h)
+    fx, fy = min(int(feather), w // 2), min(int(feather), h // 2)
+    left, top, right, bottom = edges
+    if fx:
+        steps = (torch.arange(fx, dtype=torch.float32) + 1) / (fx + 1)
+        if left:
+            ramp_x[:fx] = steps
+        if right:
+            ramp_x[w - fx:] = torch.minimum(ramp_x[w - fx:], steps.flip(0))
+    if fy:
+        steps = (torch.arange(fy, dtype=torch.float32) + 1) / (fy + 1)
+        if top:
+            ramp_y[:fy] = steps
+        if bottom:
+            ramp_y[h - fy:] = torch.minimum(ramp_y[h - fy:], steps.flip(0))
+    return (ramp_y[:, None] * ramp_x[None, :]).unsqueeze(-1)
+
+
+def paste_segment(images, corrected, segment, feather=0):
+    """Write `corrected` back over exactly the frames and region `segment` came from.
+
+    A corrector that hands back another frame count (LatentSync pads to its own
+    grid) is mapped back by nearest frame, and one that hands back another size is
+    resized to the region -- both said in the returned notes rather than silently.
+    An edge lying on the frame border is not feathered: there is nothing to blend.
+    """
+    notes = []
+    if images.shape[0] != segment["frames"] or tuple(images.shape[1:3]) != (
+            segment["height"], segment["width"]):
+        raise ValueError("these frames %s are not the ones the segment was cut from "
+                         "(%d x %dx%d)" % (tuple(images.shape[:3]), segment["frames"],
+                                           segment["height"], segment["width"]))
+    indices = segment["indices"]
+    x0, y0, x1, y1 = segment["box"]
+    h, w = y1 - y0, x1 - x0
+    n, m = len(indices), corrected.shape[0]
+    if m != n:
+        if abs(m - n) > 2:
+            notes.append("the corrector returned %d frames for %d; mapped back by "
+                         "nearest frame" % (m, n))
+        corrected = corrected[torch.tensor([min(m - 1, i * m // n) for i in range(n)])]
+    corrected = corrected[..., :images.shape[-1]].to(images.dtype)
+    if tuple(corrected.shape[1:3]) != (h, w):
+        notes.append("resized the corrected frames from %s to %s"
+                     % (tuple(corrected.shape[1:3]), (h, w)))
+        corrected = torch.nn.functional.interpolate(
+            corrected.movedim(-1, 1), size=(h, w), mode="bilinear",
+            align_corners=False).movedim(1, -1)
+    edges = (x0 > 0, y0 > 0, x1 < segment["width"], y1 < segment["height"])
+    mask = _feather(h, w, feather, edges).to(images.device, images.dtype)
+    out = images.clone()
+    region = out[indices, y0:y1, x0:x1, :]
+    out[indices, y0:y1, x0:x1, :] = region + mask * (corrected.to(images.device) - region)
+    return out, notes

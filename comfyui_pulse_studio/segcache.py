@@ -40,6 +40,13 @@ import json
 import os
 import tempfile
 
+from .assets import KIND_AUDIO
+from .constants import (
+    AUDIO_MODE_REFERENCE,
+    AUDIO_MODE_REMIX,
+    AUDIO_ROLE_LIP_SYNC,
+    DEFAULT_REMIX_STRENGTH,
+)
 from .pulse_timeline import canonical_json, shots_of_window
 
 __all__ = [
@@ -156,7 +163,8 @@ def _shot_key(shot):
     return key
 
 
-def cache_key_material(timeline, window, model_fingerprint, patch_fingerprint):
+def cache_key_material(timeline, window, model_fingerprint, patch_fingerprint,
+                       audio_mode=AUDIO_MODE_REFERENCE, remix_strength=None):
     """The exact list §7.1 hashes, in the order it specifies.
 
     Exposed separately from `cache_key` so a test can assert *what* is hashed --
@@ -169,7 +177,7 @@ def cache_key_material(timeline, window, model_fingerprint, patch_fingerprint):
     for shot in shots:
         refs.extend(shot.get("local_refs") or [])
 
-    return [
+    material = [
         ["global", timeline.get("global") or {}],
         ["shots", [_shot_key(s) for s in shots]],
         ["refs", [_ref_descriptor_key(r) for r in refs]],
@@ -188,9 +196,23 @@ def cache_key_material(timeline, window, model_fingerprint, patch_fingerprint):
         ["patch_fingerprint", patch_fingerprint],
         ["node_version", timeline.get("node_version")],
     ]
+    # The audio mode changes the latent a lip-sync window samples from, so it is
+    # part of what was rendered. Appended only when it is not the default and only
+    # on a window that carries a lip-sync recording -- the only windows it changes
+    # -- so every key already on disk stays where it is.
+    if audio_mode != AUDIO_MODE_REFERENCE and any(
+            r.get("kind") == KIND_AUDIO and r.get("audio_role") == AUDIO_ROLE_LIP_SYNC
+            for r in refs):
+        mode = [audio_mode]
+        if audio_mode == AUDIO_MODE_REMIX:
+            mode.append(round(float(remix_strength if remix_strength is not None
+                                    else DEFAULT_REMIX_STRENGTH), 4))
+        material.append(["audio_mode", mode])
+    return material
 
 
-def cache_key(timeline, window, model_fingerprint, patch_fingerprint):
+def cache_key(timeline, window, model_fingerprint, patch_fingerprint,
+              audio_mode=AUDIO_MODE_REFERENCE, remix_strength=None):
     """The full sha256 hex cache key for one window. Spec §7.1.
 
     §14.8 forbids computing this without a patch fingerprint, so an empty one is
@@ -204,7 +226,8 @@ def cache_key(timeline, window, model_fingerprint, patch_fingerprint):
             "refusing to compute a cache key with no patch_fingerprint (spec §14.8). "
             "Even 'nothing detected' has a fingerprint; an empty one means the "
             "detector was never run.")
-    material = cache_key_material(timeline, window, model_fingerprint, patch_fingerprint)
+    material = cache_key_material(timeline, window, model_fingerprint, patch_fingerprint,
+                                  audio_mode, remix_strength)
     return hashlib.sha256(canonical_json(material).encode("utf-8")).hexdigest()
 
 

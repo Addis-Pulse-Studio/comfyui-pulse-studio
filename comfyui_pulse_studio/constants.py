@@ -199,6 +199,32 @@ AUDIO_ROLE_LIP_SYNC = "lip_sync"
 AUDIO_ROLE_TIMBRE = "voice_timbre"
 AUDIO_ROLES = (AUDIO_ROLE_LIP_SYNC, AUDIO_ROLE_TIMBRE)
 
+# ── What the latent does with a lip-sync recording ──────────────────────────
+# A lip_sync reference rides in as a *reference* block: the model reads it and
+# re-synthesises a track of its own for the target rows. That is the only thing
+# it has ever been, and it is still the default, so no cached segment moves.
+#
+# `lock_source` also writes the window's own lip-sync mix into the *target*
+# audio latent and masks it at 0. The sampler then never regenerates those rows:
+# the model sees the actual waveform it has to move the mouth to, at the rows the
+# mouth occupies, at every step. `remix_source` masks it at `remix_strength`
+# instead, so the model may re-voice it a little.
+#
+# The pattern -- a drive track that moves the mouth, a final track that is muxed
+# -- follows T8mars/comfyui-minimax-h3-audio-T8 (GPL-3.0). It was consulted for
+# the idea only; no code from it is here. See CONTRIBUTING.md, "Source
+# provenance".
+AUDIO_MODE_REFERENCE = "reference_only"
+AUDIO_MODE_LOCK = "lock_source"
+AUDIO_MODE_REMIX = "remix_source"
+AUDIO_MODES = (AUDIO_MODE_REFERENCE, AUDIO_MODE_LOCK, AUDIO_MODE_REMIX)
+DEFAULT_REMIX_STRENGTH = 0.35
+
+# The side-channel slot a PulseVoice's clean take rides in, next to the drive
+# recording's own slot. Only the muxed track reads it; nothing that conditions
+# the model does, so it is in no cache key.
+VOICE_FINAL_SUFFIX = ".final"
+
 # ── Binding a voice to a face ───────────────────────────────────────────────
 # Which recording belongs to which character is the other half of the same
 # problem, and it has the same answer: prose. The sockets carry a waveform and

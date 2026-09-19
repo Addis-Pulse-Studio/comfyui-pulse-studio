@@ -175,6 +175,31 @@ const SPECS = {
       // reason: a file saved before this existed has no value for it and takes
       // the default, which is what name-based loading is for.
       { name: "seam_treatment", kind: "string" },
+      // Appended with the drive/final audio split. A file saved before them
+      // takes the defaults: reference_only, which renders what it always did.
+      { name: "audio_mode", kind: "string" },
+      { name: "remix_strength", kind: "number" },
+    ],
+  },
+  PulseLipSyncSegment: {
+    "3.0.0": [
+      { name: "schema_version", kind: "string" },
+      { name: "speaker", kind: "string" },
+      { name: "audio_source", kind: "string" },
+      { name: "region", kind: "string" },
+      { name: "box_x", kind: "number" },
+      { name: "box_y", kind: "number" },
+      { name: "box_w", kind: "number" },
+      { name: "box_h", kind: "number" },
+      { name: "handle_seconds", kind: "number" },
+      { name: "threshold_db", kind: "number" },
+      { name: "lipsync_fps", kind: "number" },
+    ],
+  },
+  PulseLipSyncPaste: {
+    "3.0.0": [
+      { name: "schema_version", kind: "string" },
+      { name: "feather_px", kind: "number" },
     ],
   },
   PulseBench: {

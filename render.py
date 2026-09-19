@@ -48,7 +48,12 @@ from . import media
 from .comfyui_pulse_studio.assets import KIND_AUDIO, KIND_IMAGE, KIND_VIDEO
 from .comfyui_pulse_studio.compiler import CARRY_AUDIO_ID, CARRY_IMAGE_ID, CARRY_VIDEO_ID
 from .comfyui_pulse_studio.constants import (
+    AUDIO_MODE_LOCK,
+    AUDIO_MODE_REFERENCE,
+    AUDIO_MODES,
     AUDIO_ROLE_LIP_SYNC,
+    DEFAULT_REMIX_STRENGTH,
+    VOICE_FINAL_SUFFIX,
     BRANCH_FL2VA,
     BRANCH_REF2VA,
     SEAM_AUDIO,
@@ -131,6 +136,20 @@ def _negative_conditioning(clip):
     return clip.encode_from_tokens_scheduled(tokens)
 
 
+def _require_scheduler(scheduler):
+    """Name the missing pack instead of letting BasicScheduler fail on an unknown name.
+
+    Only 'hyperflow' can be missing: it is not a ComfyUI scheduler but one the
+    ComfyUI-HyperFlow pack adds to comfy.samplers when it loads.
+    """
+    import comfy.samplers
+    if scheduler not in comfy.samplers.SCHEDULER_HANDLERS:
+        raise ValueError(
+            f"Scheduler '{scheduler}' is not registered in this ComfyUI. 'hyperflow' comes from the "
+            "ComfyUI-HyperFlow custom node pack -- install it and restart, and load the HyperFlow LoRA "
+            "on the model with its 'HyperFlow LoRA Loader'.")
+
+
 def sample(model, positive, latent, seed, steps, sampler_name, scheduler,
            vae, audio_vae, cfg=1.0, clip=None):
     """One real H3 call: noise -> guider -> sigmas -> sample -> decode both streams."""
@@ -145,6 +164,7 @@ def sample(model, positive, latent, seed, steps, sampler_name, scheduler,
                                      conditioning=positive))[0]
 
     sampler = unpack(execute_node(stock("KSamplerSelect"), sampler_name=sampler_name))[0]
+    _require_scheduler(scheduler)
     sigmas = unpack(execute_node(stock("BasicScheduler"), model=model, scheduler=scheduler,
                                  steps=steps, denoise=1.0))[0]
     sampled = unpack(execute_node(stock("SamplerCustomAdvanced"), noise=noise, guider=guider,
@@ -384,7 +404,49 @@ def output_is_connected(prompt, unique_id, output_index):
 
 # ── the run ─────────────────────────────────────────────────────────────────
 
-def reference_audio_track(plan_windows, windows_doc, side, fps=24):
+def window_voice_mix(compiled, side, seconds, final=False, asset_ids=None):
+    """One window's lip-sync recordings, cut to its span and mixed. None if it has none.
+
+    Every one of them, not the first. A window with two speakers has two
+    recordings covering the same seconds, and a film that plays one of them is
+    missing a character -- silently, because the render report only ever knew
+    about the reference, never about the mix.
+
+    `audio_offset` converts this window's film-clock start into each recording's
+    own, exactly as the reference trim does. Doing it any other way here would
+    put the muxed track and the mouth that was conditioned on it out of step with
+    each other.
+
+    `final` reads each PulseVoice's clean take where one was connected: the
+    recording that goes in the film, which is not always the one that moves the
+    mouth. `asset_ids` keeps only those recordings -- one character's own voice.
+    """
+    spans = []
+    for ref in (compiled.files if compiled is not None else []):
+        if ref.synthetic or ref.kind != KIND_AUDIO:
+            continue
+        if ref.audio_role != AUDIO_ROLE_LIP_SYNC:
+            continue
+        if asset_ids is not None and ref.asset_id not in asset_ids:
+            continue
+        slot = socket_slot_of(ref.asset_id)
+        raw = None
+        if slot is not None:
+            if final:
+                raw = side.get(slot + VOICE_FINAL_SUFFIX)
+            if raw is None:
+                raw = side.get(slot)
+        else:
+            raw = media.load_audio(ref.file, ref.trim_start, ref.trim_end)
+        if raw is None:
+            continue
+        spans.append(media.audio_span(
+            raw, compiled.start_seconds - ref.audio_offset, seconds))
+    return media.mix_audio(spans)
+
+
+def reference_audio_track(plan_windows, windows_doc, side, fps=24, asset_ids=None,
+                          final=True):
     """The lip-sync recordings themselves, laid end to end over the whole film.
 
     Built from the timeline rather than from the render loop on purpose: a reused
@@ -394,35 +456,16 @@ def reference_audio_track(plan_windows, windows_doc, side, fps=24):
 
     A window with no lip-sync reference contributes silence of its own length, so
     the track stays in step with the video whatever mix of shots the film has.
-    Returns None when no window carries one at all.
+    Returns None when no window carries one at all. Each PulseVoice's clean take
+    is used where it has one (unless `final` is off, which reads the recordings
+    that drove the mouths); `asset_ids` keeps one character's recordings only.
     """
     pieces = []
     for position, window in enumerate(windows_doc):
         seconds = (window.get("frames") or 0) / float(window.get("fps") or fps or 24)
         compiled = plan_windows[position] if position < len(plan_windows) else None
-        spans = []
-        for ref in (compiled.files if compiled is not None else []):
-            if ref.synthetic or ref.kind != KIND_AUDIO:
-                continue
-            if ref.audio_role != AUDIO_ROLE_LIP_SYNC:
-                continue
-            slot = socket_slot_of(ref.asset_id)
-            raw = side.get(slot) if slot is not None else media.load_audio(
-                ref.file, ref.trim_start, ref.trim_end)
-            if raw is None:
-                continue
-            # Every one of them, not the first. A window with two speakers has two
-            # recordings covering the same seconds, and a film that plays one of
-            # them is missing a character -- silently, because the render report
-            # only ever knew about the reference, never about the mix.
-            #
-            # `audio_offset` converts this window's film-clock start into each
-            # recording's own, exactly as the reference trim does. Doing it any
-            # other way here would put the muxed track and the mouth that was
-            # conditioned on it out of step with each other.
-            spans.append(media.audio_span(
-                raw, compiled.start_seconds - ref.audio_offset, seconds))
-        pieces.append((media.mix_audio(spans), seconds))
+        pieces.append((window_voice_mix(compiled, side, seconds, final=final,
+                                        asset_ids=asset_ids), seconds))
 
     real = [c for c, _ in pieces if c is not None]
     if not real:
@@ -445,17 +488,65 @@ def reference_audio_track(plan_windows, windows_doc, side, fps=24):
     return media.concat_audio(joined)
 
 
+def lock_window_audio(latent, audio_vae, drive, mode, strength=DEFAULT_REMIX_STRENGTH):
+    """Write `drive` into the window latent's audio stream and mask it.
+
+    The stock conditioning nodes return a nested (video, audio) latent with no
+    mask. A nested `noise_mask` masks each stream on its own: 0 over the audio
+    keeps the recording exactly as supplied at every step, which is what makes it
+    drive the mouth instead of merely describing a voice; `remix_strength`
+    re-noises it that far. The video mask is left at 1, or at whatever the
+    conditioning already asked for.
+    """
+    import comfy.nested_tensor
+
+    samples = latent.get("samples")
+    if samples is None or not getattr(samples, "is_nested", False):
+        raise ValueError("audio_mode %r needs MiniMax H3's audio+video latent, and this "
+                         "window's conditioning returned something else." % (mode,))
+    video, target = samples.unbind()
+    rate = int(getattr(audio_vae, "audio_sample_rate", 32000))
+    clip = media.resample_audio(drive, rate) if int(drive["sample_rate"]) != rate else drive
+    wave = clip["waveform"][:1].to(torch.float32)
+    if wave.shape[1] == 1:
+        wave = wave.expand(-1, 2, -1)
+    encoded = audio_vae.encode(wave[:, :2].movedim(1, -1))
+    if encoded.ndim != 4 or encoded.shape[1:3] != target.shape[1:3]:
+        raise ValueError("The audio VAE returned a %s latent for a %s audio stream; connect "
+                         "the MiniMax H3 audio VAE." % (tuple(encoded.shape), tuple(target.shape)))
+    # The recording was cut to the window's own seconds, so this is at most a
+    # rounding frame either way.
+    frames = target.shape[-1]
+    if encoded.shape[-1] >= frames:
+        encoded = encoded[..., :frames]
+    else:
+        encoded = torch.nn.functional.pad(encoded, (0, frames - encoded.shape[-1]))
+    encoded = encoded.to(device=target.device, dtype=target.dtype)
+    encoded = encoded.expand(target.shape[0], -1, -1, -1).contiguous()
+
+    masks = latent.get("noise_mask")
+    video_mask = (masks.unbind()[0] if getattr(masks, "is_nested", False)
+                  else torch.ones_like(video))
+    value = 0.0 if mode == AUDIO_MODE_LOCK else float(strength)
+    out = dict(latent)
+    out["samples"] = comfy.nested_tensor.NestedTensor((video, encoded))
+    out["noise_mask"] = comfy.nested_tensor.NestedTensor(
+        (video_mask, torch.full_like(encoded, value)))
+    return out
+
+
 class RenderOptions:
     """The `PulseRender` widgets, in one object."""
 
     __slots__ = ("cache_mode", "run_dir", "run_id", "save_segments", "low_memory",
                  "dry_run", "prune_unused", "want_frames", "use_reference_audio",
-                 "seam_treatment")
+                 "seam_treatment", "audio_mode", "remix_strength")
 
     def __init__(self, cache_mode=CACHE_AUTO, run_dir="pulseslate", run_id="",
                  save_segments=True, low_memory=True, dry_run=False,
                  prune_unused=False, want_frames=False, use_reference_audio=False,
-                 seam_treatment=SEAM_OFF):
+                 seam_treatment=SEAM_OFF, audio_mode=AUDIO_MODE_REFERENCE,
+                 remix_strength=DEFAULT_REMIX_STRENGTH):
         self.cache_mode = cache_mode
         self.run_dir = (run_dir or "pulseslate").strip() or "pulseslate"
         self.run_id = (run_id or "").strip()
@@ -469,6 +560,9 @@ class RenderOptions:
         # behaviour it had; the node widget is what turns it on, and that
         # defaults to the full treatment.
         self.seam_treatment = seam_treatment if seam_treatment in SEAM_MODES else SEAM_OFF
+        self.audio_mode = audio_mode if audio_mode in AUDIO_MODES else AUDIO_MODE_REFERENCE
+        self.remix_strength = min(1.0, max(0.0, float(
+            DEFAULT_REMIX_STRENGTH if remix_strength is None else remix_strength)))
 
     @property
     def treat_audio_seams(self):
@@ -550,7 +644,8 @@ def run(timeline_dict, side, model, vae, audio_vae, model_fl2va=None,
     decisions = {}
     keys = []
     for window in windows_doc:
-        key = cache_key(timeline_dict, window, model_fp, patch_fp)
+        key = cache_key(timeline_dict, window, model_fp, patch_fp,
+                        options.audio_mode, options.remix_strength)
         window["cache_key"] = key
         keys.append(key)
         decisions[window["window_index"]] = plan_window(
@@ -647,6 +742,14 @@ def run(timeline_dict, side, model, vae, audio_vae, model_fl2va=None,
         positive, latent = condition_window(
             compiled, side, width, height, carry_frame, carry_clip, carry_audio_clip,
             fps=window.get("fps") or 24)
+        if options.audio_mode != AUDIO_MODE_REFERENCE:
+            drive = window_voice_mix(
+                compiled, side, window["frames"] / float(window.get("fps") or 24))
+            if drive is not None:
+                latent = lock_window_audio(latent, audio_vae, drive, options.audio_mode,
+                                           options.remix_strength)
+                log.info("[PulseStudio] window %d: %s -- the lip-sync mix is in the "
+                         "audio latent", index + 1, options.audio_mode)
         window_model = (shifted_fl2va
                         if (compiled.branch == BRANCH_FL2VA and shifted_fl2va is not None)
                         else shifted)
@@ -758,6 +861,12 @@ def run(timeline_dict, side, model, vae, audio_vae, model_fl2va=None,
     except Exception as exc:  # pragma: no cover - decode failure
         log.error("[PulseStudio] could not join the segment audio (%s)", exc)
         audio_out = None
+
+    if options.audio_mode != AUDIO_MODE_REFERENCE and not options.use_reference_audio:
+        warnings.append(
+            "audio_mode is %s, so your recordings drove the mouths, but the film "
+            "carries H3's decoded track -- a VAE round trip of them. Turn "
+            "use_reference_audio on to mux the exact takes." % options.audio_mode)
 
     if options.use_reference_audio:
         # The generated track is still on disk in every segment's .flac, so this
