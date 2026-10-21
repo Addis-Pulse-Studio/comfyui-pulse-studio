@@ -28,9 +28,10 @@ from comfyui_pulse_studio.constants import (
     LIP_SYNC_END_OF_FILM_TOLERANCE_SECONDS,
     MAX_DIALOGUE_WPM,
     MAX_WINDOW_FRAMES,
+    VOICE_GATE_TAIL_SECONDS,
 )
 from comfyui_pulse_studio.pulse_timeline import ref_descriptor
-from comfyui_pulse_studio.segcache import _ref_descriptor_key
+from comfyui_pulse_studio.segcache import _ref_descriptor_key, cache_key_material
 from comfyui_pulse_studio.timeline import Timeline
 
 SR = 44100
@@ -212,15 +213,20 @@ class TheCoverageDiagnostic(unittest.TestCase):
         on a 45s explainer, 0.37s on an 8s one, both correct films -- and a
         warning channel that fires on correct films is worth less than none.
         """
-        # The film renders to 45.46s; a 45.0s narration is 0.46s short of that.
-        self.assertNotIn("runs out", notes(film(source_seconds=45.0)))
+        # The film renders to 44.75s, exactly what its shots ask for; a 44.30s
+        # narration is 0.45s short of that. (It rendered to 45.46s while the
+        # compiler snapped the total before splitting it, and this case was a
+        # 45.0s narration 0.46s short of that.)
+        self.assertNotIn("runs out", notes(film(source_seconds=44.30)))
 
     def test_a_real_shortfall_at_the_end_is_still_named(self):
-        # 6.24s on the last window was the 7.6s-narration test. Relaxing the
-        # threshold must not swallow the case the check exists for.
+        # The 7.6s-narration test. Relaxing the threshold must not swallow the
+        # case the check exists for. The film is 13.17s now that the total is no
+        # longer snapped before it is split (it was 13.88s, and the shortfall
+        # 6.24s); 13.17 - 7.63 = 5.53s.
         text = notes(film([6.5833, 6.5833], window_seconds=6.6,
                           policy="shot_aligned", source_seconds=7.632))
-        self.assertIn("runs out 6.24s", text)
+        self.assertIn("runs out 5.53s", text)
 
     def test_the_relaxation_is_the_last_window_only(self):
         # Half a second of silence in the middle of a film is a mistake; the same
@@ -236,9 +242,9 @@ class TheCoverageDiagnostic(unittest.TestCase):
 
     def test_the_threshold_is_where_the_constant_says_it_is(self):
         self.assertEqual(LIP_SYNC_END_OF_FILM_TOLERANCE_SECONDS, 1.0)
-        # 45.46 - 44.60 = 0.86s, under the floor; 45.46 - 44.20 = 1.26s, over it.
-        self.assertNotIn("runs out", notes(film(source_seconds=44.60)))
-        self.assertIn("runs out", notes(film(source_seconds=44.20)))
+        # 44.75 - 43.85 = 0.90s, under the floor; 44.75 - 43.55 = 1.20s, over it.
+        self.assertNotIn("runs out", notes(film(source_seconds=43.85)))
+        self.assertIn("runs out", notes(film(source_seconds=43.55)))
 
     def test_an_unmeasured_recording_is_never_diagnosed(self):
         # source_seconds is None whenever nothing measured the file. Reporting
@@ -298,26 +304,58 @@ class TheOneFrameFloor(unittest.TestCase):
 
 
 class DuplicateLipSyncReferences(unittest.TestCase):
+    """Two shots' own takes in one window used to be two references for the
+    same seconds. Each is now heard only inside its own shot, on one track.
 
-    def test_two_voices_in_one_window_are_reported(self):
-        # What remains after the floor: two genuine speakers, two recordings cut
-        # to the same seconds, and two "lip movements match" directives that
-        # cannot both be obeyed.
+    The old pair of tests asserted the warning and that nothing was dropped. The
+    second still holds -- both takes are on the track -- and the first now belongs
+    to the case that can still happen: two *film-wide* recordings, neither tied to
+    a shot, which really do describe the same seconds.
+    """
+
+    def test_two_shot_takes_share_one_track_each_gated_to_its_shot(self):
         compiled = film([6.0, 6.0], window_seconds=15.1, policy="fill")
-        text = " ".join(compiled.windows[0].diagnostics)
-        self.assertIn("2 lip-sync references", text)
-        self.assertIn("more than one answer", text)
+        window = compiled.windows[0]
+        lip = [f for f in window.files if f.audio_role == AUDIO_ROLE_LIP_SYNC]
+        self.assertEqual(len(lip), 1, "one track, one <Audio j>")
+        self.assertEqual([p.asset_id for p in lip[0].pieces], ["aud_s1", "aud_s2"])
+        (first, second) = lip[0].pieces
+        self.assertEqual((first.gate_start, second.gate_start), (0.0, 6.0))
+        # The tail rings out only into silence: shot 1's take stops where shot 2's
+        # begins, and the shared edge is not faded on either side.
+        self.assertAlmostEqual(first.gate_end, 6.0)
+        self.assertEqual((first.fade_out, second.fade_in), (False, False))
+        self.assertAlmostEqual(second.gate_end, 12.0 + VOICE_GATE_TAIL_SECONDS)
+        self.assertTrue(second.fade_out)
+        self.assertNotIn("more than one answer", " ".join(window.diagnostics))
 
     def test_nothing_is_dropped_to_fix_it(self):
-        # Reported, never repaired. Choosing which copy to discard means guessing
-        # which shot the author meant, and guessing wrong desynchronises the
-        # mouth that was right.
+        # Reported, never repaired -- and now not even reported, because nothing
+        # is ambiguous: every take is on the track, at its own shot's seconds.
         compiled = film([6.0, 6.0], window_seconds=15.1, policy="fill")
         lip = [f for f in compiled.windows[0].files
                if f.audio_role == AUDIO_ROLE_LIP_SYNC]
-        self.assertEqual(len(lip), 2)
+        self.assertEqual(sum(len(f.pieces or [f]) for f in lip), 2)
         self.assertTrue(compiled.ok)
         self.assertEqual(compiled.problems, [])
+
+    def test_two_film_wide_recordings_in_one_window_are_still_reported(self):
+        # What remains: two recordings on the bin, bound to nobody, each cut to
+        # the whole window -- two "lip movements match" directives for the same
+        # seconds, which cannot both be obeyed.
+        shots = [{"id": "s1", "start": 0.0, "duration": 6.0, "prompt": "They talk."},
+                 {"id": "s2", "start": 6.0, "duration": 6.0, "prompt": "They talk."}]
+        assets = [{"id": "n1", "kind": KIND_AUDIO, "name": "TakeA", "file": "a.wav",
+                   "audio_role": AUDIO_ROLE_LIP_SYNC},
+                  {"id": "n2", "kind": KIND_AUDIO, "name": "TakeB", "file": "b.wav",
+                   "audio_role": AUDIO_ROLE_LIP_SYNC}]
+        timeline = Timeline(assets=assets, shots=shots, duration_seconds=12.0, fps=24,
+                            window_seconds=15.1)
+        compiled = compile_timeline(timeline, policy="fill",
+                                    carry=CarryPolicy(mode="image", audio=False))
+        text = " ".join(compiled.windows[0].diagnostics)
+        self.assertIn("2 lip-sync references", text)
+        self.assertIn("more than one answer", text)
 
 
 class DialogueThatDoesNotFitTheWindow(unittest.TestCase):
@@ -381,9 +419,17 @@ class TheDialogueRegex(unittest.TestCase):
 class TheOffsetReachesTheCacheKey(unittest.TestCase):
     """Two renders identical in every other field are different films.
 
-    The digest cannot tell them apart -- it hashes the whole file either way --
-    so the offset has to be in the key itself or the cache hands back a segment
-    cut from the wrong seconds.
+    The digest cannot tell them apart -- it hashes the whole file either way -- so
+    *which seconds* a window hears has to be in the key itself, or the cache hands
+    back a segment cut from the wrong ones.
+
+    It used to be the raw offset on the reference descriptor, which is the film
+    clock, and the film clock is the wrong frame. Lengthen shot 1 and every later
+    per-shot take moves with its own window: the seconds each window hears are
+    unchanged, the offsets are not, and every window re-rendered for nothing.
+    Meanwhile a film-clock narration whose *window* moved kept its offset of 0 and
+    its key, and was reused cut from the wrong seconds. The window's own
+    `audio_plan` -- offsets relative to the window -- is right both ways.
     """
 
     def base(self, **kwargs):
@@ -396,16 +442,39 @@ class TheOffsetReachesTheCacheKey(unittest.TestCase):
         self.assertEqual(_ref_descriptor_key(self.base()),
                          _ref_descriptor_key(self.base(audio_offset=0.0)))
 
-    def test_a_real_offset_moves_the_key(self):
-        self.assertNotEqual(_ref_descriptor_key(self.base()),
-                            _ref_descriptor_key(self.base(audio_offset=24.5)))
-        self.assertNotEqual(_ref_descriptor_key(self.base(audio_offset=12.25)),
-                            _ref_descriptor_key(self.base(audio_offset=24.5)))
-
-    def test_it_is_appended_last_so_the_fields_before_it_do_not_shift(self):
-        plain = _ref_descriptor_key(self.base())
+    def test_the_descriptor_key_ignores_the_film_clock_offset(self):
         self.assertEqual(_ref_descriptor_key(self.base(audio_offset=24.5)),
-                         plain + [24.5])
+                         _ref_descriptor_key(self.base()))
+
+    def test_a_take_that_starts_with_its_window_has_no_plan(self):
+        # Offsets equal to each shot's start: every take begins as its window does,
+        # which is the plan every key on disk was computed under.
+        cursor, offsets = 0.0, {}
+        for i, duration in enumerate(EXPLAINER, 1):
+            offsets[i] = cursor
+            cursor += duration
+        for window in film(source_seconds=12.0, offsets=offsets).windows:
+            self.assertIsNone(window.audio_plan())
+
+    def test_a_take_slid_inside_its_window_moves_the_plan(self):
+        plain = film(source_seconds=12.0, offsets={1: 0.0}).windows[0]
+        slid = film(source_seconds=12.0, offsets={1: 0.5}).windows[0]
+        self.assertIsNone(plain.audio_plan())
+        self.assertEqual(slid.audio_plan(), [["ref_audio_0", [["Voice", -0.5]]]])
+
+    def test_a_narration_whose_window_moved_moves_the_plan(self):
+        # Film-clock narration, offset 0 everywhere: window 2 hears 12.25s on.
+        second = film(source_seconds=45.0).windows[1]
+        self.assertEqual(second.audio_plan()[0][1][0][1], 12.25)
+
+    def test_the_plan_reaches_the_key(self):
+        doc = {"global": {}, "refs": {"global": []}, "shots": [], "node_version": "x"}
+        window = {"window_index": 0, "shot_ids": [], "frames": 124,
+                  "audio_plan": [["ref_audio_0", [["Voice", -0.5]]]]}
+        material = cache_key_material(doc, window, "m", "p")
+        self.assertIn(["audio_plan", window["audio_plan"]], material)
+        del window["audio_plan"]
+        self.assertNotIn("audio_plan", [m[0] for m in cache_key_material(doc, window, "m", "p")])
 
 
 class TheAssetCarriesIt(unittest.TestCase):

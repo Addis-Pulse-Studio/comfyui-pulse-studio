@@ -158,6 +158,9 @@ const SPECS = {
       { name: "trim_end", kind: "number" },
       { name: "speaker", kind: "string" },
       { name: "description", kind: "string" },
+      // Appended after 3.0.0 shipped: shot gating and a voice's own language.
+      { name: "gate_to_shot", kind: "boolean" },
+      { name: "language", kind: "string" },
     ],
   },
   PulseRender: {
@@ -179,6 +182,9 @@ const SPECS = {
       // takes the defaults: reference_only, which renders what it always did.
       { name: "audio_mode", kind: "string" },
       { name: "remix_strength", kind: "number" },
+      // Appended with keep_aspect references and the 1080 delivery upscale.
+      { name: "ref_image_fit", kind: "string" },
+      { name: "upscale", kind: "string" },
     ],
   },
   PulseLipSyncSegment: {
@@ -206,6 +212,27 @@ const SPECS = {
     "3.0.0": [
       { name: "schema_version", kind: "string" },
       { name: "run_dirs", kind: "string" },
+    ],
+  },
+  // New after 3.0.0 shipped, and filed under the shared version key like every
+  // other node: there is one number to bump for the whole pack.
+  PulseCharacter: {
+    "3.0.0": [
+      { name: "schema_version", kind: "string" },
+      { name: "name", kind: "string" },
+      { name: "description", kind: "string" },
+      { name: "retention", kind: "string" },
+    ],
+  },
+  PulseRecipe: {
+    "3.0.0": [
+      { name: "schema_version", kind: "string" },
+      { name: "preset", kind: "string" },
+      { name: "steps", kind: "number" },
+      { name: "sampler_name", kind: "string" },
+      { name: "scheduler", kind: "string" },
+      { name: "cfg", kind: "number" },
+      { name: "sigmas", kind: "string" },
     ],
   },
   PulseRetake: {

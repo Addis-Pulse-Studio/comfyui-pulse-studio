@@ -71,12 +71,13 @@ class Asset:
 
     __slots__ = ("asset_id", "kind", "name", "file", "description", "retention",
                  "trim_start", "trim_end", "include_audio", "synthetic", "audio_role",
-                 "voice_of", "audio_offset", "source_seconds")
+                 "voice_of", "audio_offset", "source_seconds", "free_run", "view_of", "take")
 
     def __init__(self, asset_id, kind, name="", file="", description="",
                  retention=None, trim_start=0.0, trim_end=None, include_audio=False,
                  synthetic=False, audio_role=None, voice_of=None,
-                 audio_offset=0.0, source_seconds=None):
+                 audio_offset=0.0, source_seconds=None, free_run=False, view_of=None,
+                 take=False):
         if kind not in KINDS:
             raise ValueError("unknown asset kind %r (expected one of %r)" % (kind, KINDS))
         self.asset_id = str(asset_id)
@@ -132,6 +133,23 @@ class Asset:
         # node layer (which can see tensors and files); the compiler only reads it.
         self.source_seconds = (None if source_seconds is None
                                else max(0.0, float(source_seconds)))
+        # Only meaningful on a shot's own audio: True lets the recording run past
+        # the end of the shot it is wired to. The default gates it to that shot's
+        # span -- a take belongs to its shot, and one that keeps playing into the
+        # next shot drives the next speaker's mouth with the wrong voice. An L-cut
+        # (the line carries on over the cutaway) is the one reason to turn it off.
+        self.free_run = bool(free_run) if kind == KIND_AUDIO else False
+        # Only meaningful on an image: the asset id of the character this picture
+        # is a second view of -- a full-body shot beside a face. It is cited inside
+        # that character's own <Subject N> definition rather than becoming a
+        # Subject of its own, which would tell the model there are two people.
+        self.view_of = view_of if kind != KIND_AUDIO else None
+        # Only meaningful on a shot's own audio: True when the recording was placed
+        # at its shot's start (`PulseVoice.aligns_to = shot_start`) -- a take made
+        # for that shot -- rather than on the film clock. Only a take can be "too
+        # long for its shot"; a whole-film narration wired into each shot runs past
+        # every one of them by design, and the next shot's copy carries it on.
+        self.take = bool(take) if kind == KIND_AUDIO else False
 
     @property
     def duration(self):
@@ -165,6 +183,13 @@ class Asset:
             d["audio_offset"] = self.audio_offset
         if self.source_seconds is not None:
             d["source_seconds"] = self.source_seconds
+        # Emitted only when set, for the same reason as the two above.
+        if self.free_run:
+            d["free_run"] = True
+        if self.view_of:
+            d["view_of"] = self.view_of
+        if self.take:
+            d["take"] = True
         return d
 
     @classmethod
@@ -184,6 +209,9 @@ class Asset:
             voice_of=d.get("voice_of"),
             audio_offset=d.get("audio_offset", 0.0),
             source_seconds=d.get("source_seconds"),
+            free_run=d.get("free_run", False),
+            view_of=d.get("view_of"),
+            take=d.get("take", False),
         )
 
     def __repr__(self):

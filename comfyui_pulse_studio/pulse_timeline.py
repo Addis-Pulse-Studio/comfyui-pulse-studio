@@ -46,6 +46,7 @@ __all__ = [
     "CONTINUITY_NONE",
     "CONTINUITY_LAST_FRAME",
     "CONTINUITY_KEYFRAME_PAIRS",
+    "CONTINUITY_REF_GUIDED",
     "ContinuityError",
     "SideChannel",
     "canonical_json",
@@ -73,9 +74,16 @@ CONTINUITY_NONE = "none"
 CONTINUITY_LAST_FRAME = "last_frame_carry"
 CONTINUITY_KEYFRAME_PAIRS = "keyframe_pairs"
 CONTINUITY_INHERIT = "inherit"
+# Every window stays on the reference checkpoint -- faces and voices referenced in
+# every window -- and the previous window's last frame is pinned at frame 0 with
+# core's MiniMaxH3AddGuide. Possible since that node let a keyframe and reference
+# blocks share one call (comfy/ldm/minimax/model.py, PackedLayout). EXPERIMENTAL:
+# the reference checkpoints were not trained with keyframe rows.
+CONTINUITY_REF_GUIDED = "ref_guided_carry"
 
-#: What a project may be set to.
-CONTINUITY_MODES = (CONTINUITY_NONE, CONTINUITY_LAST_FRAME, CONTINUITY_KEYFRAME_PAIRS)
+#: What a project may be set to. Appended, never inserted: a combo stores its value.
+CONTINUITY_MODES = (CONTINUITY_NONE, CONTINUITY_LAST_FRAME, CONTINUITY_KEYFRAME_PAIRS,
+                    CONTINUITY_REF_GUIDED)
 #: What a single shot may be set to -- the same three, plus deferring to the project.
 SHOT_CONTINUITY_MODES = (CONTINUITY_INHERIT,) + CONTINUITY_MODES
 
@@ -366,7 +374,7 @@ def shot_block(shot_id, index, label="", visual="", audio_line="",
 def window_block(window_index, shot_ids, frames, fps=FPS, width=1344, height=768,
                  seed=0, steps=20, sampler="res_multistep", scheduler="simple",
                  cfg=1.0, continuity_in=CONTINUITY_NONE, continuity_out=CONTINUITY_NONE,
-                 branch=None, prompt="", cache_key=None):
+                 branch=None, prompt="", cache_key=None, sigmas=None, audio_plan=None):
     """One entry in `windows`. Spec §3.
 
     `cache_key` is left `None` here on purpose. It cannot be computed by the
@@ -375,7 +383,7 @@ def window_block(window_index, shot_ids, frames, fps=FPS, width=1344, height=768
     executor fills it in. `run_id` derivation (§7.2) strips the field anyway, so a
     null here and a hex string there hash to the same folder.
     """
-    return {
+    block = {
         "window_index": int(window_index),
         "shot_ids": list(shot_ids),
         "frames": int(frames),
@@ -393,6 +401,18 @@ def window_block(window_index, shot_ids, frames, fps=FPS, width=1344, height=768
         "prompt": prompt,
         "cache_key": cache_key,
     }
+    # Both written only when they carry something, so every window that uses a
+    # named scheduler and hears no shifted recording is the dict -- and therefore
+    # the key and the run folder -- it was before either existed.
+    #
+    # `sigmas` is a hand-written schedule (TaoMate's three steps), sampled as is.
+    # `audio_plan` is CompiledWindow.audio_plan(): which seconds of which recording
+    # this window hears, relative to the window.
+    if sigmas:
+        block["sigmas"] = [round(float(v), 6) for v in sigmas]
+    if audio_plan:
+        block["audio_plan"] = audio_plan
+    return block
 
 
 def build_timeline(global_block, global_refs, shots, windows, budget, warnings=()):

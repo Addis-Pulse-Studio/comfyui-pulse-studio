@@ -23,9 +23,10 @@ class TimelineError(ValueError):
 class Shot:
     """One prompt span. `start` and `duration` are seconds on the project clock."""
 
-    __slots__ = ("shot_id", "start", "duration", "prompt", "speakers", "seed")
+    __slots__ = ("shot_id", "start", "duration", "prompt", "speakers", "seed", "language")
 
-    def __init__(self, shot_id, start=0.0, duration=0.0, prompt="", speakers=None, seed=None):
+    def __init__(self, shot_id, start=0.0, duration=0.0, prompt="", speakers=None, seed=None,
+                 language=None):
         self.shot_id = str(shot_id)
         self.start = float(start)
         self.duration = max(0.0, float(duration))
@@ -35,6 +36,9 @@ class Shot:
         # reference audio with the subject it belongs to.
         self.speakers = list(speakers or [])
         self.seed = seed
+        # The language this shot's dialogue is spoken in, when its own voice says
+        # so. None defers to the film's `dialogue_language`.
+        self.language = (language or "").strip() or None
 
     @property
     def end(self):
@@ -57,6 +61,8 @@ class Shot:
             d["speakers"] = list(self.speakers)
         if self.seed is not None:
             d["seed"] = self.seed
+        if self.language:
+            d["language"] = self.language
         return d
 
     @classmethod
@@ -68,6 +74,7 @@ class Shot:
             prompt=d.get("prompt", ""),
             speakers=d.get("speakers") or d.get("speaker_ids"),
             seed=d.get("seed"),
+            language=d.get("language"),
         )
 
     def __repr__(self):
@@ -98,6 +105,18 @@ class Timeline:
         # start_image / end_image sockets. Empty for every project that pins its
         # anchors at the project level instead.
         self.shot_anchors = {}
+        # Film-wide voice asset id -> the language it speaks. A shot whose speaker
+        # owns one of these speaks that language; set by the node layer from each
+        # slate PulseVoice's `language`.
+        self.voice_languages = {}
+        # ref_guided_carry: continuation windows pin the previous last frame with a
+        # guide while staying on the reference branch. Set by the node layer.
+        self.guided_carry = False
+        # Where anyone is audibly speaking, as (first, end) frames on the film clock
+        # -- every lip-sync recording's level, merged. Measured by the node layer
+        # (it needs the audio); read by the `speech_aware` partition and by the
+        # seam-in-speech diagnostic. Empty means unknown, never "silent".
+        self.speech_spans = []
         self.limits = RefLimits(audio_ref_ceiling)
         self.assets = (assets if isinstance(assets, AssetBin)
                        else AssetBin.from_list(assets, limits=self.limits))

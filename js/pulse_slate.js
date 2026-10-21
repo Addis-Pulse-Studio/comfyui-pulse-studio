@@ -757,14 +757,18 @@ class AssetBinPanel {
         const kind = kindForFile(file.name);
         const path = await uploadFile(file);
         const alias = await post("suggest_name", { timeline_data: this.raw, kind });
-        await this.apply("add", {
-          asset: {
-            id: `a${Date.now().toString(36)}${Math.floor(Math.random() * 1e4).toString(36)}`,
-            kind,
-            name: alias.name || kind,
-            file: path,
-          },
-        });
+        const asset = {
+          id: `a${Date.now().toString(36)}${Math.floor(Math.random() * 1e4).toString(36)}`,
+          kind,
+          name: alias.name || kind,
+          file: path,
+        };
+        // The row shows audioRoles[0] for a recording with no role, and the
+        // compiler reads no role as voice_timbre -- so a dropped take looked like
+        // lip_sync, compiled as timbre, and re-picking the value already shown
+        // fires no change event. Write down the role the panel is about to show.
+        if (kind === "audio") asset.audio_role = this.audioRoles[0];
+        await this.apply("add", { asset });
       } catch (err) {
         alert(`Could not add ${file.name}: ${err}`);
       }

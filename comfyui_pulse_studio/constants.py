@@ -220,6 +220,25 @@ AUDIO_MODE_REMIX = "remix_source"
 AUDIO_MODES = (AUDIO_MODE_REFERENCE, AUDIO_MODE_LOCK, AUDIO_MODE_REMIX)
 DEFAULT_REMIX_STRENGTH = 0.35
 
+# ── One voice track per speaker, cut at each shot's edges ───────────────────
+# A shot's own take is placed at that shot's start and stops at that shot's end.
+# Before this a take was cut to the *window*, so a 9-second line on a 6-second
+# shot kept playing into the next shot -- whose speaker's mouth then moved to the
+# wrong voice -- and three takes in one window became three <Audio j> references
+# each claiming the whole window. Now every lip-sync recording bound to the same
+# character in a window is laid on one track, at its own seconds, and that track
+# is the character's one <Audio j>. H3 takes three audio references per call, so
+# three is the number of *voices* a window can hold, not the number of lines.
+#
+# The tail lets the last syllable's decay ring out past the cut instead of being
+# clipped; the fade keeps the gate from clicking. Both are well under a word.
+VOICE_GATE_TAIL_SECONDS = 0.15
+VOICE_GATE_FADE_SECONDS = 0.04
+
+# `PulseShot.duration_seconds = 0` means "as long as my take": the take's own
+# length, plus this much air after the last word so the cut does not land on it.
+AUTO_SHOT_PAD_SECONDS = 0.4
+
 # The side-channel slot a PulseVoice's clean take rides in, next to the drive
 # recording's own slot. Only the muxed track reads it; nothing that conditions
 # the model does, so it is in no cache key.
@@ -336,6 +355,27 @@ SEAM_DEFAULT = SEAM_AUDIO_COLOUR
 #: fully decayed. A flat correction across a whole window does not remove a cut,
 #: it moves it to the *next* seam.
 SEAM_COLOUR_RAMP_FRAMES = 12
+
+# ── How a reference image is fitted, and how big the finished film is ───────
+# `canvas` crops (or pads, or stretches -- PulseSlate's resize_method) every
+# reference to the render's exact canvas before the stock node sees it. That is
+# right for a keyframe and wrong for a character sheet: a portrait reference on a
+# 16:9 canvas lost its head and its feet, and `ref_image_size=max` could do
+# nothing, because the picture was already exactly canvas-sized. `keep_aspect`
+# hands the stock node the picture as it is; its own `match` / `max` scales it
+# with the aspect intact (MiniMaxH3ReferenceToVideo, ref_image_size).
+REF_FIT_CANVAS = "canvas"
+REF_FIT_KEEP_ASPECT = "keep_aspect"
+REF_FIT_MODES = (REF_FIT_CANVAS, REF_FIT_KEEP_ASPECT)
+
+# Neither FastH3-Omni nor TaoMate FL2VA renders natively above 768p -- TaoMate's
+# FL2VA runtime is hard-coded to 768x1376, FastH3-Omni was trained at 768p and
+# 480p, and H3's own pixel budget is MAX_PIXELS above. So 1080 is reached after
+# the film is assembled, by resampling it, never by sampling past the budget.
+UPSCALE_OFF = "off"
+UPSCALE_1080_FIT = "1080p_fit"      # short edge 1080, aspect kept
+UPSCALE_1080_EXACT = "1080p_exact"  # 1920x1080 / 1080x1920, centre-cropped to fill
+UPSCALE_MODES = (UPSCALE_OFF, UPSCALE_1080_FIT, UPSCALE_1080_EXACT)
 
 # ── Audio carry-over ────────────────────────────────────────────────────────
 # Upstream (muse-collective, MIT) fed the previous window's last ~4s of decoded

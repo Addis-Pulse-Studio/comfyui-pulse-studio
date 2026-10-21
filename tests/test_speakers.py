@@ -149,7 +149,9 @@ class TestTheAudioIsBoundToSomeone(unittest.TestCase):
     def test_lip_sync_names_the_subject_it_belongs_to(self):
         prompt = _compile(_two_hander()).windows[0].prompt
         self.assertIn(
-            "`<Audio 1>` is the speech <Subject 1> (S1) is saying. Their lip movements "
+            # " in [Shot 1]": the take is shot 1's own, so it is gated to shot 1
+            # of this two-shot window and the sentence says where it speaks.
+            "`<Audio 1>` is the speech <Subject 1> (S1) is saying in [Shot 1]. Their lip movements "
             "match `<Audio 1>` precisely, in time with it.", prompt)
 
     def test_timbre_names_the_subject_it_belongs_to(self):
@@ -190,9 +192,12 @@ class TestTheUnboundPromptIsUnchanged(unittest.TestCase):
         self.assertNotIn("(S2)", self.prompt)
 
     def test_lip_sync_keeps_the_anonymous_sentence(self):
+        # Anonymous still -- no speaker id appears. " in [Shot 1]" is not the
+        # speaker feature: the take is shot 1's own and is gated to it, so the
+        # sentence says which shot of this two-shot window it speaks in.
         self.assertIn(
-            "`<Audio 1>` is the speech this character is saying. Their lip movements "
-            "match `<Audio 1>` precisely, in time with it.", self.prompt)
+            "`<Audio 1>` is the speech this character is saying in [Shot 1]. Their lip "
+            "movements match `<Audio 1>` precisely, in time with it.", self.prompt)
 
     def test_timbre_keeps_the_anonymous_sentence(self):
         self.assertIn("`<Audio 2>` is a voice-timbre reference.", self.prompt)

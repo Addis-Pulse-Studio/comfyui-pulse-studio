@@ -61,7 +61,8 @@ _BARE_TIME = re.compile(r"^(\d{1,3}):(\d{2}(?:\.\d{1,3})?)\s+")
 
 _LABELLED = re.compile(
     r"^\s*(style|look|identity|subjects?|retention|soundscape|overall[_ ]soundscape|"
-    r"music|non[_ ]diegetic[_ ]music|score)\s*:\s*", re.IGNORECASE)
+    r"music|non[_ ]diegetic[_ ]music|score|(?:dialogue[_ ])?language)\s*:\s*",
+    re.IGNORECASE)
 
 _LABEL_CANON = {
     "style": "style", "look": "style",
@@ -71,6 +72,8 @@ _LABEL_CANON = {
     "overall soundscape": "soundscape",
     "music": "music", "score": "music",
     "non_diegetic_music": "music", "non diegetic music": "music",
+    "language": "language", "dialogue_language": "language",
+    "dialogue language": "language",
 }
 
 
@@ -288,6 +291,7 @@ def parse_global_prompt(text):
         retention:                         -> retention_analysis
         soundscape: / overall_soundscape:  -> overall_soundscape
         music:      / score:               -> non_diegetic_music
+        language:   / dialogue language:   -> the <d>[Language] dialogue tag
 
     Anything before the first label is treated as style, so a user who types a
     paragraph of look-and-feel with no labels at all still gets the right thing.
@@ -297,11 +301,12 @@ def parse_global_prompt(text):
     diagnostics = []
     text = normalize_prompt_text(text)
     fields = {"style_line": "", "identity_notes": "", "retention_notes": "",
-              "overall_soundscape": "", "non_diegetic_music": ""}
+              "overall_soundscape": "", "non_diegetic_music": "", "dialogue_language": ""}
     if not text:
         return fields, diagnostics
 
-    buckets = {"style": [], "identity": [], "retention": [], "soundscape": [], "music": []}
+    buckets = {"style": [], "identity": [], "retention": [], "soundscape": [], "music": [],
+               "language": []}
     current = "style"
     for line in text.split("\n"):
         m = _LABELLED.match(line)
@@ -320,4 +325,6 @@ def parse_global_prompt(text):
     fields["retention_notes"] = "\n".join(buckets["retention"]).strip()
     fields["overall_soundscape"] = " ".join(buckets["soundscape"]).strip()
     fields["non_diegetic_music"] = " ".join(buckets["music"]).strip()
+    # One word, the one H3 reads inside the tag: "Amharic", not a sentence about it.
+    fields["dialogue_language"] = " ".join(buckets["language"]).strip().strip(".")
     return fields, diagnostics

@@ -443,7 +443,9 @@
     0.0,
     -1.0,
     "@Ada",
-    "Ada's lines for the whole scene; silence while Ben speaks"
+    "Ada's lines for the whole scene; silence while Ben speaks",
+    true,
+    ""
    ],
    "title": "Voice · @Ada (S1)"
   },
@@ -495,7 +497,9 @@
     0.0,
     -1.0,
     "@Ben",
-    "Ben's lines for the whole scene; silence while Ada speaks"
+    "Ben's lines for the whole scene; silence while Ada speaks",
+    true,
+    ""
    ],
    "title": "Voice · @Ben (S2)"
   },
@@ -1025,7 +1029,9 @@
     true,
     "audio+colour",
     "lock_source",
-    0.35
+    0.35,
+    "canvas",
+    "off"
    ],
    "title": "② Pulse Render · lock_source · dry_run ON first"
   },

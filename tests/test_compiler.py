@@ -273,10 +273,22 @@ class TestWindowing(unittest.TestCase):
         self.assertEqual(len(offsets), len(set(offsets)))
 
     def test_total_frames_never_short_of_request(self):
-        from comfyui_pulse_studio.frames import seconds_to_frames
+        from comfyui_pulse_studio.frames import exact_frames
         for seconds in (3.0, 12.0, 16.0, 33.3):
             plan = compile_timeline(make_timeline(duration_seconds=seconds))
-            self.assertGreaterEqual(plan.total_frames, seconds_to_frames(seconds))
+            self.assertGreaterEqual(plan.total_frames, exact_frames(seconds))
+
+    def test_the_total_is_not_snapped_before_it_is_split(self):
+        """18s is 432 frames. Two windows can hold exactly 435 (226 + 209).
+
+        Snapping 432 up to the grid first (447) left no pair of windows summing
+        to it, so the film came back 226 + 226 = 18.83s -- 0.67s longer than
+        asked, with every seam after the first moved off the cut.
+        """
+        from comfyui_pulse_studio.frames import exact_frames
+        plan = compile_timeline(make_timeline(duration_seconds=18.0, window_seconds=12.0))
+        self.assertEqual(sorted(w.frame_count for w in plan.windows), [209, 226])
+        self.assertLess(plan.total_frames - exact_frames(18.0), 17)
 
 
 class TestCarryOver(unittest.TestCase):

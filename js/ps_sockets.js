@@ -40,6 +40,8 @@ export const GROUPS = {
     // ahead of an existing one would move a saved graph's wires onto the wrong
     // sockets. It must stay in step with PulseSlate.INPUT_TYPES in nodes.py.
     { prefix: "voices.voice_", max: 3 },
+    // Appended after voices, for the same reason.
+    { prefix: "cast.cast_", max: 6 },
   ],
   PulseShot: [
     { prefix: "refs.ref_image_", max: 4 },
