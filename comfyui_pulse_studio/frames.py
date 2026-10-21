@@ -473,6 +473,9 @@ def speech_aware_windows(total_frames, boundaries, speech, cap, floor, notes):
         seams.append(position)
     on_cuts = [q for q in seams if q in cuts]
     talking = [q for q in seams if in_speech(q, speech)]
+    # A seam on a cut that a line runs across is on a cut *and* in speech; counting
+    # it out of both groups reported "-1 in a pause".
+    pauses = [q for q in seams if q not in cuts and not in_speech(q, speech)]
     if seams and not speech:
         notes.append(
             "speech_aware had no lip-sync recording to listen to, so it put %d of %d "
@@ -480,7 +483,7 @@ def speech_aware_windows(total_frames, boundaries, speech, cap, floor, notes):
     elif seams:
         notes.append(
             "speech_aware put %d of %d seam(s) on a cut and %d in a pause%s."
-            % (len(on_cuts), len(seams), len(seams) - len(on_cuts) - len(talking),
+            % (len(on_cuts), len(seams), len(pauses),
                ("; %d land inside speech (frame %s) -- no layout on the 17k+5 grid "
                 "reaches a pause there. Move the cut, or add a breath to the take"
                 % (len(talking), ", ".join(str(q) for q in talking[:6])))

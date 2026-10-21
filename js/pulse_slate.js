@@ -100,6 +100,9 @@ const CSS = `
   font:inherit; font-size:9px; padding:2px 3px; border-radius:3px; cursor:pointer; }
 .ps-retention:focus { border-color:#6ab0ff; outline:none; }
 .ps-retention:disabled { color:#5a5a5a; border-color:#2c2c2c; cursor:not-allowed; }
+/* a recording's place on the film clock: at / from / to, in seconds. */
+.ps-timefield { display:flex; align-items:center; gap:2px; flex:0 0 auto; }
+.ps-time { width:52px; font-size:9px; padding:2px 3px; }
 .ps-btn { background:#2e2e2e; border:1px solid #444; color:#ccc; border-radius:3px;
   cursor:pointer; padding:3px 7px; font-size:10px; }
 .ps-btn:hover { background:#3c3c3c; color:#fff; border-color:#666; }
@@ -675,13 +678,44 @@ class AssetBinPanel {
     owner.addEventListener("change", () =>
       this.apply("set_voice_of", { asset_id: row.id, voice_of: owner.value }));
 
-    for (const el of [role, owner]) {
+    // Where the line plays and which seconds of the file it is. One take file
+    // can carry several lines this way -- a row per line, each cut from the file
+    // and placed at its shot -- with no Load Audio or Pulse Voice wired anywhere.
+    const timing = [
+      ["audio_offset", "at", "Film second this line starts at. 0 = with the film."],
+      ["trim_start", "from", "Start of the line inside the file, in seconds."],
+      ["trim_end", "to", "End of the line inside the file, in seconds. Empty = to the " +
+                         "end of the file."],
+    ].map(([key, label, title]) => {
+      const field = document.createElement("input");
+      field.className = "ps-name ps-time";
+      field.type = "number";
+      field.min = "0";
+      field.step = "0.01";
+      field.value = row[key] == null ? "" : String(Math.round(row[key] * 1000) / 1000);
+      field.placeholder = key === "trim_end" ? "end" : "0";
+      field.title = title;
+      const wrap = document.createElement("label");
+      wrap.className = "ps-timefield";
+      wrap.append(document.createTextNode(label), field);
+      return [key, field, wrap];
+    });
+    const fields = Object.fromEntries(timing.map(([key, field]) => [key, field]));
+    const send = () => this.apply("set_audio_timing", {
+      asset_id: row.id,
+      audio_offset: fields.audio_offset.value,
+      trim_start: fields.trim_start.value,
+      trim_end: fields.trim_end.value,
+    });
+
+    for (const el of [role, owner, ...timing.map(([, field]) => field)]) {
       for (const ev of ["mousedown", "pointerdown", "keydown"]) {
         el.addEventListener(ev, (e) => e.stopPropagation());
       }
     }
+    for (const [, field] of timing) field.addEventListener("change", send);
 
-    sub.append(role, owner);
+    sub.append(role, owner, ...timing.map(([, , wrap]) => wrap));
     return sub;
   }
 

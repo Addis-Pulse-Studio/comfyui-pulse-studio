@@ -1490,14 +1490,27 @@ def _lip_sync_diagnostics(index, total, start, end, window_seconds, files,
                        "quoted lines out of the shots it does not reach.")
     else:
         consequence = "That much of the window is silence, and the mouth is still through it."
+    tracks = [[e for e in _lip_sync_entries([ref]) if e.source_seconds is not None]
+              for ref in lip]
+    tracks = [entries for entries in tracks if entries]
+    # Two voices or more in one window is a conversation, and each voice is
+    # silent while the other one speaks -- by design, not as a short recording.
+    # Judged one voice at a time, a two-hander laid out as lines in the Asset Bin
+    # reported every voice in every window. So the window is judged on all of
+    # them together, where dead air is a stretch nobody speaks in, and the beat
+    # of air before a cut is held to the end-of-film second rather than to the
+    # quarter-second a lone narration gets.
+    voices = [[e for e in entries if not e.gated] for entries in tracks]
+    conversation = sum(1 for film_wide in voices if film_wide) > 1
+    if conversation:
+        out.extend(_window_coverage(
+            [e for film_wide in voices for e in film_wide], index, start, end,
+            max(tail_floor, LIP_SYNC_END_OF_FILM_TOLERANCE_SECONDS), consequence))
     measured = 0.0
-    for ref in lip:
-        entries = [e for e in _lip_sync_entries([ref]) if e.source_seconds is not None]
-        if not entries:
-            continue
+    for entries in tracks:
         measured = max(measured, max(e.source_seconds for e in entries))
         film_wide = [e for e in entries if not e.gated]
-        if film_wide:
+        if film_wide and not conversation:
             out.extend(_window_coverage(film_wide, index, start, end, tail_floor,
                                         consequence))
         # A film-clock recording wired into several shots is one recording heard

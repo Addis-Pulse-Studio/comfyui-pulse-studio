@@ -1560,7 +1560,7 @@ def _speech_spans(timeline, side):
         if shot is not None and not asset.free_run:
             placed = [(max(a, shot.start), min(b, shot.end)) for a, b in placed]
             placed = [(a, b) for a, b in placed if b > a]
-        frames.extend(lipsync.spans_to_frames(placed, fps, total))
+        frames.extend(lipsync.seam_frames(placed, fps, total))
     return lipsync.merge_spans(frames)
 
 

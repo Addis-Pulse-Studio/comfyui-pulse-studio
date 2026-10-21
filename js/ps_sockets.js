@@ -18,9 +18,11 @@
  *
  * So `sync` never edits `node.inputs` in place. It snapshots name -> link id,
  * rebuilds the whole dynamic tail in canonical order, then reattaches each link
- * by name and repairs `target_slot` on the link object itself. A socket that
- * disappears takes its link with it deliberately; every other wire lands back on
- * the input it was actually connected to.
+ * by name and repairs `target_slot` on the link object itself. Only a free
+ * socket is ever removed; every wire lands back on the input it was actually
+ * connected to. On a load the snapshot comes from the saved node, not the live
+ * sockets (savedLinks), and on frontend 1.57 the link object is the only thing
+ * that can move a wire (storeBacked).
  *
  * Everything here is wrapped: a throw inside onConfigure aborts the entire
  * workflow load, which is a far worse failure than a node drawn with too many
@@ -134,24 +136,110 @@ export function orderInputs(fixed, rebuilt) {
 }
 
 /**
- * Rebuild a node's dynamic socket tail. Safe to call at any time.
+ * Which wire each socket carried when the node was saved, by socket name.
+ *
+ * On a load this is the only record that still pairs a wire with its socket.
+ * Frontend 1.57 hangs every saved wire on the node's *creation-time* layout by
+ * slot number before `configure` runs -- the layout with one free socket per
+ * group -- and `configure` then merges the saved sockets in by name, keeping the
+ * misplaced wires. A slate saved with four shots and two cast members had its
+ * cast wires on shot_5 and shot_6 by the time onConfigure ran, and the server
+ * refused the prompt as an invalid connection. Null when the serialised node
+ * carries no inputs (a paste, a clone), which leaves the live links in charge.
  */
-export function sync(node) {
+export function savedLinks(info) {
+  if (!Array.isArray(info?.inputs)) return null;
+  const saved = new Map();
+  for (const input of info.inputs) {
+    if (input?.name != null && input.link != null) saved.set(input.name, input.link);
+  }
+  return saved;
+}
+
+/**
+ * True where a socket's `link` is derived from the frontend's link store (1.57
+ * and later) rather than stored on the socket. There, assigning a link id does
+ * nothing and assigning null *disconnects* whatever wire sits at that slot
+ * number -- so this file must never write `input.link` on such a socket. A wire
+ * is moved by changing its own `target_slot` instead.
+ */
+export function storeBacked(input) {
+  const proto = input == null ? null : Object.getPrototypeOf(input);
+  const descriptor = proto ? Object.getOwnPropertyDescriptor(proto, "link") : undefined;
+  return typeof descriptor?.set === "function";
+}
+
+/** Where a wire is parked while a rebuild moves the others. No node has a
+ *  socket this far down, so a parked wire can never land on a live one. */
+const PARKING_SLOT = 1 << 20;
+
+/** name -> link id, read off the sockets as they stand -- before anything moves.
+ *  On frontend 1.57 a socket's link is looked up by its slot number, so reading
+ *  this after a reorder would hand each name its neighbour's wire. */
+function liveLinks(node) {
+  const wires = new Map();
+  (node.inputs ?? []).forEach((input, slot) => {
+    if (input?.name == null || wires.has(input.name)) return;
+    const id = typeof node.getInputLink === "function" && storeBacked(input)
+      ? node.getInputLink(slot)?.id
+      : input.link;
+    if (id != null) wires.set(input.name, id);
+  });
+  return wires;
+}
+
+/**
+ * Put each wire back on the socket it belongs to, by name, after node.inputs
+ * has been rebuilt.
+ *
+ * Every wire is parked first and placed second. Frontend 1.57's link store
+ * refuses a move onto a slot another wire still occupies, so moving the wires
+ * one at a time fails the moment two of them trade places -- which is exactly
+ * what a socket inserted ahead of a connected one asks for.
+ */
+function reattach(node, wires) {
+  const slotOf = new Map();
+  node.inputs.forEach((input, slot) => {
+    if (input?.name != null && !slotOf.has(input.name)) slotOf.set(input.name, slot);
+  });
+
+  if (!node.inputs.some(storeBacked)) {
+    // Older frontends keep the wire on the socket itself.
+    for (const input of node.inputs) {
+      if (input?.name != null) input.link = wires.get(input.name) ?? null;
+    }
+  }
+
+  const graph = node.graph;
+  if (!graph?.links) return;
+  const moves = [];
+  for (const [name, id] of wires) {
+    const link = linkById(graph.links, id);
+    const slot = slotOf.get(name);
+    if (link && slot != null) moves.push([link, slot]);
+  }
+  moves.forEach(([link], i) => {
+    link.target_slot = PARKING_SLOT + i;
+  });
+  for (const [link, slot] of moves) {
+    if (link.target_id !== node.id) link.target_id = node.id;
+    link.target_slot = slot;
+  }
+}
+
+/**
+ * Rebuild a node's dynamic socket tail. Safe to call at any time.
+ *
+ * `saved`, from savedLinks(), says which wire belongs on which socket in place of
+ * the live sockets -- on a load, the live ones are wrong (see savedLinks).
+ */
+export function sync(node, saved = null) {
   const groups = GROUPS[node?.comfyClass ?? node?.type];
   if (!groups) return;
 
   const inputs = node.inputs ?? [];
-
-  // Snapshot: which dynamic sockets carry a link, and which link.
-  const links = new Map();
-  const connected = new Set();
-  for (const input of inputs) {
-    if (!isDynamic(input?.name, groups)) continue;
-    if (input.link != null) {
-      links.set(input.name, input.link);
-      connected.add(input.name);
-    }
-  }
+  const wires = saved ?? liveLinks(node);
+  const connected = new Set([...wires.keys()].filter((name) => isDynamic(name, groups)));
 
   const wanted = desiredNames(groups, connected);
   const fixed = inputs.filter((i) => !isDynamic(i?.name, groups));
@@ -160,10 +248,7 @@ export function sync(node) {
 
   const rebuilt = wanted.map((name) => {
     const previous = existing.get(name);
-    if (previous) {
-      previous.link = links.has(name) ? links.get(name) : null;
-      return previous;
-    }
+    if (previous) return previous;
     const { type, options } = inputDefinition(node, name);
     return { name, label: labelFor(name), type, link: null,
              shape: LiteGraph?.HollowCircle, ...(options.tooltip
@@ -173,25 +258,22 @@ export function sync(node) {
   const next = orderInputs(fixed, rebuilt);
   const unchanged = next.length === inputs.length
     && next.every((input, i) => input === inputs[i]);
-  if (unchanged) return;
+  // Same sockets in the same order can still need every wire moved: on a load
+  // it is the wires that are misplaced, not the sockets.
+  if (unchanged && !saved) return;
 
   node.inputs = next;
+  // Without this a wire keeps pointing at the slot number it had before the
+  // rebuild, and the frontend resolves a wire by slot number.
+  reattach(node, wires);
 
-  // Repair every link's target_slot against the new indices. Without this a wire
-  // keeps pointing at the slot number it had before the rebuild.
-  const graph = node.graph;
-  if (graph?.links) {
-    node.inputs.forEach((input, slot) => {
-      if (input.link == null) return;
-      const link = linkById(graph.links, input.link);
-      if (link) {
-        link.target_id = node.id;
-        link.target_slot = slot;
-      }
-    });
+  // Grow to fit the sockets, never shrink: computeSize is the node's minimum, and
+  // a load runs this rebuild, so taking it outright squeezed every saved slate to
+  // its narrowest and crushed the Asset Bin panel along with it.
+  const fit = node.computeSize?.();
+  if (fit && node.size) {
+    node.setSize?.([Math.max(node.size[0], fit[0]), Math.max(node.size[1], fit[1])]);
   }
-
-  node.setSize?.(node.computeSize?.() ?? node.size);
   node.setDirtyCanvas?.(true, true);
 }
 
@@ -224,8 +306,9 @@ app.registerExtension({
       const result = onConfigure?.apply(this, arguments);
       // After LiteGraph has restored the saved inputs and links. Rebuilding here
       // is what makes a workflow saved with six shots reopen with six shots and a
-      // seventh free socket, rather than with whatever this build declares.
-      sync(this);
+      // seventh free socket, rather than with whatever this build declares. The
+      // wires come from the saved record, not the live sockets -- see savedLinks.
+      sync(this, savedLinks(info));
       return result;
     }, `${nodeData.name}.onConfigure`);
 

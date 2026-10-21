@@ -366,8 +366,13 @@ class TestWorkflowShipsAndParses(unittest.TestCase):
         The rule, stated so a graph cannot drift back into it: wire fl2va only
         where something uses it -- a retake, a continuity mode that pins a frame,
         or a shot with an anchor on it.
+
+        Every graph in the folder, not only SHIPPED_GRAPHS: the HyperFlow
+        dialogue graph is left out of that tuple (it needs a third-party pack to
+        open clean) and shipped exactly this state -- a second checkpoint under
+        `continuity: none` -- until 2026-10-21.
         """
-        for path in SHIPPED_GRAPHS:
+        for path in sorted(WORKFLOW_DIR.glob("*.json")):
             with self.subTest(workflow=path.name):
                 d = json.loads(path.read_text(encoding="utf-8"))
                 by_id = {n["id"]: n for n in d["nodes"]}

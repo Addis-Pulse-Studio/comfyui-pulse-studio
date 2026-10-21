@@ -38,39 +38,6 @@
    "title": "MiniMax H3 REF2VA (non-pruned)"
   },
   {
-   "id": 11,
-   "type": "UNETLoader",
-   "pos": [
-    20,
-    150
-   ],
-   "size": [
-    420,
-    90
-   ],
-   "flags": {},
-   "order": 1,
-   "mode": 0,
-   "inputs": [],
-   "outputs": [
-    {
-     "name": "MODEL",
-     "type": "MODEL",
-     "links": [
-      2
-     ]
-    }
-   ],
-   "properties": {
-    "Node name for S&R": "UNETLoader"
-   },
-   "widgets_values": [
-    "minimax\\higher\\minimax_h3_fl2va_int8_convrot.safetensors",
-    "default"
-   ],
-   "title": "MiniMax H3 FL2VA (non-pruned) · continuation windows"
-  },
-  {
    "id": 12,
    "type": "CLIPLoader",
    "pos": [
@@ -209,45 +176,6 @@
    "title": "HyperFlow 8-step · ref2va"
   },
   {
-   "id": 16,
-   "type": "HyperFlowLoRALoader",
-   "pos": [
-    20,
-    690
-   ],
-   "size": [
-    420,
-    90
-   ],
-   "flags": {},
-   "order": 6,
-   "mode": 0,
-   "inputs": [
-    {
-     "name": "model",
-     "type": "MODEL",
-     "link": 2
-    }
-   ],
-   "outputs": [
-    {
-     "name": "MODEL",
-     "type": "MODEL",
-     "links": [
-      4
-     ]
-    }
-   ],
-   "properties": {
-    "Node name for S&R": "HyperFlowLoRALoader"
-   },
-   "widgets_values": [
-    "minimaxh3\\minimax_h3_hyperflow_8step_v1.0.safetensors",
-    1.0
-   ],
-   "title": "HyperFlow 8-step · fl2va"
-  },
-  {
    "id": 17,
    "type": "MiniMaxH3SigmaShift",
    "pos": [
@@ -286,222 +214,6 @@
     3
    ],
    "title": "Shift 12 / 3 · ref2va"
-  },
-  {
-   "id": 18,
-   "type": "MiniMaxH3SigmaShift",
-   "pos": [
-    20,
-    900
-   ],
-   "size": [
-    420,
-    80
-   ],
-   "flags": {},
-   "order": 8,
-   "mode": 0,
-   "inputs": [
-    {
-     "name": "model",
-     "type": "MODEL",
-     "link": 4
-    }
-   ],
-   "outputs": [
-    {
-     "name": "MODEL",
-     "type": "MODEL",
-     "links": [
-      11,
-      22
-     ]
-    }
-   ],
-   "properties": {
-    "Node name for S&R": "MiniMaxH3SigmaShift"
-   },
-   "widgets_values": [
-    12,
-    3
-   ],
-   "title": "Shift 12 / 3 · fl2va"
-  },
-  {
-   "id": 30,
-   "type": "LoadAudio",
-   "pos": [
-    480,
-    40
-   ],
-   "size": [
-    360,
-    140
-   ],
-   "flags": {},
-   "order": 9,
-   "mode": 0,
-   "inputs": [],
-   "outputs": [
-    {
-     "name": "AUDIO",
-     "type": "AUDIO",
-     "links": [
-      5
-     ]
-    }
-   ],
-   "properties": {
-    "Node name for S&R": "LoadAudio"
-   },
-   "widgets_values": [
-    "example_pulse_voice.wav",
-    null,
-    null
-   ],
-   "title": "Ada's dialogue track (full length, film clock)"
-  },
-  {
-   "id": 31,
-   "type": "LoadAudio",
-   "pos": [
-    480,
-    200
-   ],
-   "size": [
-    360,
-    140
-   ],
-   "flags": {},
-   "order": 10,
-   "mode": 0,
-   "inputs": [],
-   "outputs": [
-    {
-     "name": "AUDIO",
-     "type": "AUDIO",
-     "links": [
-      6
-     ]
-    }
-   ],
-   "properties": {
-    "Node name for S&R": "LoadAudio"
-   },
-   "widgets_values": [
-    "example_pulse_voice.wav",
-    null,
-    null
-   ],
-   "title": "Ben's dialogue track (full length, film clock)"
-  },
-  {
-   "id": 32,
-   "type": "PulseVoice",
-   "pos": [
-    480,
-    360
-   ],
-   "size": [
-    360,
-    260
-   ],
-   "flags": {},
-   "order": 11,
-   "mode": 0,
-   "inputs": [
-    {
-     "name": "audio",
-     "type": "AUDIO",
-     "link": 5
-    },
-    {
-     "name": "final_audio",
-     "type": "AUDIO",
-     "link": null,
-     "shape": 7
-    }
-   ],
-   "outputs": [
-    {
-     "name": "voice",
-     "type": "PULSE_VOICE",
-     "links": [
-      16
-     ]
-    }
-   ],
-   "properties": {
-    "Node name for S&R": "PulseVoice"
-   },
-   "widgets_values": [
-    "3.0.0",
-    "AdaVoice",
-    "lip_sync",
-    "film_clock",
-    0.0,
-    0.0,
-    -1.0,
-    "@Ada",
-    "Ada's lines for the whole scene; silence while Ben speaks",
-    true,
-    ""
-   ],
-   "title": "Voice · @Ada (S1)"
-  },
-  {
-   "id": 33,
-   "type": "PulseVoice",
-   "pos": [
-    480,
-    640
-   ],
-   "size": [
-    360,
-    260
-   ],
-   "flags": {},
-   "order": 12,
-   "mode": 0,
-   "inputs": [
-    {
-     "name": "audio",
-     "type": "AUDIO",
-     "link": 6
-    },
-    {
-     "name": "final_audio",
-     "type": "AUDIO",
-     "link": null,
-     "shape": 7
-    }
-   ],
-   "outputs": [
-    {
-     "name": "voice",
-     "type": "PULSE_VOICE",
-     "links": [
-      17
-     ]
-    }
-   ],
-   "properties": {
-    "Node name for S&R": "PulseVoice"
-   },
-   "widgets_values": [
-    "3.0.0",
-    "BenVoice",
-    "lip_sync",
-    "film_clock",
-    0.0,
-    0.0,
-    -1.0,
-    "@Ben",
-    "Ben's lines for the whole scene; silence while Ada speaks",
-    true,
-    ""
-   ],
-   "title": "Voice · @Ben (S2)"
   },
   {
    "id": 40,
@@ -805,7 +517,7 @@
     {
      "name": "model_fl2va",
      "type": "MODEL",
-     "link": 11
+     "link": null
     },
     {
      "name": "ref_video",
@@ -855,17 +567,9 @@
     {
      "name": "voices.voice_1",
      "type": "PULSE_VOICE",
-     "link": 16
-    },
-    {
-     "name": "voices.voice_2",
-     "type": "PULSE_VOICE",
-     "link": 17
-    },
-    {
-     "name": "voices.voice_3",
-     "type": "PULSE_VOICE",
-     "link": null
+     "link": null,
+     "label": "voice_1",
+     "shape": 7
     }
    ],
    "outputs": [
@@ -909,7 +613,7 @@
    },
    "widgets_values": [
     "3.0.0",
-    "{\"schema\": 2, \"cast\": [], \"assets\": [{\"id\": \"asset_ada\", \"kind\": \"image\", \"name\": \"Ada\", \"file\": \"example_pulse_subject_a.png\", \"description\": \"character A, seated on the left: replace the file and describe their face, hair and clothing\", \"retention\": \"fully_preserved\"}, {\"id\": \"asset_ben\", \"kind\": \"image\", \"name\": \"Ben\", \"file\": \"example_pulse_subject_b.png\", \"description\": \"character B, seated on the right: replace the file and describe their face, hair and clothing\", \"retention\": \"fully_preserved\"}]}",
+    "{\"schema\": 2, \"cast\": [], \"assets\": [{\"id\": \"asset_ada\", \"kind\": \"image\", \"name\": \"Ada\", \"file\": \"example_pulse_subject_a.png\", \"description\": \"character A, seated on the left: replace the file and describe their face, hair and clothing\", \"retention\": \"fully_preserved\"}, {\"id\": \"asset_ben\", \"kind\": \"image\", \"name\": \"Ben\", \"file\": \"example_pulse_subject_b.png\", \"description\": \"character B, seated on the right: replace the file and describe their face, hair and clothing\", \"retention\": \"fully_preserved\"}, {\"id\": \"asset_ada_voice\", \"kind\": \"audio\", \"name\": \"AdaVoice\", \"file\": \"example_pulse_voice.wav\", \"audio_role\": \"lip_sync\", \"voice_of\": \"asset_ada\"}, {\"id\": \"asset_ben_voice\", \"kind\": \"audio\", \"name\": \"BenVoice\", \"file\": \"example_pulse_voice.wav\", \"audio_role\": \"lip_sync\", \"voice_of\": \"asset_ben\"}]}",
     "style: Live-action, cinematic 35mm look, warm practical cafe lighting, shallow depth of field, locked-off camera, soft film grain.\nidentity: @Ada stays on the left and @Ben stays on the right in every shot, with the same faces, hair and clothing throughout.\nsoundscape: Quiet cafe room tone under the dialogue; no music, no third voice.\nmusic: None.",
     "",
     25.9166,
@@ -975,7 +679,7 @@
     {
      "name": "model_fl2va",
      "type": "MODEL",
-     "link": 22
+     "link": null
     }
    ],
    "outputs": [
@@ -1120,7 +824,7 @@
     "Node name for S&R": "MarkdownNote"
    },
    "widgets_values": [
-    "## 2-character dialogue · MiniMax H3 + HyperFlow 8-step\n\nTwo faces, two voices: each character's identity is bound to its own dialogue track.\n\n**What to swap in**\n- Asset Bin on Pulse Slate: point **Ada** and **Ben** at your two character images and describe each one. Ada must sit on the **left** and Ben on the **right**; every shot's visual keeps that layout.\n- The two LoadAudio nodes: one **full-length track per character**, both the length of the scene, on the same clock, with silence while the other character speaks. Set `duration_seconds` on Pulse Slate to that length (placeholder: 25.92 s = 622 frames = two 311-frame windows) and retime the shots so each one covers its lines.\n\n**How the timing is kept**\n- Each PulseVoice is `lip_sync` on `film_clock` and names its speaker (`@Ada` → S1, `@Ben` → S2), so every window receives exactly its own seconds of each track, and the prompt says whose voice is whose.\n- Pulse Render `audio_mode` is **lock_source**: each window's lip-sync mix is also written into H3's *target* audio latent and held there, so the real waveform drives the mouths at every step instead of only being described to the model. (`reference_only` is the old behaviour; `remix_source` lets the model re-voice it by `remix_strength`.)\n- Pulse Render `use_reference_audio` is **on**, so the finished film carries your recordings, not H3's decode of them. Wire a clean take into a PulseVoice's `final_audio` and that is what gets muxed, at exactly the same seconds, while `audio` keeps driving the mouth.\n\n**Model chain** (replaces TaoMate 3-step on the pruned checkpoint): non-pruned `ref2va` and `fl2va` int8_convrot → **HyperFlow LoRA Loader** → Shift 12/3. Pulse Slate samples with **8 steps · euler · scheduler `hyperflow` · cfg 1.0**; nothing else is valid with HyperFlow. Sparse attention is left out: HyperFlow is validated on dense attention.\n\n**First run:** Pulse Render `dry_run` is **on**. Read the report: two voices bound to @Ada / @Ben, ref2va windows, 8 steps. Then turn dry_run off.\n\n**Lip-sync correction (bypassed).** Only if lock_source still falls short: select the right-hand group and press Ctrl+B. **Pulse Lip-Sync Segment** cuts out one character at a time: only the frames where *their own* recording is audible (plus 0.25 s handles), only their half of the frame (`box`), and only their voice, relabelled 24→25 fps for LatentSync (which assumes 25 fps; without it the mouth drifts ~4 % per second). **Pulse Lip-Sync Paste** writes the corrected frames back at exactly those frames, feathered, and the Ben pass runs on Ada's result. Change the boxes if your characters are framed differently."
+    "## 2-character dialogue · MiniMax H3 + HyperFlow 8-step\n\nTwo faces, two voices: each character's identity is bound to its own dialogue track.\n\n**What to swap in** -- all in Pulse Slate's **Asset Bin** (the panel at the bottom of the node), the one place this graph attaches references:\n- **Ada** and **Ben**: point them at your two character images and describe each one. Ada must sit on the **left** and Ben on the **right**; every shot's visual keeps that layout.\n- **AdaVoice** and **BenVoice**: one **full-length track per character**, both the length of the scene, on the same clock (`at` 0), with silence while the other character speaks. Set `duration_seconds` on Pulse Slate to that length (placeholder: 25.92 s = 622 frames = two 311-frame windows) and retime the shots so each one covers its lines.\n\n**How the timing is kept**\n- Each voice row is `lip_sync`, at 0 on the film clock, and owned by its character (AdaVoice → @Ada = S1, BenVoice → @Ben = S2), so every window receives exactly its own seconds of each track, and the prompt says whose voice is whose.\n- Pulse Render `audio_mode` is **lock_source**: each window's lip-sync mix is also written into H3's *target* audio latent and held there, so the real waveform drives the mouths at every step instead of only being described to the model. (`reference_only` is the old behaviour; `remix_source` lets the model re-voice it by `remix_strength`.)\n- Pulse Render `use_reference_audio` is **on**, so the finished film carries your recordings, not H3's decode of them.\n\n**Model chain** (replaces TaoMate 3-step on the pruned checkpoint): non-pruned `ref2va` int8_convrot → **HyperFlow LoRA Loader** → Shift 12/3 -- **one checkpoint for every window**, so the faces and voices are referenced in each one. `continuity` is none, so no window ever samples on an fl2va checkpoint; loading one as well only cost ~20 GB and mixed two models. Pulse Slate samples with **8 steps · euler · scheduler `hyperflow` · cfg 1.0**; nothing else is valid with HyperFlow. Sparse attention is left out: HyperFlow is validated on dense attention.\n\n**First run:** Pulse Render `dry_run` is **on**. Read the report: two voices bound to @Ada / @Ben, ref2va windows, 8 steps. Then turn dry_run off.\n\n**Lip-sync correction (bypassed).** Only if lock_source still falls short: select the right-hand group and press Ctrl+B. **Pulse Lip-Sync Segment** cuts out one character at a time: only the frames where *their own* recording is audible (plus 0.25 s handles), only their half of the frame (`box`), and only their voice, relabelled 24→25 fps for LatentSync (which assumes 25 fps; without it the mouth drifts ~4 % per second). **Pulse Lip-Sync Paste** writes the corrected frames back at exactly those frames, feathered, and the Ben pass runs on Ada's result. Change the boxes if your characters are framed differently."
    ],
    "title": "Read me"
   },
@@ -1565,44 +1269,12 @@
    "MODEL"
   ],
   [
-   2,
-   11,
-   0,
-   16,
-   0,
-   "MODEL"
-  ],
-  [
    3,
    15,
    0,
    17,
    0,
    "MODEL"
-  ],
-  [
-   4,
-   16,
-   0,
-   18,
-   0,
-   "MODEL"
-  ],
-  [
-   5,
-   30,
-   0,
-   32,
-   0,
-   "AUDIO"
-  ],
-  [
-   6,
-   31,
-   0,
-   33,
-   0,
-   "AUDIO"
   ],
   [
    7,
@@ -1637,14 +1309,6 @@
    "VAE"
   ],
   [
-   11,
-   18,
-   0,
-   20,
-   4,
-   "MODEL"
-  ],
-  [
    12,
    40,
    0,
@@ -1677,22 +1341,6 @@
    "PULSE_SHOT"
   ],
   [
-   16,
-   32,
-   0,
-   20,
-   14,
-   "PULSE_VOICE"
-  ],
-  [
-   17,
-   33,
-   0,
-   20,
-   15,
-   "PULSE_VOICE"
-  ],
-  [
    18,
    20,
    0,
@@ -1723,14 +1371,6 @@
    21,
    3,
    "VAE"
-  ],
-  [
-   22,
-   18,
-   0,
-   21,
-   4,
-   "MODEL"
   ],
   [
    23,
@@ -1888,7 +1528,7 @@
  "groups": [
   {
    "id": 1,
-   "title": "LOADERS + HyperFlow (both checkpoints)",
+   "title": "LOADERS + HyperFlow (one checkpoint, every window)",
    "bounding": [
     0,
     0,
@@ -1896,18 +1536,6 @@
     1000
    ],
    "color": "#a1309b",
-   "flags": {}
-  },
-  {
-   "id": 2,
-   "title": "VOICES · one track per character",
-   "bounding": [
-    460,
-    0,
-    400,
-    920
-   ],
-   "color": "#3f789e",
    "flags": {}
   },
   {

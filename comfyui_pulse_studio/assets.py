@@ -20,6 +20,7 @@ number and it is computed, not stored.
 import re
 
 from .constants import (
+    AUDIO_ROLE_LIP_SYNC,
     MAX_REF_AUDIOS,
     MAX_REF_AUDIOS_CEILING,
     MAX_REF_FILES_TOTAL,
@@ -330,6 +331,26 @@ class TagMap:
         return self.by_id.get(asset_id + "#soundtrack")
 
 
+def voice_key(asset):
+    """The <Audio j> reference a recording rides on in a window.
+
+    Lip-sync recordings bound to the same character are folded into one voice
+    track at compile time (compiler.voice_tracks): a two-hander with six lines in
+    the bin reaches each window as two references, not six. Anything else is a
+    reference of its own.
+    """
+    if asset.audio_role == AUDIO_ROLE_LIP_SYNC and asset.voice_of and not asset.synthetic:
+        return ("voice", asset.voice_of)
+    return ("asset", asset.asset_id)
+
+
+def _audio_references(assets):
+    """How many <Audio j> references these recordings cost a window -- one per
+    voice_key. Counting every line refused the fourth line of a dialogue that
+    never asks any window for more than two."""
+    return len({voice_key(a) for a in assets if a.kind == KIND_AUDIO})
+
+
 class AssetBin:
     """An ordered collection of reference assets, budget-aware at edit time.
 
@@ -421,12 +442,13 @@ class AssetBin:
         assets = list(self._assets) + ([extra] if extra is not None else [])
         images = sum(1 for a in assets if a.kind == KIND_IMAGE)
         videos = sum(1 for a in assets if a.kind == KIND_VIDEO)
-        audios = sum(1 for a in assets if a.kind == KIND_AUDIO)
+        audios = _audio_references(assets)
         soundtracks = sum(1 for a in assets if a.kind == KIND_VIDEO and a.include_audio)
         # A paired soundtrack rides inside its video's own file, so it consumes an
         # <Audio j> ordinal but not one of the 12 file slots. Synthetic carry-over
         # assets are not files either -- they never existed on disk.
-        files = sum(1 for a in assets if not a.synthetic)
+        files = (sum(1 for a in assets if a.kind != KIND_AUDIO and not a.synthetic)
+                 + _audio_references(a for a in assets if not a.synthetic))
 
         errors = []
         if images > limits.images:

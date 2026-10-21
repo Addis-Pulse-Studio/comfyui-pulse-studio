@@ -109,6 +109,27 @@ plain reference-driven render. Loading both is ~42 GB.
 this pack's Apache-2.0 that governs your use of the model and of what you
 generate with it. Read it before shipping client work.
 
+### The distilled checkpoints, and graphs for them
+
+`python3 tools/build_oct2026_workflows.py <folder> [media.json]` writes ten graphs
+into a folder of your choosing — 30 s and 60 s of each family below. They are
+written rather than shipped because they name model files and media your install
+has to have, and HyperFlow needs the third-party ComfyUI-HyperFlow pack. The media
+names in the script are placeholders; a `media.json` with the same keys (`MEDIA` at
+the top of the script) names your own files without editing it.
+
+| family | checkpoint | format |
+|---|---|---|
+| `PS_FastH3Omni_Dialogue` | [FastH3-Omni 8-step](https://huggingface.co/FastVideo/FastH3-Omni-Comfy) (pruned ref2va) + VSA | 16:9 two-hander |
+| `PS_HyperFlow_Dialogue` | ref2va (non-pruned) + [HyperFlow](https://huggingface.co/VideoRebirthAI/hyperflow) | the same script, for an A/B |
+| `PS_FastH3Omni_ContinuousTake` | FastH3-Omni 8-step | 9:16, one speaker |
+| `PS_HyperFlow_ContinuousTake` | ref2va (non-pruned) + HyperFlow | 16:9, the same script |
+| `PS_TaoMate_Vertical` | fl2va (non-pruned) + [TaoMate 3-step](https://huggingface.co/TaoLiveAIGC/TaoMate-H3-FL2VA) | 9:16 keyframe series |
+
+Every graph renders all of its windows on **one** checkpoint, and keeps its faces
+and recordings in Pulse Slate's Asset Bin — one place to attach a reference. Each
+has a READ FIRST note saying what to replace.
+
 ## Never type a tag number
 
 > ### Drag assets onto the node body. Reference them by name.
@@ -443,15 +464,38 @@ happening. It cannot hit every cut: cumulative position after k windows is
 the largest subset it can hit, gives up `window_seconds` to hit them, and names
 the cuts it could not reach in the report.
 
+`speech_aware` listens. It reads where every lip-sync recording is speaking and
+puts each seam on a cut where the grid reaches one, otherwise into a pause, and
+never through a word: a seam mid-syllable has one window close the mouth and the
+next one open it again, which reads as a stutter however good either side is.
+Windows stay between 5 and 15 s. Every other policy now reports a seam that lands
+inside speech.
+
 `aspect_ratio` picks the canvas, and each preset is fitted to H3's 1,032,192 px
 budget at load time rather than hardcoded, so the table cannot drift from the
 budget: 16:9 is 1344×768, 9:16 is 768×1344, 21:9 is 1536×672, 1:1 is 992×992,
 4:3 is 1152×864. `custom` uses the `width`/`height` widgets instead.
 
-`continuity` chooses how windows join: `none`, `last_frame_carry`, or
-`keyframe_pairs`. The latter two pin a frame, which is the fl2va checkpoint
-specifically, so they need `model_fl2va` and **fail at compile time** without it
-rather than falling back to something that looks like it worked.
+`continuity` chooses how windows join: `none`, `last_frame_carry`,
+`keyframe_pairs` or `ref_guided_carry`. The middle two pin a frame, which is the
+fl2va checkpoint specifically, so they need `model_fl2va` and **fail at compile
+time** without it rather than falling back to something that looks like it
+worked. `ref_guided_carry` (experimental) keeps every window on the reference
+checkpoint and pins the previous window's last frame with a guide instead.
+
+**One checkpoint per film, unless you mean two.** fl2va takes no references, so
+a film whose first window is a reference window and whose later windows are fl2va
+sees the faces and voices in window 1 only — after it, identity is whatever the
+carried frame and the prompt can hold, and the voice is a description. With
+`none` or `ref_guided_carry` nothing samples on `model_fl2va` at all, so leave it
+unwired: it is ~20 GB resident for nothing, and the report says so.
+
+The **`recipe`** socket takes a [Pulse Recipe](#pulse-recipe): how this film's
+checkpoint wants to be sampled (FastH3-Omni, HyperFlow, TaoMate or the base
+models). It replaces the steps / sampler / scheduler / cfg widgets, which then
+only apply when nothing is wired. `recipe_fl2va` does the same for the fl2va
+windows. The **`cast`** sockets take [Pulse Character](#pulse-character) nodes,
+for a graph that prefers wires to the Asset Bin.
 
 ### Pulse Shot
 
@@ -600,12 +644,25 @@ Binding to a picture that is not in the bin, or to another recording, is refused
 rather than written into the prompt. A voice belongs to somebody the model can
 see.
 
-A bin recording reads the **film clock**, like `ref_audio` does: it is trimmed to
-each window starting at that window's position in the whole film. The panel has
-no control for saying otherwise — [Pulse Voice](#pulse-voice) is where that
-lives. What the bin does get for free is measurement: the file's length is read
-from its header at compile time, so a recording that does not cover the windows
-it is trimmed to is named in the report rather than rendering as silence.
+A bin recording sits on the **film clock**, and the row says where:
+
+- **at** — the film second the recording starts. 0 is with the film, which is
+  what a narration spanning the timeline wants.
+- **from** / **to** — which seconds of the file play. Empty **to** is the end of
+  the file.
+
+So one take file can carry several lines from the bin: a row per line, each cut
+out of the file and placed at its shot, with no Load Audio or Pulse Voice wired
+anywhere. The example two-handers are built exactly like that. Every lip-sync
+line of one character rides **one** `<Audio j>` in each window, so the meter
+counts voices, not lines: six lines between two characters read 2/3 audio, and
+the panel tags every line of a voice with that voice's number.
+
+What the bin also gets is measurement: the file's length is read from its header
+at compile time, so a recording that does not cover the windows it is trimmed to
+is named in the report rather than rendering as silence. A window holding two or
+more voices is judged on all of them together — each is silent while the other
+speaks, by design — and only a stretch nobody speaks in is reported.
 
 Where both apply — a shot's own `ref_audio` that also carries an explicit
 `voice_of` — the explicit binding wins. The author naming a character beats the
@@ -672,6 +729,38 @@ says so when their lengths differ.
 
 `example_workflows/PulseSlate_Voice.json` is the whole thing in one graph.
 
+### Pulse Recipe
+
+How one checkpoint wants to be sampled, said once and wired into Pulse Slate's
+`recipe` (reference windows) or `recipe_fl2va` (First/Last-Frame windows). The
+distilled checkpoints do not agree with each other, and the wrong settings render
+without complaint and look like the model being bad:
+
+| preset | steps · sampler · schedule | for |
+|---|---|---|
+| `fasth3_omni_8step` | 8 · euler · simple | FastH3-Omni (pruned ref2va). Patch it with Model Attention Backend → Model Sparse Attention (vsa, keep 10). |
+| `taomate_fl2va_3step` | 3 · euler · sigmas `1.0, 0.961165, 0.853333, 0.0` | the full fl2va checkpoint with the TaoMate LoRA at 1.0 |
+| `hyperflow_8step` | 8 · euler · `hyperflow` | either branch, non-pruned, with ComfyUI-HyperFlow's LoRA loader |
+| `h3_base` | 20 · res_multistep · simple | the undistilled checkpoints |
+| `custom` | the widgets, or a hand-written `sigmas` | anything else |
+
+cfg is 1.0 on all of them. A recipe that cannot be sampled at all — sigmas that
+run upward or stop short of 0, a `hyperflow` schedule at anything but 8 steps —
+is refused at compile time rather than inside the first window's sampler. One
+that is merely off-recipe for the model it samples — FastH3's stacked PDD heads
+away from 8 Euler steps or without VSA, the `hyperflow` schedule on a model with
+no HyperFlow adapter — is named in the report.
+
+### Pulse Character
+
+One character as one node: `name`, `description`, `retention`, a `face`, an
+optional full-body `body` and an optional `voice` from a Pulse Voice, bound to one
+another when it is made. Into Pulse Slate's `cast` sockets. The body view is cited
+inside the character's one `<Subject N>`, never as a second person.
+
+It is the wired alternative to the Asset Bin. Use one or the other for a film —
+references attached in two places are the ones that drift apart.
+
 ### Pulse Render
 
 Executes a `PULSE_TIMELINE`, reusing every window already on disk. See
@@ -713,6 +802,16 @@ Executes a `PULSE_TIMELINE`, reusing every window already on disk. See
 
   The mode reaches the cache key only when it isn't `reference_only`, and only on
   windows that carry a lip-sync recording. Every key already on disk stays put.
+
+- `ref_image_fit` — `canvas` crops each reference picture to the render's aspect,
+  as always. `keep_aspect` hands it over whole and lets H3 scale it, so a portrait
+  character sheet keeps its head and its feet.
+- `upscale` — the finished film at 1080. Windows render inside H3's pixel budget
+  either way; neither FastH3-Omni nor TaoMate renders 1080 natively. `1080p_fit`
+  keeps the aspect (1344×768 → 1890×1080); `1080p_exact` delivers 1920×1080 or
+  1080×1920. The finished file is resampled one frame at a time with Lanczos and
+  its audio copied untouched, so a long film is never held in memory at the
+  larger size. It adds no detail the render did not have.
 
 Every approximation patched onto the incoming model is detected and folded into
 the cache key. Sol-Attn, Spectrum and EasyCache all change what the same prompt at
