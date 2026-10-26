@@ -288,6 +288,30 @@ def audio_span(audio, start_seconds, seconds):
     return {"waveform": piece, "sample_rate": sr}
 
 
+def gate_audio(audio, gate_start, gate_end, fade_seconds, fade_in=True, fade_out=True):
+    """Silence an AUDIO dict outside [gate_start, gate_end) seconds, with short ramps.
+
+    The tensor rind over `concat.gate_bounds`, which decides every index. The clip
+    keeps its length -- a voice piece is one layer of a window-long track, and
+    every layer has to line up sample for sample with the others.
+    """
+    if audio is None:
+        return None
+    rate = int(audio["sample_rate"])
+    waveform = audio["waveform"]
+    a, b, up, down = _concat.gate_bounds(waveform.shape[-1], rate, gate_start, gate_end,
+                                         fade_seconds, fade_in, fade_out)
+    gain = waveform.new_zeros(waveform.shape[-1])
+    gain[a:b] = 1.0
+    if up:
+        gain[a:a + up] = torch.linspace(0.0, 1.0, up + 2, dtype=gain.dtype,
+                                        device=gain.device)[1:-1]
+    if down:
+        gain[b - down:b] = torch.linspace(1.0, 0.0, down + 2, dtype=gain.dtype,
+                                          device=gain.device)[1:-1]
+    return {"waveform": waveform * gain, "sample_rate": rate}
+
+
 def audio_length_seconds(audio):
     """How long an AUDIO dict runs, or None when there is nothing to measure.
 
@@ -982,6 +1006,82 @@ def _remux_concat(paths, out_path, frame_counts, fps=24, audio=None):
         for packet in audio_packets[audio_index:]:
             output.mux(packet)
     return out_path
+
+
+# ── 1080 output ─────────────────────────────────────────────────────────────
+
+def upscale_video(src, dst, mode, crf=16):
+    """Resample a finished film to 1080 with Lanczos, one frame at a time.
+
+    The audio is copied packet for packet -- it was encoded once at assembly and
+    is not touched again. Memory is one decoded frame, whatever the film's
+    length, which is why this runs on the assembled file rather than on the
+    frame stack: a 60-second film at 1890x1080 is 9 GB of float frames.
+
+    A resample adds no detail the render did not have; it is what makes the file
+    1080 for delivery. Returns `dst`, or "" if there was nothing to do or it failed
+    (the native assembly is untouched either way).
+    """
+    import av
+    from fractions import Fraction
+
+    if not src or not os.path.exists(src):
+        return ""
+    try:
+        with av.open(src) as film:
+            if not film.streams.video:
+                return ""
+            video_in = film.streams.video[0]
+            audio_in = film.streams.audio[0] if film.streams.audio else None
+            size = _concat.upscale_size(video_in.codec_context.width,
+                                        video_in.codec_context.height, mode)
+            if size is None:
+                return ""
+            scaled_w, scaled_h, out_w, out_h = size
+            left, top = (scaled_w - out_w) // 2, (scaled_h - out_h) // 2
+            rate = video_in.average_rate or Fraction(24, 1)
+            os.makedirs(os.path.dirname(dst) or ".", exist_ok=True)
+            with av.open(dst, mode="w") as output:
+                video_out = output.add_stream("libx264", rate=rate)
+                video_out.width, video_out.height = out_w, out_h
+                video_out.pix_fmt = "yuv420p"
+                video_out.options = {"crf": str(int(crf)), "preset": "medium"}
+                audio_out = (output.add_stream_from_template(audio_in)
+                             if audio_in is not None else None)
+                index = 0
+                streams = [video_in] + ([audio_in] if audio_in is not None else [])
+                for packet in film.demux(*streams):
+                    if packet.stream.type == "audio":
+                        if packet.dts is None:
+                            continue
+                        packet.stream = audio_out
+                        output.mux(packet)
+                        continue
+                    for frame in packet.decode():
+                        big = frame.reformat(width=scaled_w, height=scaled_h,
+                                             format="rgb24", interpolation="LANCZOS")
+                        if (scaled_w, scaled_h) != (out_w, out_h):
+                            array = big.to_ndarray()[top:top + out_h, left:left + out_w]
+                            big = av.VideoFrame.from_ndarray(
+                                np.ascontiguousarray(array), format="rgb24")
+                        big.pts = index
+                        big.time_base = Fraction(1, 1) / rate
+                        index += 1
+                        for out_packet in video_out.encode(big):
+                            output.mux(out_packet)
+                for out_packet in video_out.encode(None):
+                    output.mux(out_packet)
+    except Exception as exc:
+        log.error("[PulseStudio] could not upscale %s to %s (%s); the native film is "
+                  "untouched", src, mode, exc)
+        try:
+            if os.path.exists(dst):
+                os.unlink(dst)
+        except OSError:  # pragma: no cover
+            pass
+        return ""
+    _fsync_path(dst)
+    return dst
 
 
 # ── VRAM accounting (spec §9.6, §12.7) ──────────────────────────────────────

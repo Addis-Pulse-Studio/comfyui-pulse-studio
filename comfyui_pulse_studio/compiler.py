@@ -41,6 +41,7 @@ from .assets import (
 )
 from .constants import (
     AUDIO_ROLE_LIP_SYNC,
+    VOICE_GATE_TAIL_SECONDS,
     AUDIO_ROLE_RETENTION,
     BRANCH_FL2VA,
     BRANCH_REF2VA,
@@ -58,6 +59,8 @@ from .constants import (
 from .concat import audio_span_report
 from .frames import (
     align_frame_count,
+    exact_frames,
+    in_speech,
     frames_to_seconds,
     last_anchor_index,
     partition_windows,
@@ -68,7 +71,10 @@ from .timeline import Timeline
 
 __all__ = [
     "DIALOGUE_BLOCK_RE",
+    "VoicePiece",
+    "voice_tracks",
     "CompiledWindow",
+    "GUIDE_FIRST",
     "CompiledPlan",
     "CarryPolicy",
     "compile_timeline",
@@ -80,6 +86,9 @@ __all__ = [
 CARRY_IMAGE_ID = "__carry_frame__"
 CARRY_VIDEO_ID = "__carry_clip__"
 CARRY_AUDIO_ID = "__carry_audio__"
+# The anchor key a ref2va window pins its previous window's last frame under, on
+# `ref_guided_carry`. Not a reference: it has no socket, no ordinal and no tag.
+GUIDE_FIRST = "guide_first"
 
 
 # ── small text helpers ──────────────────────────────────────────────────────
@@ -107,8 +116,12 @@ def wrap_dialogue(text, language):
     """Wrap every "..." span as <d>[Language] ...</d>, H3's dialogue tag.
 
     Only quoted spans are touched; any tag the compiler already resolved outside
-    the quotes is left exactly as it was.
+    the quotes is left exactly as it was. Typographic quotes -- the curly pair a
+    word processor or a phone keyboard writes, and the guillemets Amharic, French
+    and Russian scripts use -- count as quotes too; they reached the model as
+    narration before, so the line was never spoken.
     """
+    text = text.translate(_QUOTE_MARKS)
     out = []
     i = 0
     while True:
@@ -125,6 +138,10 @@ def wrap_dialogue(text, language):
         out.append("<d>[%s] %s</d>" % (language, inner))
         i = b + 1
     return "".join(out)
+
+
+#: Opening and closing quote marks that mean what '"' means.
+_QUOTE_MARKS = {ord(c): '"' for c in "\u201c\u201d\u201e\u201f\u00ab\u00bb"}
 
 
 def _normalise_dialogue(text):
@@ -274,11 +291,11 @@ class FileRef:
 
     __slots__ = ("socket", "kind", "asset_id", "name", "file", "tag",
                  "trim_start", "trim_end", "synthetic", "audio_role",
-                 "audio_offset", "source_seconds")
+                 "audio_offset", "source_seconds", "pieces", "take")
 
     def __init__(self, socket, kind, asset_id, name, file, tag,
                  trim_start=0.0, trim_end=None, synthetic=False, audio_role=None,
-                 audio_offset=0.0, source_seconds=None):
+                 audio_offset=0.0, source_seconds=None, pieces=None, take=False):
         self.socket = socket
         self.kind = kind
         self.asset_id = asset_id
@@ -297,17 +314,169 @@ class FileRef:
         # which seconds of it to take. See Asset.audio_offset.
         self.audio_offset = float(audio_offset or 0.0)
         self.source_seconds = source_seconds
+        # A voice track, when this reference is one: every recording laid on it,
+        # each at its own seconds and each cut at its own shot's edges. None for
+        # a single recording that runs the whole window -- that is the path every
+        # render took before tracks existed, and it is left exactly as it was.
+        self.pieces = list(pieces) if pieces else None
+        # A shot's own take (see Asset.take) -- held to a looser end-of-take rule,
+        # because a take ends when the line does and the shot's pad runs on.
+        self.take = bool(take)
 
     def to_dict(self):
-        return {"socket": self.socket, "kind": self.kind, "asset_id": self.asset_id,
-                "name": self.name, "file": self.file, "tag": self.tag,
-                "trim_start": self.trim_start, "trim_end": self.trim_end,
-                "synthetic": self.synthetic, "audio_role": self.audio_role,
-                "audio_offset": self.audio_offset,
-                "source_seconds": self.source_seconds}
+        out = {"socket": self.socket, "kind": self.kind, "asset_id": self.asset_id,
+               "name": self.name, "file": self.file, "tag": self.tag,
+               "trim_start": self.trim_start, "trim_end": self.trim_end,
+               "synthetic": self.synthetic, "audio_role": self.audio_role,
+               "audio_offset": self.audio_offset,
+               "source_seconds": self.source_seconds}
+        if self.pieces:
+            out["pieces"] = [p.to_dict() for p in self.pieces]
+        return out
 
     def __repr__(self):
         return "FileRef(%s -> %s %r)" % (self.socket, self.tag, self.name)
+
+
+class VoicePiece:
+    """One recording's contribution to a window's voice track.
+
+    `audio_offset` is where the recording's first sample sits on the film clock,
+    exactly as on the asset. `gate_start` / `gate_end` are the film-clock seconds
+    it may be heard between -- its shot's span -- or None for a recording that runs
+    the whole window. The executor cuts each piece to the window, silences it
+    outside its gate, and sums the pieces: that sum is the track.
+    """
+
+    __slots__ = ("asset_id", "name", "file", "trim_start", "trim_end", "audio_offset",
+                 "source_seconds", "gate_start", "gate_end", "shot_id", "take",
+                 "fade_in", "fade_out", "shot_end")
+
+    def __init__(self, asset, gate=None, shot_id=None, shot_end=None):
+        self.asset_id = asset.asset_id
+        self.name = asset.name
+        self.file = asset.file
+        self.trim_start = asset.trim_start
+        self.trim_end = asset.trim_end
+        self.audio_offset = float(asset.audio_offset or 0.0)
+        self.source_seconds = asset.source_seconds
+        self.gate_start, self.gate_end = (gate if gate is not None else (None, None))
+        self.shot_id = shot_id
+        # Where the shot itself ends, before the tail. The tail is clipped where
+        # the next piece of the same track begins, so `gate_end` alone cannot say.
+        self.shot_end = shot_end
+        self.take = bool(getattr(asset, "take", False))
+        # Fades are applied only at a gate edge that is not shared with another
+        # piece of the same track. Two copies of one narration meeting at a cut
+        # switch over sample-exactly; fading both would dip the voice to nothing
+        # for the length of the fade, at every cut.
+        self.fade_in = self.fade_out = True
+
+    @property
+    def gated(self):
+        return self.gate_start is not None
+
+    def to_dict(self):
+        out = {"asset_id": self.asset_id, "name": self.name, "file": self.file,
+               "trim_start": self.trim_start, "trim_end": self.trim_end,
+               "audio_offset": self.audio_offset, "source_seconds": self.source_seconds}
+        if self.gated:
+            out["gate"] = [round(self.gate_start, 4), round(self.gate_end, 4)]
+            out["fades"] = [self.fade_in, self.fade_out]
+            out["shot_id"] = self.shot_id
+        return out
+
+    def __repr__(self):
+        return "VoicePiece(%r, gate=%s)" % (
+            self.name, "none" if not self.gated else "%.2f-%.2f" % (self.gate_start, self.gate_end))
+
+
+def voice_tracks(timeline, shots, audios, window=None):
+    """Fold a window's lip-sync recordings into one track per voice.
+
+    A shot's own take is gated to that shot -- placed where its PulseVoice says it
+    starts, and silenced past the shot's end (plus a syllable's worth of tail).
+    Takes belonging to the same character land on one track; so do unbound takes
+    from different shots, which by construction never overlap. A recording on the
+    bin or the slate is film-wide and is never gated: it runs the whole window, as
+    it always has.
+
+    `window`, as (start, end) seconds, drops a gate that covers the whole window:
+    a take whose shot *is* the window is cut by nothing, and is left on the plain
+    one-recording path it has always taken -- same audio, same prompt, same key.
+
+    Returns (assets, pieces). `assets` is `audios` with every track represented by
+    its first recording, in first-appearance order, so ordinals stay in bin order;
+    `pieces` maps that representative's asset id to the track's VoicePieces. Audio
+    that is not a user lip-sync recording passes through untouched.
+    """
+    shot_of = {}
+    for shot in shots:
+        for asset in (getattr(timeline, "local_refs", {}).get(shot.shot_id) or []):
+            if asset.kind == KIND_AUDIO:
+                shot_of[asset.asset_id] = shot
+
+    out, pieces, track_of = [], {}, {}
+    for asset in audios:
+        if asset.synthetic or asset.audio_role != AUDIO_ROLE_LIP_SYNC:
+            out.append(asset)
+            continue
+        shot = shot_of.get(asset.asset_id)
+        gate = None
+        if shot is not None and not asset.free_run:
+            gate = (shot.start, shot.end + VOICE_GATE_TAIL_SECONDS)
+            # Within half a frame: a shot and a window agree to the frame, not to
+            # the float -- 6.5833s twice is 13.1666s, and 316 frames is 13.16667s.
+            slack = 0.5 / float(getattr(timeline, "fps", 24) or 24)
+            if window is not None and shot.start <= window[0] + slack \
+                    and shot.end >= window[1] - slack:
+                gate = None
+        owner = asset.voice_of or (shot.speakers[0] if shot is not None and shot.speakers
+                                   else None)
+        if owner:
+            key = ("owner", owner)
+        elif gate is not None:
+            key = ("takes",)
+        else:
+            key = ("asset", asset.asset_id)
+        piece = VoicePiece(asset, gate, shot.shot_id if shot is not None else None,
+                           shot_end=shot.end if shot is not None else None)
+        representative = track_of.get(key)
+        if representative is None:
+            track_of[key] = asset.asset_id
+            pieces[asset.asset_id] = [piece]
+            out.append(asset)
+        else:
+            pieces[representative].append(piece)
+    for track in pieces.values():
+        _join_gates(track)
+    return out, pieces
+
+
+def _join_gates(track):
+    """Hand one track's gated pieces over to each other cleanly.
+
+    The tail lets a line ring out past its cut, but only into silence: where the
+    next piece of the same track begins, this one stops. Without that, two copies
+    of a narration -- the same recording wired into two consecutive shots -- would
+    both play for the length of the tail, at double level, at every cut. And
+    neither side of a shared edge is faded, for the same reason in reverse.
+    """
+    gated = sorted((p for p in track if p.gated), key=lambda p: p.gate_start)
+    for before, after in zip(gated, gated[1:]):
+        if before.gate_end >= after.gate_start - 1e-9:
+            before.gate_end = max(before.gate_start, after.gate_start)
+            before.fade_out = False
+            after.fade_in = False
+
+
+def _track_pieces(pieces):
+    """What a FileRef carries for one track: None for the plain one-recording case."""
+    if not pieces:
+        return None
+    if len(pieces) == 1 and not pieces[0].gated:
+        return None
+    return pieces
 
 
 class CompiledWindow:
@@ -316,11 +485,19 @@ class CompiledWindow:
     __slots__ = ("index", "total", "branch", "frame_count", "start_seconds",
                  "end_seconds", "prompt", "files", "tag_map", "anchors",
                  "diagnostics", "shot_ids", "seed_offset",
-                 "resolved_shots", "unresolved_shots", "speaker_bindings")
+                 "resolved_shots", "unresolved_shots", "speaker_bindings", "drive_files")
 
     def __init__(self, index, total, branch, frame_count, start_seconds, end_seconds,
                  prompt, files, tag_map, anchors, diagnostics, shot_ids, seed_offset=0,
-                 resolved_shots=None, unresolved_shots=None, speaker_bindings=None):
+                 resolved_shots=None, unresolved_shots=None, speaker_bindings=None,
+                 drive_files=None):
+        # The lip-sync recordings of a window whose branch takes no references
+        # (fl2va). They never become sockets, ordinals or prompt text -- `files`
+        # is still exactly what the stock node receives -- but lock_source writes
+        # them into the target audio latent and use_reference_audio muxes them,
+        # and both of those work on the latent and the film, not on the prompt.
+        # Always empty on ref2va, where the same recordings are already in `files`.
+        self.drive_files = list(drive_files or [])
         # shot_id -> the shot's own text after reference resolution, and the
         # aliases in it that did not resolve. Both are per shot rather than per
         # window because §7.1 hashes the resolved prompt of each shot into the
@@ -351,6 +528,40 @@ class CompiledWindow:
     def duration_seconds(self):
         return self.end_seconds - self.start_seconds
 
+    def audio_plan(self):
+        """Exactly which seconds of which recording this window hears. None if trivial.
+
+        Relative to the window, so it is the same plan wherever the window lands
+        on the film clock -- moving an earlier shot moves the window and the take
+        together and changes nothing here, while sliding a take *within* its window
+        does. That is the property the segment cache needs: §7.1 hashed the
+        reference's file digest, which is identical whichever seconds are cut.
+
+        None when the window hears one or more recordings each starting with the
+        window and running through it -- the plan every key on disk was computed
+        under, which therefore keeps its key.
+        """
+        tracks = []
+        trivial = True
+        for ref in list(self.files) + list(self.drive_files):
+            if ref.synthetic or ref.kind != KIND_AUDIO or ref.audio_role != AUDIO_ROLE_LIP_SYNC:
+                continue
+            pieces = []
+            for piece in (ref.pieces or [ref]):
+                entry = [piece.name, round(self.start_seconds - piece.audio_offset, 4)]
+                if entry[1] != 0.0:
+                    trivial = False
+                if getattr(piece, "gate_start", None) is not None:
+                    trivial = False
+                    entry.append([round(piece.gate_start - self.start_seconds, 4),
+                                  round(piece.gate_end - self.start_seconds, 4),
+                                  bool(piece.fade_in), bool(piece.fade_out)])
+                pieces.append(entry)
+            tracks.append([ref.socket, pieces])
+        if not tracks or trivial:
+            return None
+        return tracks
+
     @property
     def last_anchor_index(self):
         return last_anchor_index(self.frame_count)
@@ -372,12 +583,15 @@ class CompiledWindow:
         return groups
 
     def to_dict(self):
-        return {"index": self.index, "total": self.total, "branch": self.branch,
-                "frame_count": self.frame_count, "start_seconds": self.start_seconds,
-                "end_seconds": self.end_seconds, "prompt": self.prompt,
-                "files": [f.to_dict() for f in self.files], "anchors": dict(self.anchors),
-                "diagnostics": list(self.diagnostics), "shot_ids": list(self.shot_ids),
-                "seed_offset": self.seed_offset}
+        out = {"index": self.index, "total": self.total, "branch": self.branch,
+               "frame_count": self.frame_count, "start_seconds": self.start_seconds,
+               "end_seconds": self.end_seconds, "prompt": self.prompt,
+               "files": [f.to_dict() for f in self.files], "anchors": dict(self.anchors),
+               "diagnostics": list(self.diagnostics), "shot_ids": list(self.shot_ids),
+               "seed_offset": self.seed_offset}
+        if self.drive_files:
+            out["drive_files"] = [f.to_dict() for f in self.drive_files]
+        return out
 
     def __repr__(self):
         return "CompiledWindow(%d/%d, %s, %d frames)" % (
@@ -461,11 +675,36 @@ def compile_timeline(timeline, window_frames=None, policy="balanced",
                          if timeline.window_seconds else MAX_WINDOW_FRAMES)
 
     diagnostics = []
-    total_frames = seconds_to_frames(timeline.duration_seconds, timeline.fps, "up")
+    # The film's own frame count, NOT snapped to the grid. `partition_windows`
+    # says why in as many words: the total is a request, only the windows sit on
+    # the grid, and snapping first inflates it by up to a grid step before the
+    # split begins. This call used to snap anyway, so an 18s film became 447
+    # frames, could not be split into two windows that sum to that, and came back
+    # as 226 + 226 = 18.83s instead of 226 + 209 -- moving every seam after the
+    # first off the cut `shot_aligned` had aimed it at.
+    total_frames = exact_frames(timeline.duration_seconds, timeline.fps)
+    speech = getattr(timeline, "speech_spans", None) or []
     windows = partition_windows(total_frames, window_frames, policy=policy,
                                 diagnostics=diagnostics,
-                                boundaries=_shot_boundaries(timeline))
+                                boundaries=_shot_boundaries(timeline), speech=speech)
     bounds = window_bounds(windows, timeline.fps)
+
+    # Whatever chose the seams, say which ones cut a word -- where two windows
+    # sampled apart meet mid-syllable, which reads as a stutter in the mouth.
+    # speech_aware reports its own; it is the policy that avoids them.
+    if speech and policy != "speech_aware":
+        seam, talking = 0, []
+        for frames in windows[:-1]:
+            seam += frames
+            if in_speech(seam, speech):
+                talking.append(seam)
+        if talking:
+            diagnostics.append(
+                "%d window seam(s) land inside speech (at %s) -- the mouth is closed by "
+                "one window and reopened by the next mid-word. partition_strategy "
+                "'speech_aware' moves seams into the pauses."
+                % (len(talking), ", ".join("%.2fs" % (q / float(timeline.fps))
+                                           for q in talking[:6])))
 
     requested = timeline.duration_seconds
     actual = frames_to_seconds(sum(windows), timeline.fps)
@@ -498,7 +737,7 @@ def compile_timeline(timeline, window_frames=None, policy="balanced",
     return CompiledPlan(compiled, diagnostics, problems)
 
 
-def _window_bin(timeline, index, branch, carry, shots=()):
+def _window_bin(timeline, index, branch, carry, shots=(), window=None):
     """The effective asset bin for one window, carry-over included.
 
     Carry-over references claim the *front* of their socket group, so on a
@@ -516,13 +755,18 @@ def _window_bin(timeline, index, branch, carry, shots=()):
     which is the property that actually matters. A shot rendered alone in its own
     window gets the literal numbering §10 describes.
 
-    Returns (bin, diagnostics). User assets that no longer fit after carry-over
-    has taken its slots are dropped, loudly.
+    Lip-sync recordings are folded into voice tracks first (`voice_tracks`), so
+    the audio budget is spent per *voice*: a two-hander with six lines is two
+    <Audio j> references, not six.
+
+    Returns (bin, diagnostics, pieces). User assets that no longer fit after
+    carry-over has taken its slots are dropped, loudly. `pieces` maps each voice
+    track's representative asset id to the recordings laid on it.
     """
     diagnostics = []
     if branch == BRANCH_FL2VA:
         # fl2va carries no references at all -- different checkpoint, disjoint inputs.
-        return AssetBin(), diagnostics
+        return AssetBin(), diagnostics, {}
 
     local = []
     for shot in shots:
@@ -530,11 +774,17 @@ def _window_bin(timeline, index, branch, carry, shots=()):
 
     user_images = timeline.assets.by_kind(KIND_IMAGE) + [a for a in local if a.kind == KIND_IMAGE]
     user_videos = timeline.assets.by_kind(KIND_VIDEO) + [a for a in local if a.kind == KIND_VIDEO]
-    user_audios = timeline.assets.by_kind(KIND_AUDIO) + [a for a in local if a.kind == KIND_AUDIO]
+    user_audios, pieces = voice_tracks(
+        timeline, shots,
+        timeline.assets.by_kind(KIND_AUDIO) + [a for a in local if a.kind == KIND_AUDIO],
+        window=window)
 
     images, videos, audios = [], [], []
+    guided = bool(getattr(timeline, "guided_carry", False))
     if index > 0:
-        if carry.wants_image:
+        # A guided window pins the frame itself; carrying it again as <Picture 1>
+        # would spend a picture slot on a frame the model already has.
+        if carry.wants_image and not guided:
             images.append(Asset(CARRY_IMAGE_ID, KIND_IMAGE, name="Previous window, last frame",
                                 description="", retention=RETENTION_FULL, synthetic=True))
         if carry.wants_video:
@@ -596,7 +846,9 @@ def _window_bin(timeline, index, branch, carry, shots=()):
     # Built under the project's ceiling: this bin has just been trimmed to it,
     # so validating it against the documented default would reject the very
     # window the ceiling was raised to allow.
-    return AssetBin(images + videos + audios, limits=timeline.limits), diagnostics
+    kept = {a.asset_id for a in audios}
+    return (AssetBin(images + videos + audios, limits=timeline.limits), diagnostics,
+            {k: v for k, v in pieces.items() if k in kept})
 
 
 def _build_subjects(bin_, tag_map):
@@ -614,15 +866,26 @@ def _build_subjects(bin_, tag_map):
     retention_meta = []
     n = 0
 
-    for asset in list(bin_.by_kind(KIND_IMAGE)) + list(bin_.by_kind(KIND_VIDEO)):
+    visuals = list(bin_.by_kind(KIND_IMAGE)) + list(bin_.by_kind(KIND_VIDEO))
+    present = {a.asset_id for a in visuals}
+    for asset in visuals:
         if asset.synthetic:
             continue  # a carry-over anchor is a keyframe citation, not a character
+        if asset.view_of and asset.view_of in present:
+            continue  # cited inside its character's own definition, below
         if not asset.description:
             continue
         n += 1
-        tag = tag_map.by_id[asset.asset_id]
+        tags = [tag_map.by_id[asset.asset_id]] + [
+            tag_map.by_id[v.asset_id] for v in visuals
+            if v.view_of == asset.asset_id and v.asset_id in tag_map.by_id]
+        # One person, every picture of them: "`<Picture 1>` and `<Picture 2>`".
+        tag = "` and `".join(tags)
         subject_lines.append("<Subject %d> is %s (from `%s`)." % (n, asset.description.rstrip("."), tag))
         subject_tag[asset.asset_id] = "<Subject %d>" % n
+        for view in visuals:
+            if view.view_of == asset.asset_id:
+                subject_tag[view.asset_id] = "<Subject %d>" % n
         retention_meta.append((n, tag, asset.retention or RETENTION_DEFAULT))
 
     return subject_lines, subject_tag, retention_meta
@@ -724,7 +987,8 @@ def _compile_window(timeline, index, total, branch, frame_count, start, end, car
     shots = timeline.shots_in(start, end)
     shot_ids = [s.shot_id for s in shots]
 
-    bin_, bin_diags = _window_bin(timeline, index, branch, carry, shots)
+    bin_, bin_diags, track_pieces = _window_bin(timeline, index, branch, carry, shots,
+                                                window=(start, end))
     diagnostics.extend(bin_diags)
     tag_map = bin_.tag_map()
 
@@ -803,6 +1067,7 @@ def _compile_window(timeline, index, total, branch, frame_count, start, end, car
     # ── shot lines, with strictly increasing timestamps ─────────────────────
     shot_lines = []
     shot_texts = []
+    shot_ordinals = {}
     resolved_shots = {}
     unresolved_shots = {}
     previous_ts = None
@@ -812,6 +1077,12 @@ def _compile_window(timeline, index, total, branch, frame_count, start, end, car
         if not text:
             continue
         ordinal += 1
+        shot_ordinals[shot.shot_id] = ordinal
+        if branch == BRANCH_FL2VA:
+            # fl2va takes no references, so there is no tag for `@Ada` to become.
+            # Left alone it reached the model as the literal text "@Ada"; the
+            # character's own description is what the base-mode format can use.
+            text = _describe_without_references(text, timeline, shot)
         # A speaker's id is stamped only in the shots they actually speak in.
         # Stamping every mention would put "(S1)" on a character standing
         # silently in the background, which reads to the model as a cue to give
@@ -828,7 +1099,7 @@ def _compile_window(timeline, index, total, branch, frame_count, start, end, car
         unresolved = [m.group(0) for m in REF_TOKEN_RE.finditer(resolved)]
         if unresolved:
             unresolved_shots[shot.shot_id] = unresolved
-        resolved = wrap_dialogue(resolved, timeline.dialogue_language)
+        resolved = wrap_dialogue(resolved, _shot_language(timeline, shot))
         resolved_shots[shot.shot_id] = resolved
         shot_texts.append(resolved)
 
@@ -892,10 +1163,20 @@ def _compile_window(timeline, index, total, branch, frame_count, start, end, car
                if socket.startswith("ref_video_audio_") else tag_map.by_id.get(asset_id))
         files.append(FileRef(socket, asset.kind, asset.asset_id, asset.name, asset.file,
                              tag, asset.trim_start, asset.trim_end, asset.synthetic,
-                             asset.audio_role, asset.audio_offset, asset.source_seconds))
+                             asset.audio_role, asset.audio_offset, asset.source_seconds,
+                             pieces=_track_pieces(track_pieces.get(asset.asset_id)),
+                             take=getattr(asset, "take", False)))
 
-    # ── anchors (fl2va only) ───────────────────────────────────────────────
+    # fl2va's bin is empty (`_window_bin`), so a lip-sync recording never reaches
+    # `files` there. Without it lock_source had nothing to hold and the muxed film
+    # went silent for every continuation window of a last_frame_carry render.
+    drive_files = (_drive_files(timeline, shots, window=(start, end))
+                   if branch == BRANCH_FL2VA else [])
+
+    # ── anchors (fl2va; and a guide on ref_guided_carry) ───────────────────
     anchors = {}
+    if branch == BRANCH_REF2VA and index > 0 and getattr(timeline, "guided_carry", False):
+        anchors[GUIDE_FIRST] = CARRY_IMAGE_ID
     if branch == BRANCH_FL2VA:
         # §11 keyframe_pairs. Per-shot anchors, when the node layer supplied them,
         # outrank the project-level pair. H3 accepts a keyframe at index 0 or at
@@ -940,25 +1221,215 @@ def _compile_window(timeline, index, total, branch, frame_count, start, end, car
         getattr(timeline, "retention_notes", ""), tag_map, bin_, subject_tag)
     diagnostics.extend("global prompt (retention): %s" % d for d in note_diags)
 
+    voice_shots = {}
+    for ref in files + drive_files:
+        if ref.pieces and all(p.gated for p in ref.pieces):
+            heard = sorted({shot_ordinals[p.shot_id] for p in ref.pieces
+                            if p.shot_id in shot_ordinals})
+            if heard:
+                voice_shots[ref.asset_id] = heard
+
     prompt = (_assemble_reference_prompt if branch == BRANCH_REF2VA
               else _assemble_base_prompt)(
         timeline, index, total, bin_, tag_map, subject_lines, subject_tag,
         retention_meta, shot_lines, shot_texts, anchors, frame_count, carry,
-        extra_subject_lines, extra_retention_lines, audio_bindings)
+        extra_subject_lines, extra_retention_lines, audio_bindings,
+        voice_shots=voice_shots, driven=bool(drive_files))
 
     diagnostics.extend(_uncited_references(bin_, tag_map, prompt))
     diagnostics.extend(_lip_sync_diagnostics(
         index, total, start, end, frames_to_seconds(frame_count, timeline.fps),
-        files, shot_texts))
+        files + drive_files, shot_texts, bound_ids=set(audio_bindings)))
 
     return CompiledWindow(index, total, branch, frame_count, start, end, prompt,
                           files, tag_map, anchors, diagnostics, shot_ids, seed_offset=index,
                           resolved_shots=resolved_shots, unresolved_shots=unresolved_shots,
-                          speaker_bindings=speaker_bindings)
+                          speaker_bindings=speaker_bindings, drive_files=drive_files)
+
+
+def _drive_files(timeline, shots, window=None):
+    """The lip-sync recordings a reference-less (fl2va) window still has to drive.
+
+    The same recordings, in the same order, that `_window_bin` would have given a
+    ref2va window -- the bin's, then each shot's own -- less everything that is
+    not a user lip-sync recording. Carry-over is not involved: it only ever claims
+    reference slots, and there are none here to claim.
+    """
+    local = []
+    for shot in shots:
+        local.extend(getattr(timeline, "local_refs", {}).get(shot.shot_id) or [])
+    audios, pieces = voice_tracks(
+        timeline, shots,
+        timeline.assets.by_kind(KIND_AUDIO) + [a for a in local if a.kind == KIND_AUDIO],
+        window=window)
+    out, seen = [], set()
+    for asset in audios:
+        if asset.synthetic or asset.audio_role != AUDIO_ROLE_LIP_SYNC or asset.asset_id in seen:
+            continue
+        seen.add(asset.asset_id)
+        out.append(FileRef("drive_audio_%d" % (len(out) + 1), asset.kind, asset.asset_id,
+                           asset.name, asset.file, None, asset.trim_start, asset.trim_end,
+                           asset.synthetic, asset.audio_role, asset.audio_offset,
+                           asset.source_seconds,
+                           pieces=_track_pieces(pieces.get(asset.asset_id)),
+                           take=getattr(asset, "take", False)))
+    return out
+
+
+def _shot_language(timeline, shot):
+    """The language one shot's dialogue is tagged with.
+
+    The shot's own voice first; then a film-wide voice owned by the shot's
+    speaker; then the film's language.
+    """
+    if getattr(shot, "language", None):
+        return shot.language
+    languages = getattr(timeline, "voice_languages", None) or {}
+    if languages and shot.speakers:
+        for asset_id, language in languages.items():
+            asset = timeline.assets.get(asset_id)
+            if asset is not None and asset.voice_of == shot.speakers[0]:
+                return language
+    return timeline.dialogue_language
+
+
+def _describe_without_references(text, timeline, shot):
+    """Replace @Name / {{id}} with words, for a branch that takes no references.
+
+    A described character becomes its description ("the woman in the red coat"),
+    anything else its plain name. A token naming nothing is left for
+    `resolve_references` to report, exactly as on the reference branch.
+    """
+    local = (getattr(timeline, "local_refs", {}) or {}).get(shot.shot_id) or []
+
+    def _sub(match):
+        by_id, bracketed, bare = match.group(1), match.group(2), match.group(3)
+        key = (by_id or bracketed or bare or "").strip()
+        asset = timeline.assets.get(key) if by_id else None
+        if asset is None and not by_id:
+            asset = next((a for a in local
+                          if a.name.strip().casefold() == key.casefold()), None)
+            asset = asset or timeline.assets.find_by_name(key)
+        if asset is None:
+            return match.group(0)
+        if asset.kind == KIND_AUDIO:
+            return "the recorded voice"
+        return (asset.description or asset.name).strip().rstrip(".")
+
+    return REF_TOKEN_RE.sub(_sub, text)
+
+
+def _window_coverage(entries, index, start, end, tail_floor, consequence):
+    """Film-wide recordings against the whole window they ride in.
+
+    Every recording on one track counts together -- two halves of a narration
+    laid end to end cover the window between them, and neither is "short" on its
+    own. A take that runs the whole window is held to the end-of-film second at
+    its tail, because the shot's air after the last word is the auto-duration pad,
+    not a gap.
+    """
+    spans = []
+    for e in entries:
+        a, b = e.audio_offset, e.audio_offset + e.source_seconds
+        if e.gated:
+            a, b = max(a, e.gate_start), min(b, e.shot_end if e.shot_end is not None
+                                             else e.gate_end)
+        if b > a:
+            spans.append((a, b))
+    spans.sort()
+    if not spans:
+        spans = [(e.audio_offset, e.audio_offset + e.source_seconds) for e in entries[:1]]
+    names = " and ".join("`@%s`" % e.name for e in entries)
+    covers = ("%s %s %s on the film clock and window %d covers %.2f-%.2fs"
+              % (names, "covers" if len(entries) == 1 else "cover",
+                 " and ".join("%.2f-%.2fs" % span for span in spans),
+                 index + 1, start, end))
+    inside = [(max(a, start), min(b, end)) for a, b in spans if min(b, end) > max(a, start)]
+    window_seconds = end - start
+    if not inside:
+        return ["%s. The two do not meet, so nothing of this recording reaches this "
+                "window. %s Either it belongs at a different offset -- a per-shot take "
+                "needs one, a whole-film narration does not -- or it does not reach this "
+                "far into the film." % (covers, consequence)]
+    head = inside[0][0] - start
+    tail = end - max(b for _, b in inside)
+    floor = (max(tail_floor, LIP_SYNC_END_OF_FILM_TOLERANCE_SECONDS)
+             if any(getattr(e, "take", False) for e in entries) else tail_floor)
+    parts = []
+    if head >= LIP_SYNC_COVERAGE_TOLERANCE_SECONDS and head < window_seconds:
+        parts.append("starts %.2fs after the window opens" % (head,))
+    if tail >= floor:
+        parts.append("runs out %.2fs before it ends" % (tail,))
+    if not parts:
+        return []
+    return ["%s, so it %s. %s" % (covers, " and ".join(parts), consequence)]
+
+
+def _take_coverage(entry, start, end, consequence):
+    """A shot's own take against its own shot -- said once, never per sliver.
+
+    A take is heard only inside its shot, so the window is the wrong yardstick: a
+    shot that pokes a tenth of a second into the next window is not a window the
+    take "does not reach". Whether the take meets its shot, and whether it starts
+    late, is said in the window the shot starts in; whether it runs past the cut,
+    in the window the shot ends in. A take ending before its shot does is the line
+    ending -- that is what the air after it is for -- and is not reported.
+    """
+    out = []
+    shot_start = entry.gate_start
+    shot_end = entry.shot_end if entry.shot_end is not None else entry.gate_end
+    take_start = entry.audio_offset
+    take_end = entry.audio_offset + entry.source_seconds
+    if start <= shot_start < end:
+        covers = ("`@%s` covers %.2f-%.2fs on the film clock and its shot runs "
+                  "%.2f-%.2fs" % (entry.name, take_start, take_end, shot_start, shot_end))
+        if min(take_end, shot_end) <= max(take_start, shot_start):
+            out.append("%s. The two do not meet, so nothing of this take is heard. %s "
+                       "Check its offset -- a take wired to a shot wants aligns_to "
+                       "shot_start." % (covers, consequence))
+            return out
+        head = take_start - shot_start
+        if head >= LIP_SYNC_COVERAGE_TOLERANCE_SECONDS:
+            out.append("%s, so it starts %.2fs after its shot opens. %s"
+                       % (covers, head, consequence))
+    if getattr(entry, "take", False):
+        overrun = take_end - shot_end
+        if overrun >= LIP_SYNC_COVERAGE_TOLERANCE_SECONDS and start < shot_end <= end + 1e-6:
+            out.append(
+                "`@%s` runs %.2fs past the end of its shot (%.2fs), and that part is not "
+                "heard -- a take belongs to its own shot. Lengthen the shot, set its "
+                "duration_seconds to 0 so it follows the take, or turn the voice's "
+                "gate_to_shot off for a line that carries over the cut."
+                % (entry.name, overrun, shot_end))
+    return out
+
+
+def _lip_sync_entries(lip):
+    """Every recording behind a window's lip-sync references, track pieces included."""
+    for ref in lip:
+        if ref.pieces:
+            for piece in ref.pieces:
+                yield piece
+        else:
+            yield _UngatedEntry(ref)
+
+
+class _UngatedEntry:
+    """A plain one-recording reference, read as a piece with no gate."""
+
+    __slots__ = ("name", "audio_offset", "source_seconds", "take")
+    gated = False
+    gate_start = gate_end = shot_end = None
+
+    def __init__(self, ref):
+        self.name = ref.name
+        self.audio_offset = ref.audio_offset
+        self.source_seconds = ref.source_seconds
+        self.take = getattr(ref, "take", False)
 
 
 def _lip_sync_diagnostics(index, total, start, end, window_seconds, files,
-                          shot_texts):
+                          shot_texts, bound_ids=()):
     """What is wrong with this window's lip sync, said out loud.
 
     Everything here is reported and nothing is repaired. Each failure has an
@@ -1019,50 +1490,63 @@ def _lip_sync_diagnostics(index, total, start, end, window_seconds, files,
                        "quoted lines out of the shots it does not reach.")
     else:
         consequence = "That much of the window is silence, and the mouth is still through it."
+    tracks = [[e for e in _lip_sync_entries([ref]) if e.source_seconds is not None]
+              for ref in lip]
+    tracks = [entries for entries in tracks if entries]
+    # Two voices or more in one window is a conversation, and each voice is
+    # silent while the other one speaks -- by design, not as a short recording.
+    # Judged one voice at a time, a two-hander laid out as lines in the Asset Bin
+    # reported every voice in every window. So the window is judged on all of
+    # them together, where dead air is a stretch nobody speaks in, and the beat
+    # of air before a cut is held to the end-of-film second rather than to the
+    # quarter-second a lone narration gets.
+    voices = [[e for e in entries if not e.gated] for entries in tracks]
+    conversation = sum(1 for film_wide in voices if film_wide) > 1
+    if conversation:
+        out.extend(_window_coverage(
+            [e for film_wide in voices for e in film_wide], index, start, end,
+            max(tail_floor, LIP_SYNC_END_OF_FILM_TOLERANCE_SECONDS), consequence))
     measured = 0.0
-    for ref in lip:
-        if ref.source_seconds is None:
-            continue
-        head, tail = audio_span_report(
-            ref.source_seconds, start - ref.audio_offset, window_seconds)
-        measured = max(measured, ref.source_seconds)
-        covers = ("`@%s` covers %.2f-%.2fs on the film clock and window %d covers "
-                  "%.2f-%.2fs"
-                  % (ref.name, ref.audio_offset,
-                     ref.audio_offset + ref.source_seconds, index + 1, start, end))
-        # A window made entirely of silence is reported wherever it falls. It is
-        # never a film ending a moment early -- it is a recording and a window
-        # that do not overlap at all.
-        if head + tail >= window_seconds - 1e-6:
-            out.append(
-                "%s. The two do not meet, so nothing of this recording reaches this "
-                "window. %s Either it belongs at a different offset -- a per-shot take "
-                "needs one, a whole-film narration does not -- or it does not reach "
-                "this far into the film." % (covers, consequence))
-            continue
-        parts = []
-        if head >= LIP_SYNC_COVERAGE_TOLERANCE_SECONDS:
-            parts.append("starts %.2fs after the window opens" % (head,))
-        if tail >= tail_floor:
-            parts.append("runs out %.2fs before it ends" % (tail,))
-        if not parts:
-            continue
-        out.append("%s, so it %s. %s" % (covers, " and ".join(parts), consequence))
+    for entries in tracks:
+        measured = max(measured, max(e.source_seconds for e in entries))
+        film_wide = [e for e in entries if not e.gated]
+        if film_wide and not conversation:
+            out.extend(_window_coverage(film_wide, index, start, end, tail_floor,
+                                        consequence))
+        # A film-clock recording wired into several shots is one recording heard
+        # through their gates: judged together, over the seconds those shots
+        # cover in this window.
+        wired = [e for e in entries if e.gated and not getattr(e, "take", False)]
+        if wired:
+            span_start = max(start, min(e.gate_start for e in wired))
+            span_end = min(end, max(e.shot_end if e.shot_end is not None else e.gate_end
+                                    for e in wired))
+            if span_end > span_start:
+                out.extend(_window_coverage(wired, index, span_start, span_end,
+                                            tail_floor, consequence))
+        for entry in entries:
+            if entry.gated and getattr(entry, "take", False):
+                out.extend(_take_coverage(entry, start, end, consequence))
 
     # ── two recordings describing the same seconds ──────────────────────────
-    # Each lip-sync reference is trimmed to *this window's* span, so a second one
-    # is not extra information -- it is the same seconds a second time, and the
-    # prose ends up carrying two "lip movements match" directives that cannot both
-    # be obeyed. Nothing is dropped to fix it: choosing which copy to discard means
-    # guessing which shot the author meant, and guessing wrong desynchronises the
-    # mouth that was right.
-    if len(lip) > 1:
+    # A film-wide recording is cut to *this window's* span, so a second one is
+    # not extra information -- it is the same seconds a second time, and the
+    # prose ends up carrying two "lip movements match" directives that cannot
+    # both be obeyed. Takes gated to their own shots never collide, and two
+    # recordings bound to two different characters are a dialogue, not a
+    # duplicate: each directive names its own mouth. What is left is two or more
+    # film-wide recordings where at least one belongs to nobody. Nothing is
+    # dropped to fix it: choosing which copy to discard means guessing which shot
+    # the author meant, and guessing wrong desynchronises the mouth that was right.
+    film_wide = [f for f in lip if not f.pieces]
+    if len(film_wide) > 1 and any(f.asset_id not in (bound_ids or ()) for f in film_wide):
         out.append(
             "window %d carries %d lip-sync references (%s). Each is trimmed to this "
             "window's span, so the model is handed the same seconds more than once "
             "and the mouth has more than one answer. Give each window one speaking "
-            "shot, or make the others voice_timbre."
-            % (index + 1, len(lip), ", ".join("@" + f.name for f in lip)))
+            "shot, bind each recording to its character, or make the others "
+            "voice_timbre."
+            % (index + 1, len(film_wide), ", ".join("@" + f.name for f in film_wide)))
 
     # ── more words than the window has time for ─────────────────────────────
     # Only the <d> blocks count: prose about the scene is direction, not speech.
@@ -1176,12 +1660,27 @@ def _socket_sort_key(item):
     return (0 if rank == 0 else (1 if rank in (1, 2) else 2), int(slot), rank)
 
 
+def _heard_in(shots):
+    """' in [Shot 1] and [Shot 3]' -- where a gated voice track is audible."""
+    if not shots:
+        return ""
+    marks = ["[Shot %d]" % n for n in shots]
+    return " in " + (marks[0] if len(marks) == 1
+                     else "%s and %s" % (", ".join(marks[:-1]), marks[-1]))
+
+
 def _assemble_reference_prompt(timeline, index, total, bin_, tag_map, subject_lines,
                                subject_tag, retention_meta, shot_lines, shot_texts,
                                anchors, frame_count, carry,
                                extra_subject_lines=(), extra_retention_lines=(),
-                               audio_bindings=None):
-    """ref2va: MiniMax's six-section reference-mode format, in its required order."""
+                               audio_bindings=None, voice_shots=None, driven=False):
+    """ref2va: MiniMax's six-section reference-mode format, in its required order.
+
+    `voice_shots` maps a voice track's asset id to the shots it is heard in, so a
+    track gated to its shots says where it speaks rather than leaving the model to
+    find the words in a window-long clip that is mostly silence.
+    """
+    voice_shots = voice_shots or {}
     subject_lines = list(subject_lines)
     retention_lines = [
         "<Subject %d> %s: %s - matches `%s`."
@@ -1247,9 +1746,10 @@ def _assemble_reference_prompt(timeline, index, total, bin_, tag_map, subject_li
             # sockets alone say nothing about what the audio is for. Asking for
             # the match in prose is what makes the DiT track those rows.
             audio_lines.append(
-                "`%s` is the speech %s is saying%s. Their lip movements "
+                "`%s` is the speech %s is saying%s%s. Their lip movements "
                 "match `%s` precisely, in time with it."
-                % (tag, who or "this character", detail, tag))
+                % (tag, who or "this character", _heard_in(voice_shots.get(asset.asset_id)),
+                   detail, tag))
         elif who:
             audio_lines.append(
                 "`%s` is the voice-timbre reference for %s%s." % (tag, who, detail))
@@ -1284,6 +1784,10 @@ def _assemble_reference_prompt(timeline, index, total, bin_, tag_map, subject_li
                    "borrow this voice's timbre and delivery; the words spoken are the "
                    "ones written in this window's shots."))
 
+    if anchors.get(GUIDE_FIRST):
+        continuity_bits.append(
+            "opening on the exact frame the previous window ended on -- the same pose, "
+            "framing and light, continuing without a cut")
     summary = _summary_line(subject_tag, continuity_bits, index, total)
 
     soundscape = timeline.overall_soundscape.strip()
@@ -1313,7 +1817,9 @@ def _assemble_reference_prompt(timeline, index, total, bin_, tag_map, subject_li
 
 
 def _summary_line(subject_tag, continuity_bits, index, total):
-    tags = list(subject_tag.values())
+    # A character's second view maps to their own Subject, so the same tag can
+    # appear twice in the map; name each person once.
+    tags = list(dict.fromkeys(subject_tag.values()))
     if not tags:
         base = "The target video follows the shot description below."
     elif len(tags) == 1:
@@ -1331,7 +1837,7 @@ def _assemble_base_prompt(timeline, index, total, bin_, tag_map, subject_lines,
                           subject_tag, retention_meta, shot_lines, shot_texts,
                           anchors, frame_count, carry,
                           extra_subject_lines=(), extra_retention_lines=(),
-                          audio_bindings=None):
+                          audio_bindings=None, voice_shots=None, driven=False):
     """fl2va / t2va: MiniMax's three-section base-mode format.
 
     `audio_bindings` is accepted and ignored: fl2va takes no references at all
@@ -1375,7 +1881,17 @@ def _assemble_base_prompt(timeline, index, total, bin_, tag_map, subject_lines,
     lines.extend(shot_lines)
 
     soundscape = timeline.overall_soundscape.strip()
-    if index > 0:
+    if driven:
+        # The window's speech is a supplied recording (`drive_files`): it goes in
+        # as the target audio under lock_source, and into the film under
+        # use_reference_audio. Telling the model "no dialogue or vocalisation"
+        # here asked for a still mouth over the very voice it is meant to follow.
+        heard = sorted({n for shots in (voice_shots or {}).values() for n in shots})
+        note = ("The speech heard%s is a recorded voice; the speaking character's lip "
+                "movements match it precisely, in time with it. No other voices."
+                % (_heard_in(heard) if heard else " in this window"))
+        soundscape = (soundscape + " " + note) if soundscape else note
+    elif index > 0:
         # This branch encodes no reference audio at all, so the window has no
         # sonic grounding. Left unconstrained, H3 tends to invent vocalisation.
         # Only say so when the shots do not themselves call for speech.

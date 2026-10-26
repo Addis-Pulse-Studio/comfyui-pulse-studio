@@ -136,7 +136,7 @@ def _find(options, key_paths):
     return None
 
 
-def inspect_model_options(model_options, sage_attention_global=False):
+def inspect_model_options(model_options, sage_attention_global=False, few_step=False):
     """Report which patches are present on a model, and what is missing.
 
     `model_options` is the dict from a ComfyUI ModelPatcher. `None` and any
@@ -159,6 +159,15 @@ def inspect_model_options(model_options, sage_attention_global=False):
     has_offload = offload_evidence is not None
 
     warnings = []
+    # A distilled checkpoint sampled in a handful of steps -- FastH3-Omni and
+    # HyperFlow at 8, TaoMate at 3 -- is outside what the two warnings below are
+    # about. Spectrum is a step-history cache and has next to nothing to cache at
+    # 3-8 steps; HyperFlow was validated dense; FastH3-Omni brings its own VSA
+    # attention, which `optimized_attention_override` already shows. Telling
+    # these graphs to add Sage and Spectrum was advice for a different model.
+    if few_step:
+        return PatchReport(has_attention, has_offload, attention_evidence,
+                           offload_evidence, warnings)
     if not has_attention:
         warnings.append(
             "No attention patch detected on the incoming model. Sage Attention "
@@ -186,10 +195,11 @@ def inspect_model_options(model_options, sage_attention_global=False):
                        offload_evidence, warnings)
 
 
-def check_model_patches(model, sage_attention_global=False):
+def check_model_patches(model, sage_attention_global=False, few_step=False):
     """Same, straight from a MODEL object. Never raises."""
     return inspect_model_options(getattr(model, "model_options", None),
-                                 sage_attention_global=sage_attention_global)
+                                 sage_attention_global=sage_attention_global,
+                                 few_step=few_step)
 
 
 def check_single_checkpoint(branches_used, fl2va_connected):
@@ -218,6 +228,10 @@ def check_single_checkpoint(branches_used, fl2va_connected):
     used = {b for b in (branches_used or ()) if b}
     if not fl2va_connected:
         return [], []
+    if used == {"fl2va"}:
+        # Every window renders through model_fl2va (keyframe_pairs): it is the one
+        # checkpoint this render uses, not a spare one.
+        return [], []
     if len(used) < 2:
         return [], [
             "model_fl2va is connected but no window uses it -- every window on "
@@ -229,6 +243,9 @@ def check_single_checkpoint(branches_used, fl2va_connected):
         ]
     return [
         "Both DiT checkpoints are live in this render: %s. They are ~21 GB each, "
-        "so on a 32 GB card this forces an evict-and-reload mid-render. Split the "
-        "timeline so one graph uses one checkpoint." % ", ".join(sorted(used))
+        "so on a 32 GB card every change of branch is an evict-and-reload -- time, "
+        "and ~70 GB of system RAM to hold both. That is the price of a reference "
+        "first window carried on by fl2va (FastH3-Omni into TaoMate, or HyperFlow on "
+        "both). To pay none of it, use continuity 'none' or 'ref_guided_carry', "
+        "which render every window on one checkpoint." % ", ".join(sorted(used))
     ], []

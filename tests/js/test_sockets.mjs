@@ -204,6 +204,127 @@ test("a saved layout laid over the default one keeps one of each socket", () => 
   assert.equal(node.inputs[links.get(40).target_slot].name, "shots.shot_1");
 });
 
+// ── sync() against frontend 1.57's link store ────────────────────────────────
+// Frontend 1.57 derives a socket's link from a store keyed by (node, slot
+// number): `input.link` is a read-only view, assigning null to it disconnects
+// whatever wire sits at that slot, and a link's target_slot setter refuses a
+// slot another wire occupies. The fake below models exactly those three rules,
+// which the live frontend was checked against (tests in a real 1.57.1 page:
+// every shipped graph, and a slate wired by hand, then saved and reopened).
+
+class StoreSlot {
+  constructor(node, fields) {
+    this.node = node;
+    Object.assign(this, fields);
+  }
+  get link() {
+    const slot = this.node.inputs.indexOf(this);
+    for (const link of this.node.graph.links.values()) {
+      if (link.target_id === this.node.id && link.target_slot === slot) return link.id;
+    }
+    return null;
+  }
+  set link(value) {
+    if (value !== null) return;  // 1.57 ignores it
+    throw new Error(`disconnected ${this.name}: sync must never assign input.link on 1.57`);
+  }
+}
+
+class StoreLink {
+  constructor(graph, id, targetId, targetSlot) {
+    this.graph = graph;
+    this.id = id;
+    this.target_id = targetId;
+    this._slot = targetSlot;
+  }
+  get target_slot() {
+    return this._slot;
+  }
+  set target_slot(slot) {
+    for (const other of this.graph.links.values()) {
+      if (other !== this && other.target_id === this.target_id && other._slot === slot) {
+        throw new Error(`link ${this.id} refused: slot ${slot} is occupied by link ${other.id}`);
+      }
+    }
+    this._slot = slot;
+  }
+}
+
+function storeSlate(names, wires) {
+  /** A 1.57 slate: sockets in `names` order, wires as [linkId, slot]. */
+  const graph = { links: new Map() };
+  const node = { comfyClass: "PulseSlate", id: 20, graph, inputs: [] };
+  node.getInputLink = (slot) => {
+    const id = node.inputs[slot]?.link;
+    return id == null ? undefined : graph.links.get(id);
+  };
+  node.inputs = names.map((name) => new StoreSlot(node, {
+    name, type: "*", ...(WIDGETS.includes(name) ? { widget: { name } } : {}) }));
+  for (const [id, slot] of wires) graph.links.set(id, new StoreLink(graph, id, 20, slot));
+  return node;
+}
+
+const CREATED = [...FIXED, "refs.ref_image_1", "shots.shot_1", "voices.voice_1", "cast.cast_1",
+                 ...WIDGETS];
+
+test("1.57: a load puts every saved wire back on its named socket", () => {
+  // Saved: four shots and two cast members. 1.57 hangs each saved wire on the
+  // creation-time layout by its saved slot number -- shot_2's wire on voice_1,
+  // the cast wires past the shot group -- before onConfigure runs.
+  const saved = [...FIXED, "refs.ref_image_1", "shots.shot_1", "shots.shot_2", "shots.shot_3",
+                 "shots.shot_4", "shots.shot_5", "voices.voice_1", "cast.cast_1", "cast.cast_2",
+                 "cast.cast_3"];
+  const owner = { 16: "shots.shot_1", 17: "shots.shot_2", 18: "shots.shot_3",
+                  19: "shots.shot_4", 20: "cast.cast_1", 21: "cast.cast_2" };
+  const info = { inputs: saved.map((name) => ({
+    name, link: Number(Object.keys(owner).find((id) => owner[id] === name) ?? NaN) || null })) };
+  const wires = Object.keys(owner).map((id) => [Number(id), saved.indexOf(owner[id])]);
+  const node = storeSlate(CREATED, wires);
+
+  sockets.sync(node, sockets.savedLinks(info));
+
+  for (const [id, name] of Object.entries(owner)) {
+    const link = node.graph.links.get(Number(id));
+    assert.equal(node.inputs[link.target_slot]?.name, name, `link ${id} is on the wrong socket`);
+  }
+  assert.equal(node.graph.links.size, 6, "no wire may be lost on the way");
+});
+
+test("1.57: a socket inserted ahead of live wires does not move them", () => {
+  // Cast and voice wired first; then the shot group grows a socket ahead of
+  // them, which shifts their slot numbers by one.
+  const node = storeSlate(CREATED, [[5, CREATED.indexOf("cast.cast_1")],
+                                    [6, CREATED.indexOf("voices.voice_1")],
+                                    [7, CREATED.indexOf("shots.shot_1")]]);
+  sockets.sync(node);
+  const on = (id) => node.inputs[node.graph.links.get(id).target_slot]?.name;
+  assert.equal(on(5), "cast.cast_1");
+  assert.equal(on(6), "voices.voice_1");
+  assert.equal(on(7), "shots.shot_1");
+  assert.ok(node.inputs.some((i) => i.name === "shots.shot_2"), "the shot group must grow");
+});
+
+test("a rebuild grows the node to fit its sockets but never shrinks it", () => {
+  // computeSize is the minimum. Taken outright on every load it squeezed a slate
+  // saved 760 wide down to its narrowest, crushing the Asset Bin panel.
+  const sized = (fit) => {
+    const node = storeSlate(CREATED, [[7, CREATED.indexOf("shots.shot_1")]]);
+    node.size = [760, 1700];
+    node.computeSize = () => fit;
+    node.setSize = (size) => { node.size = size; };
+    sockets.sync(node);
+    return node.size;
+  };
+  assert.deepEqual(sized([240, 900]), [760, 1700]);
+  assert.deepEqual(sized([800, 1800]), [800, 1800]);
+});
+
+test("1.57: storeBacked tells the two socket models apart", () => {
+  const node = storeSlate(["model"], []);
+  assert.equal(sockets.storeBacked(node.inputs[0]), true);
+  assert.equal(sockets.storeBacked({ name: "model", link: null }), false);
+});
+
 if (failures) {
   console.error(`\n${failures} JS socket test(s) failed:\n`);
   process.exit(1);

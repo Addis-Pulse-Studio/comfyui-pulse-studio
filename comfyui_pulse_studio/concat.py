@@ -47,7 +47,7 @@ segment files.
 import math
 
 __all__ = ["video_shifts", "video_is_gapless", "frame_duration",
-           "audio_span_bounds", "audio_span_report",
+           "audio_span_bounds", "audio_span_report", "gate_bounds", "upscale_size",
            "seam_dip_samples", "seam_dip_gains",
            "seam_gain_match", "SEAM_FADE_MS_DEFAULT",
            "SEAM_FADE_MS_MIN", "SEAM_FADE_MS_MAX"]
@@ -248,3 +248,70 @@ def seam_gain_match(tail_rms, head_rms, head_peak=0.0,
     if peak > 0 and gain * peak > ceiling:
         gain = max(1.0 / limit, ceiling / peak)
     return gain
+
+
+def gate_bounds(total_samples, sample_rate, gate_start, gate_end, fade_seconds,
+                fade_in=True, fade_out=True):
+    """Where a voice piece may be heard inside one window's clip, in samples.
+
+    `gate_start` / `gate_end` are seconds relative to the window's own start -- so
+    either may be negative or past the end, when the shot began before the window
+    or ends after it. Returns (a, b, fade_in_samples, fade_out_samples): the piece
+    is silent outside [a, b), ramps up over the first `fade_in_samples` of it and
+    down over the last `fade_out_samples`.
+
+    A fade is never applied at an edge the window itself cuts -- the shot carries
+    on in the neighbouring window, and fading there would dip the voice at the
+    seam, which is the one place a dip is audible as a join. Nor at an edge shared
+    with another piece of the same track (`fade_in`/`fade_out` False), which
+    switches over sample-exactly instead.
+    """
+    rate = int(sample_rate)
+    total = max(0, int(total_samples))
+    a = int(round(float(gate_start) * rate))
+    b = int(round(float(gate_end) * rate))
+    cut_a, cut_b = a <= 0, b >= total
+    a = min(max(a, 0), total)
+    b = min(max(b, a), total)
+    span = b - a
+    fade = max(0, int(round(float(fade_seconds) * rate)))
+    up = 0 if (cut_a or not fade_in) else min(fade, span // 2)
+    down = 0 if (cut_b or not fade_out) else min(fade, span // 2)
+    return a, b, up, down
+
+
+def _even(value, up=False):
+    """The nearest even integer, or the next one up. Encoders want even sizes."""
+    n = int(math.ceil(value - 1e-9)) if up else int(round(value))
+    return n + (n % 2)
+
+
+def upscale_size(width, height, mode):
+    """(scaled_w, scaled_h, out_w, out_h) for an upscale mode, or None for 'off'.
+
+    The film is resampled to (scaled_w, scaled_h) and then centre-cropped to
+    (out_w, out_h); for '1080p_fit' the two are the same and nothing is cut.
+
+      1080p_fit    short edge 1080, aspect kept: 1344x768 -> 1890x1080.
+      1080p_exact  1920x1080 landscape, 1080x1920 portrait, 1080x1080 square --
+                   scaled to cover and cropped, so 1344x768 loses 9 rows top and
+                   bottom of 1098 rather than gaining bars.
+    """
+    width, height = int(width), int(height)
+    if mode in (None, "", "off") or width <= 0 or height <= 0:
+        return None
+    if mode == "1080p_fit":
+        scale = 1080.0 / min(width, height)
+        w, h = _even(width * scale), _even(height * scale)
+        return w, h, w, h
+    if mode == "1080p_exact":
+        if width > height:
+            out_w, out_h = 1920, 1080
+        elif height > width:
+            out_w, out_h = 1080, 1920
+        else:
+            out_w, out_h = 1080, 1080
+        scale = max(out_w / float(width), out_h / float(height))
+        return (max(out_w, _even(width * scale, up=True)),
+                max(out_h, _even(height * scale, up=True)), out_w, out_h)
+    raise ValueError("upscale must be off, 1080p_fit or 1080p_exact, got %r" % (mode,))

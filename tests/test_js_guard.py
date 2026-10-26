@@ -42,12 +42,15 @@ CONNECTION_TYPES = {"MODEL", "CLIP", "VAE", "CONDITIONING", "LATENT", "IMAGE", "
                     # connection input inserted ahead of an existing one.
                     # PULSE_LIPSYNC_SEGMENT carries one character's cut frames from
                     # the lip-sync segment node to its paste.
+                    # PULSE_RECIPE is a branch's sampling settings, PULSE_CAST one
+                    # character: a face, its description and its voice.
                     "PULSE_TIMELINE", "PULSE_SHOT", "PULSE_VOICE", "PULSE_LIPSYNC_SEGMENT",
-                    "VIDEO"}
+                    "PULSE_RECIPE", "PULSE_CAST", "VIDEO"}
 
 # Every node in the pack is under the slot contract, so every node is compared.
 NODE_CLASSES = ("PulseSlate", "PulseShot", "PulseVoice", "PulseRender", "PulseBench",
-                "PulseRetake", "PulseStill", "PulseLipSyncSegment", "PulseLipSyncPaste")
+                "PulseRetake", "PulseStill", "PulseLipSyncSegment", "PulseLipSyncPaste",
+                "PulseRecipe", "PulseCharacter")
 
 # Dot-namespaced growing socket groups (§4). They are declared in Python by a
 # loop rather than as dict literals, so they are deliberately invisible to the
@@ -334,8 +337,10 @@ class TestInputAndOutputOrderIsFrozen(unittest.TestCase):
     EXPECTED_INPUTS = {
         # The growing groups are appended after these and are checked by
         # test_dynamic_group_sizes_match_the_frontend instead.
+        # The two recipes are appended after ref_music, never inserted.
         "PulseSlate": ["model", "clip", "vae", "audio_vae",
-                       "model_fl2va", "ref_video", "ref_video_audio", "ref_music"],
+                       "model_fl2va", "ref_video", "ref_video_audio", "ref_music",
+                       "recipe", "recipe_fl2va"],
         # `voice` is appended after ref_audio, never inserted before it: an
         # optional input's link endpoint is positional in a saved node.
         "PulseShot": ["start_image", "end_image", "ref_audio", "voice"],
@@ -348,6 +353,8 @@ class TestInputAndOutputOrderIsFrozen(unittest.TestCase):
         "PulseStill": ["model", "clip", "vae", "audio_vae", "source_image", "ref_images"],
         "PulseLipSyncSegment": ["timeline", "images"],
         "PulseLipSyncPaste": ["images", "corrected_images", "segment"],
+        "PulseRecipe": [],
+        "PulseCharacter": ["face", "body", "voice"],
     }
 
     EXPECTED_OUTPUTS = {
@@ -369,6 +376,8 @@ class TestInputAndOutputOrderIsFrozen(unittest.TestCase):
         "PulseLipSyncSegment": (["IMAGE", "AUDIO", "PULSE_LIPSYNC_SEGMENT", "STRING"],
                                 ["images", "audio", "segment", "report"]),
         "PulseLipSyncPaste": (["IMAGE", "STRING"], ["images", "report"]),
+        "PulseRecipe": (["PULSE_RECIPE"], ["recipe"]),
+        "PulseCharacter": (["PULSE_CAST"], ["character"]),
     }
 
     #: §4. Both languages must agree on how many sockets each group has, or the
@@ -376,7 +385,7 @@ class TestInputAndOutputOrderIsFrozen(unittest.TestCase):
     #: ones it does, making them unreachable).
     EXPECTED_GROUPS = {
         "PulseSlate": {"refs.ref_image_": 8, "shots.shot_": 24,
-                       "voices.voice_": 3},
+                       "voices.voice_": 3, "cast.cast_": 6},
         "PulseShot": {"refs.ref_image_": 4},
     }
 
@@ -392,7 +401,8 @@ class TestInputAndOutputOrderIsFrozen(unittest.TestCase):
                                   "size of %s on %s" % (prefix, class_name))
         # And that the Python constants the loops use are the same numbers.
         for name, size in (("MAX_SLATE_REF_IMAGES", 8), ("MAX_SHOT_SOCKETS", 24),
-                           ("MAX_SHOT_REF_IMAGES", 4), ("MAX_SLATE_VOICES", 3)):
+                           ("MAX_SHOT_REF_IMAGES", 4), ("MAX_SLATE_VOICES", 3),
+                           ("MAX_SLATE_CAST", 6)):
             self.assertIn("%s = %d" % (name, size), source)
 
     def test_the_growing_groups_are_declared_last(self):
@@ -408,6 +418,9 @@ class TestInputAndOutputOrderIsFrozen(unittest.TestCase):
                         slate.index('optional["voices.voice_%d" % i]'),
                         "voices are appended after shots, matching GROUPS -- a group "
                         "inserted ahead of an existing one moves a saved graph's wires")
+        self.assertLess(slate.index('optional["voices.voice_%d" % i]'),
+                        slate.index('optional["cast.cast_%d" % i]'),
+                        "the cast is appended after voices, matching GROUPS")
 
     def test_input_order_is_unchanged(self):
         for class_name, expected in self.EXPECTED_INPUTS.items():

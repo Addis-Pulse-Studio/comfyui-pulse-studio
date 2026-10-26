@@ -217,18 +217,24 @@ def carry_over_budget(timeline, plan):
     return lines
 
 
-def _ordinal_map(timeline):
-    """Section 2: which alias resolved to which tag, per shot.
+def _ordinal_map(timeline, plan=None):
+    """Section 2: which alias resolved to which tag, per shot -- and per window.
 
     Per shot rather than per project, because §10 gives scene-local references
     ordinals that continue after the global block *within that shot only*. The
     same alias can legitimately be a different number in two different shots, and
     a project-wide table would flatten exactly the distinction that matters.
+
+    The global block is the bin's own order, which is what a single window sees.
+    A continuation window's carried frame claims <Picture 1> and pushes every one
+    of them up by one, so with a plan the real tags of every window follow --
+    which is the table to read when a face lands on the wrong character.
     """
     lines = []
     globals_ = (timeline.get("refs") or {}).get("global") or []
     if globals_:
-        lines.append("global references (identical in every shot):")
+        lines.append("global references (bin order -- see each window below for the "
+                     "tags it actually carries):")
         for ref in globals_:
             lines.append("    %-22s -> %s" % (ref.get("alias") or "(unnamed)",
                                               _tag(ref)))
@@ -248,6 +254,16 @@ def _ordinal_map(timeline):
         # binding took is to be shown it.
         if binding:
             lines.append("    %-22s -> %s  (speaker)" % ("speaker", binding))
+    for window in (getattr(plan, "windows", None) or []):
+        tagged = [f for f in window.files if f.tag]
+        if not tagged:
+            continue
+        lines.append("window %d (%s):" % (window.index + 1, window.branch))
+        for ref in tagged:
+            what = "carried from the previous window" if ref.synthetic else (ref.name or "")
+            if getattr(ref, "pieces", None):
+                what += "  (voice track: %s)" % ", ".join(p.name for p in ref.pieces)
+            lines.append("    %-14s %s" % (ref.tag, what))
     return lines or ["    (no references)"]
 
 
@@ -345,14 +361,25 @@ def _duration(seconds):
     return "%ds" % (secs,)
 
 
-def _packed(timeline):
-    """Section 7: distinct packed sequence lengths, with the §12.5 warning."""
+def _packed(timeline, patch_descriptor=None):
+    """Section 7: distinct packed sequence lengths, with the §12.5 warning.
+
+    The warning is about Sol-Attn's Triton kernel, so it is said only where a
+    sol-attn kernel may be running: the Sol-Attn pack, core's sparse attention in
+    its sol-attn mode, or nothing detected at all (where it cannot be ruled out).
+    FastH3-Omni's VSA and a dense HyperFlow model pay no autotune per length.
+    """
     groups = distinct_packed_lengths(timeline.get("windows") or [])
     lines = []
     for rows, indices in groups.items():
         lines.append("    %9d rows  window(s) %s"
                      % (rows, ", ".join(str(i) for i in indices)))
-    if len(groups) > 1:
+    descriptor = patch_descriptor or {}
+    sparse = descriptor.get("block_sparse") or {}
+    sol = ((descriptor.get("sol_attn") or {}).get("present")
+           or (sparse.get("present") and not sparse.get("vsa"))
+           or not descriptor.get("detected"))
+    if len(groups) > 1 and sol:
         lines.append(
             "    WARNING: %d distinct packed sequence lengths. Sol-Attn's Triton kernel "
             "autotunes per length, and that sweep runs inside the sampling loop -- this "
@@ -404,7 +431,7 @@ def build_report(timeline, decisions=None, patch_descriptor=None, patch_fingerpr
 
     out.append("")
     out.append("2. ORDINAL MAP")
-    out.extend(_ordinal_map(timeline))
+    out.extend(_ordinal_map(timeline, plan))
 
     out.append("")
     out.append("3. UNRESOLVED ALIASES")
@@ -437,7 +464,7 @@ def build_report(timeline, decisions=None, patch_descriptor=None, patch_fingerpr
 
     out.append("")
     out.append("7. PACKED SEQUENCE LENGTHS")
-    out.extend(_packed(timeline))
+    out.extend(_packed(timeline, patch_descriptor))
 
     notes = list(timeline.get("warnings") or []) + list(warnings or [])
     if notes:

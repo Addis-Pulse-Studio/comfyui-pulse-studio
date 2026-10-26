@@ -205,7 +205,12 @@ def build_timeline(raw, global_prompt="", shot_prompt="", duration_seconds=None,
         style_line=fields["style_line"] or document.get("style_line", ""),
         overall_soundscape=fields["overall_soundscape"] or document.get("overall_soundscape", ""),
         non_diegetic_music=fields["non_diegetic_music"] or document.get("non_diegetic_music", ""),
-        dialogue_language=dialogue_language or document.get("dialogue_language", "English"),
+        # A `language:` line in the global prompt wins, then the stored project,
+        # then the caller. The caller used to win outright -- and it always passed
+        # "English", so no film could ever be tagged anything else.
+        dialogue_language=(fields.get("dialogue_language")
+                           or document.get("dialogue_language")
+                           or dialogue_language or "English"),
         branch=branch or document.get("branch", "ref2va"),
         continuation_branch=continuation_branch or document.get("continuation_branch"),
         first_frame=first_frame if first_frame is not None else document.get("first_frame"),

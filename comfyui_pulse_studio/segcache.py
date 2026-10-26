@@ -45,6 +45,7 @@ from .constants import (
     AUDIO_MODE_REFERENCE,
     AUDIO_MODE_REMIX,
     AUDIO_ROLE_LIP_SYNC,
+    BRANCH_FL2VA,
     DEFAULT_REMIX_STRENGTH,
 )
 from .pulse_timeline import canonical_json, shots_of_window
@@ -126,13 +127,12 @@ def _ref_descriptor_key(ref):
     # neither a role-less nor an unbound reference moves the key it already has.
     if ref.get("voice_of"):
         key.append(ref["voice_of"])
-    # And `audio_offset` is a seventh. It decides *which seconds* of the recording
-    # this window is handed, so two renders identical in every other field are
-    # different films -- and the difference is invisible in the descriptor's
-    # digest, which hashes the whole file either way. Appended last and only when
-    # non-zero, so a recording that starts with the film keeps its key on disk.
-    if ref.get("audio_offset"):
-        key.append(ref["audio_offset"])
+    # `audio_offset` is deliberately NOT here, although the descriptor carries it.
+    # It is a position on the film clock, and the film clock is the wrong frame:
+    # move an earlier shot and a per-shot take moves with its window, so the
+    # seconds the window hears are unchanged while the offset is not. What decides
+    # the render is the offset *relative to the window*, and that is the window's
+    # own `audio_plan` -- see cache_key_material.
     return key
 
 
@@ -164,7 +164,8 @@ def _shot_key(shot):
 
 
 def cache_key_material(timeline, window, model_fingerprint, patch_fingerprint,
-                       audio_mode=AUDIO_MODE_REFERENCE, remix_strength=None):
+                       audio_mode=AUDIO_MODE_REFERENCE, remix_strength=None,
+                       extra=None):
     """The exact list §7.1 hashes, in the order it specifies.
 
     Exposed separately from `cache_key` so a test can assert *what* is hashed --
@@ -208,11 +209,31 @@ def cache_key_material(timeline, window, model_fingerprint, patch_fingerprint,
             mode.append(round(float(remix_strength if remix_strength is not None
                                     else DEFAULT_REMIX_STRENGTH), 4))
         material.append(["audio_mode", mode])
+        # Until the compiler carried `drive_files`, a fl2va window keyed the mode
+        # above but was sampled unlocked: its bin is empty, so there was nothing to
+        # hold. Such a segment is on disk under this very key, and reusing it would
+        # hand back a mouth that tracks nothing. The marker moves exactly those
+        # windows -- ref2va keys, and every reference_only key, stay where they are.
+        if window.get("branch") == BRANCH_FL2VA:
+            material.append(["audio_lock_branch", BRANCH_FL2VA])
+    # A hand-written schedule replaces the scheduler's own, so it is what was
+    # sampled. Present only on windows that have one.
+    if window.get("sigmas"):
+        material.append(["sigmas", window["sigmas"]])
+    # Which seconds of which recording the window hears, relative to the window.
+    # Present only when that is anything but "every recording from its start".
+    if window.get("audio_plan"):
+        material.append(["audio_plan", window["audio_plan"]])
+    # What the executor knows and the document cannot: the key of the window a
+    # carried frame came from, a render-time option that changes conditioning.
+    # Each pair is appended only by a caller that has something to say.
+    for pair in (extra or ()):
+        material.append(list(pair))
     return material
 
 
 def cache_key(timeline, window, model_fingerprint, patch_fingerprint,
-              audio_mode=AUDIO_MODE_REFERENCE, remix_strength=None):
+              audio_mode=AUDIO_MODE_REFERENCE, remix_strength=None, extra=None):
     """The full sha256 hex cache key for one window. Spec §7.1.
 
     §14.8 forbids computing this without a patch fingerprint, so an empty one is
@@ -227,7 +248,7 @@ def cache_key(timeline, window, model_fingerprint, patch_fingerprint,
             "Even 'nothing detected' has a fingerprint; an empty one means the "
             "detector was never run.")
     material = cache_key_material(timeline, window, model_fingerprint, patch_fingerprint,
-                                  audio_mode, remix_strength)
+                                  audio_mode, remix_strength, extra=extra)
     return hashlib.sha256(canonical_json(material).encode("utf-8")).hexdigest()
 
 
@@ -242,8 +263,10 @@ def derive_run_id(timeline):
     import hashlib
 
     reduced = dict(timeline)
+    # `audio_plan` is compiled from the shots and recordings already hashed here;
+    # it is stripped so a project keeps the folder it had before the field existed.
     reduced["windows"] = [
-        {k: v for k, v in window.items() if k not in ("seed", "cache_key")}
+        {k: v for k, v in window.items() if k not in ("seed", "cache_key", "audio_plan")}
         for window in timeline.get("windows") or []
     ]
     digest = hashlib.sha256(canonical_json(reduced).encode("utf-8")).hexdigest()

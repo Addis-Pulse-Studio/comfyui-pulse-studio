@@ -216,7 +216,9 @@
         0.0,
         -1.0,
         "",
-        "the narration that runs under the whole film"
+        "the narration that runs under the whole film",
+        true,
+        ""
       ],
       "title": "Pulse Voice · one file, every window"
     },
@@ -627,7 +629,9 @@
         true,
         "audio+colour",
         "reference_only",
-        0.35
+        0.35,
+        "canvas",
+        "off"
       ],
       "title": "② Pulse Render · execute"
     },

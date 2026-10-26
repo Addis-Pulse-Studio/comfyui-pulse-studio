@@ -52,6 +52,8 @@ from .pulse_timeline import canonical_json
 
 __all__ = [
     "PACK_FRAGMENTS",
+    "EXTRA_FRAGMENTS",
+    "describe_weight_patches",
     "describe_model_patches",
     "describe_patches",
     "patch_fingerprint",
@@ -82,6 +84,23 @@ PACK_FRAGMENTS = (
     ("sage", ("sage",)),
 )
 
+#: Patches recognised since the table above shipped. Checked the same way, but
+#: written into a descriptor ONLY when present: every name in PACK_FRAGMENTS is
+#: always listed (as `present: false` when absent), so adding one there would
+#: change the fingerprint of every model on every box and empty every cache.
+#:
+#:   * ComfyUI core's own `BlockSparseAttention` node -- the VSA chain FastH3-Omni
+#:     is trained for, and core's sol-attn -- installs an attention override from
+#:     `comfy_extras.nodes_sparse_attention`. It used to land in the catch-all
+#:     `attention_override` with its settings unread, so VSA at 10% and sol-attn
+#:     at tau 1.3 hashed the same.
+#:   * ComfyUI-HyperFlow records its adapter in `model_options["hyperflow"]`.
+EXTRA_FRAGMENTS = (
+    ("block_sparse", ("nodes_sparse_attention", "block_sparse_attention",
+                      "sparseattnpatch")),
+    ("hyperflow", ("hyperflow",)),
+)
+
 #: Attention override slot. Verified against ComfyUI core
 #: (comfy/ldm/modules/attention.py dispatches through it) and against KJNodes.
 OVERRIDE_PATH = ("transformer_options", "optimized_attention_override")
@@ -99,10 +118,78 @@ _MAX_DEPTH = 4
 def _fragment_owner(name):
     """Which pack a key name, module path or qualname belongs to, or None."""
     lowered = str(name).lower()
-    for pack, fragments in PACK_FRAGMENTS:
+    for pack, fragments in PACK_FRAGMENTS + EXTRA_FRAGMENTS:
         if any(f in lowered for f in fragments):
             return pack
     return None
+
+
+def _closure_settings(fn):
+    """The scalar settings of the first configuration object a closure captured.
+
+    Core's sparse attention registers a bare closure whose only readable state is
+    the `SparseAttnPatch` it closed over -- method, keep ratio, tau, the sigma
+    window, sink_conditioning. Reduced the same way `_jsonify` reduces any object:
+    scalars and identities only, never an address.
+    """
+    for cell in (getattr(fn, "__closure__", None) or ()):
+        try:
+            value = cell.cell_contents
+        except ValueError:  # pragma: no cover - empty cell
+            continue
+        if value is None or callable(value) or isinstance(
+                value, (bool, int, float, str, dict, list, tuple, set)):
+            continue
+        settings = _jsonify(value)
+        if isinstance(settings, dict) and len(settings) > 1:
+            return settings
+    return {}
+
+
+def _shape_signature(value, depth=0):
+    """Shapes of the tensors inside a weight patch, without importing torch."""
+    shape = getattr(value, "shape", None)
+    if shape is not None:
+        try:
+            return [int(d) for d in shape]
+        except Exception:  # pragma: no cover - exotic tensor wrapper
+            return "<shape>"
+    if depth >= 3:
+        return None
+    inner = getattr(value, "weights", None)
+    if isinstance(inner, (list, tuple)):
+        value = inner
+    if isinstance(value, (list, tuple)):
+        return [_shape_signature(v, depth + 1) for v in value
+                if not isinstance(v, (str, bool, int, float)) or depth == 0]
+    return None
+
+
+def describe_weight_patches(patches):
+    """LoRA-style weight patches on a ModelPatcher, as one stable entry, or None.
+
+    `ModelPatcher.patches` maps a weight key to a list of
+    `(strength_patch, patch, strength_model, offset, function)`. A LoRA changes
+    every frame the model renders -- a TaoMate adapter at 1.0 against one at 0.6
+    are different films -- and the shape-only model fingerprint cannot see it.
+    Hashed over keys, strengths and patch shapes, never tensor contents: reading
+    2.5 GB of adapter weights per queue to tell one LoRA from another of the same
+    rank is not worth it, and two such files at the same strength are rare.
+    """
+    if not isinstance(patches, dict) or not patches:
+        return None
+    rows = []
+    for key in sorted(patches, key=str):
+        for entry in patches[key] or ():
+            if not isinstance(entry, (list, tuple)) or len(entry) < 3:
+                continue
+            strength_patch, patch, strength_model = entry[0], entry[1], entry[2]
+            rows.append([str(key), _jsonify(strength_patch), _jsonify(strength_model),
+                         _shape_signature(patch)])
+    if not rows:
+        return None
+    digest = hashlib.sha256(canonical_json(rows).encode("utf-8")).hexdigest()[:16]
+    return {"present": True, "count": len(rows), "digest": digest}
 
 
 def _callable_identity(value):
@@ -205,11 +292,18 @@ def _scan(container, into, source):
             # exactly this -- carries its settings nowhere readable. Its identity
             # is all there is, and it is enough to tell one pack from another.
             entry.setdefault("callable", settings)
+            # Except where the closure captured its configuration, which core's
+            # sparse attention does. Read only for the packs recognised since
+            # the original table, so no existing descriptor gains a field.
+            if pack in dict(EXTRA_FRAGMENTS):
+                for k, v in _closure_settings(value).items():
+                    entry.setdefault(k, v)
         else:
             entry.setdefault("value", settings)
 
 
-def describe_patches(model_options, sage_attention_global=False, object_patches=None):
+def describe_patches(model_options, sage_attention_global=False, object_patches=None,
+                     weight_patches=None):
     """The canonical patch descriptor for one model. Spec §12.4.
 
     `model_options` is the dict off a ComfyUI ModelPatcher; `object_patches` is
@@ -251,7 +345,7 @@ def describe_patches(model_options, sage_attention_global=False, object_patches=
     # an approximation, and still has to move the hash.
     override = transformer.get(OVERRIDE_PATH[1])
     if override is not None and not any(
-            k in found for k in ("sol_attn", "sage")):
+            k in found for k in ("sol_attn", "sage", "block_sparse")):
         found["attention_override"] = {
             "present": True,
             "callable": _callable_identity(override) or "<callable>",
@@ -262,6 +356,10 @@ def describe_patches(model_options, sage_attention_global=False, object_patches=
     for pack, entry in found.items():
         entry["evidence"] = sorted(set(entry.get("evidence", [])))
         descriptor[pack] = entry
+    # Only when there are any -- see EXTRA_FRAGMENTS for why absent is unlisted.
+    weights = describe_weight_patches(weight_patches)
+    if weights is not None:
+        descriptor["weight_patches"] = weights
 
     descriptor["detected"] = any(v.get("present") for v in descriptor.values()
                                  if isinstance(v, dict))
@@ -273,7 +371,8 @@ def describe_model_patches(model, sage_attention_global=False):
     return describe_patches(
         getattr(model, "model_options", None),
         sage_attention_global=sage_attention_global,
-        object_patches=getattr(model, "object_patches", None))
+        object_patches=getattr(model, "object_patches", None),
+        weight_patches=getattr(model, "patches", None))
 
 
 def patch_fingerprint(descriptor):
@@ -335,15 +434,17 @@ def sink_conditioning(descriptor):
     audio track for multi-character sync. That pairing lives in exactly the query
     rows the cheaper settings stop running dense.
     """
-    sol = (descriptor or {}).get("sol_attn") or {}
-    value = sol.get("sink_conditioning")
-    return value if isinstance(value, str) else None
+    for pack in ("sol_attn", "block_sparse"):
+        value = ((descriptor or {}).get(pack) or {}).get("sink_conditioning")
+        if isinstance(value, str):
+            return value
+    return None
 
 
 def patch_chain_summary(descriptor):
     """One line per detected pack, for the §9.5 report section."""
     lines = []
-    for pack, _ in PACK_FRAGMENTS:
+    for pack, _ in PACK_FRAGMENTS + EXTRA_FRAGMENTS:
         entry = (descriptor or {}).get(pack) or {}
         if not entry.get("present"):
             continue
@@ -354,6 +455,10 @@ def patch_chain_summary(descriptor):
     extra = (descriptor or {}).get("attention_override") or {}
     if extra.get("present"):
         lines.append("%-10s %s (unrecognised pack)" % ("attention", extra.get("callable", "")))
+    weights = (descriptor or {}).get("weight_patches") or {}
+    if weights.get("present"):
+        lines.append("%-10s %d patched weight(s), %s" % ("lora", weights.get("count", 0),
+                                                         weights.get("digest", "")))
     return lines
 
 

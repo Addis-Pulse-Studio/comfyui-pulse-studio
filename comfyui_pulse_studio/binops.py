@@ -16,8 +16,9 @@ from .assets import (
     Asset,
     AssetBin,
     BudgetError,
+    voice_key,
 )
-from .constants import AUDIO_ROLES, RETENTION_DEFAULT, RETENTION_VALUES
+from .constants import AUDIO_ROLES, RETENTION_DEFAULT, RETENTION_VALUES, TAG_AUDIO
 
 __all__ = [
     "bin_state",
@@ -39,6 +40,7 @@ def bin_state(bin_, limits=None):
     back -- prompt text refers to assets by name or id.
     """
     tm = bin_.tag_map()
+    voices = _voice_tags(bin_, tm)
     report = bin_.budget(limits=limits)
     rows = []
     for asset in bin_:
@@ -49,7 +51,7 @@ def bin_state(bin_, limits=None):
             "file": asset.file,
             "description": asset.description,
             "retention": asset.retention,
-            "tag": tm.by_id.get(asset.asset_id),
+            "tag": voices.get(asset.asset_id) or tm.by_id.get(asset.asset_id),
             "synthetic": asset.synthetic,
         }
         if asset.kind == KIND_VIDEO:
@@ -60,6 +62,9 @@ def bin_state(bin_, limits=None):
         if asset.kind == KIND_AUDIO:
             row["audio_role"] = asset.audio_role
             row["voice_of"] = asset.voice_of
+            row["audio_offset"] = asset.audio_offset
+            row["trim_start"] = asset.trim_start
+            row["trim_end"] = asset.trim_end
         rows.append(row)
     # Who a voice can belong to: the visual references, which are the only things
     # in a bin that a character can be. Sent as (id, name) so the panel offers a
@@ -78,6 +83,25 @@ def bin_state(bin_, limits=None):
         "audio_roles": list(AUDIO_ROLES),
         "cast": cast,
     }
+
+
+def _voice_tags(bin_, tm):
+    """What each recording is called in a window: one <Audio j> per voice.
+
+    The compiler lays every lip-sync line of one character on a single track, so
+    a two-hander with six lines in the bin reaches a window as two references.
+    The tag map numbers the rows one by one -- it has to, those are its sockets --
+    and shown as it is, the panel tagged a sixth line <Audio 6> under a meter
+    reading 2/3. Display only: nothing reads a tag back.
+    """
+    numbers = [n for kind, key, n in tm.order if kind == "audio" and "#" not in key]
+    first, tags = {}, {}
+    for asset in bin_.by_kind(KIND_AUDIO):
+        key = voice_key(asset)
+        if key not in first:
+            first[key] = "<%s %d>" % (TAG_AUDIO, numbers[len(first)])
+        tags[asset.asset_id] = first[key]
+    return tags
 
 
 class RenumberDelta:
@@ -170,7 +194,54 @@ def apply_operation(bin_, operation, limits=None, **kwargs):
         return _set_audio_role(bin_, kwargs["asset_id"], kwargs["audio_role"])
     if operation == "set_voice_of":
         return _set_voice_of(bin_, kwargs["asset_id"], kwargs.get("voice_of"))
+    if operation == "set_audio_timing":
+        return _set_audio_timing(bin_, kwargs["asset_id"], kwargs.get("audio_offset"),
+                                 kwargs.get("trim_start"), kwargs.get("trim_end"))
     raise ValueError("unknown bin operation %r" % (operation,))
+
+
+def _seconds(value, label):
+    """A non-negative number of seconds, or None for an empty field."""
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return None
+    try:
+        seconds = float(value)
+    except (TypeError, ValueError):
+        raise ValueError("%s must be a number of seconds, got %r" % (label, value))
+    if seconds != seconds or seconds < 0:
+        raise ValueError("%s cannot be negative" % label)
+    return seconds
+
+
+def _set_audio_timing(bin_, asset_id, audio_offset, trim_start, trim_end):
+    """Where a bin recording sits on the film clock, and which seconds of it play.
+
+    `audio_offset` is the film second the kept part starts at; `trim_start` and
+    `trim_end` cut the file itself. All three are set together, as the panel
+    shows them: an empty offset or trim_start is 0, an empty trim_end plays to the
+    end of the file.
+
+    This is what lets one take file carry several lines from the bin -- each line
+    a row of its own, cut from the file and placed at its shot -- instead of a
+    Load Audio and a Pulse Voice per line wired into the shots. Until it existed
+    the panel could only place a recording at the film's first second.
+    """
+    asset = bin_.get(asset_id)
+    if asset is None:
+        raise KeyError(asset_id)
+    if asset.kind != KIND_AUDIO:
+        raise ValueError("only a recording has a place on the film clock; %r is a %s"
+                         % (asset.name, asset.kind))
+    offset = _seconds(audio_offset, "the start on the film clock") or 0.0
+    start = _seconds(trim_start, "trim_start") or 0.0
+    end = _seconds(trim_end, "trim_end")
+    if end is not None and end <= start:
+        raise ValueError("trim_end (%.2fs) has to come after trim_start (%.2fs)"
+                         % (end, start))
+    asset.audio_offset = offset
+    asset.trim_start = start
+    asset.trim_end = end
+    return asset
 
 
 def _set_description(bin_, asset_id, description):

@@ -36,17 +36,31 @@ __all__ = [
     "grid_step_index",
     "frames_to_seconds",
     "seconds_to_frames",
+    "exact_frames",
     "video_latent_t",
     "last_anchor_index",
     "partition_windows",
     "shot_aligned_windows",
+    "speech_aware_windows",
+    "in_speech",
     "window_bounds",
     "POLICIES",
 ]
 
 #: How a long timeline is split. Surfaced verbatim as PulseSlate's
 #: `partition_strategy` widget, so the order here is the order in the combo.
-POLICIES = ("balanced", "fill", "shot_aligned")
+POLICIES = ("balanced", "fill", "shot_aligned", "speech_aware")
+
+# What a seam costs where it lands, for `speech_aware_windows`. The scale only
+# matters relative to itself: a seam on a cut is free, a seam in a pause costs one,
+# and a seam through a word costs more than adding a whole extra window would.
+SEAM_COST_CUT = 0.0
+SEAM_COST_PAUSE = 1.0
+SEAM_COST_CUT_IN_SPEECH = 4.0
+SEAM_COST_IN_SPEECH = 8.0
+#: Per grid step a window falls short of the cap, or the last one overshoots the film.
+STEP_COST_SHORT = 0.05
+STEP_COST_OVERSHOOT = 0.25
 
 
 def is_on_grid(n):
@@ -138,6 +152,15 @@ def seconds_to_frames(seconds, fps=FPS, mode="up"):
     else:
         n = round(exact)
     return snap_frames(n, mode=mode)
+
+
+def exact_frames(seconds, fps=FPS):
+    """How many frames `seconds` covers, rounded up and deliberately NOT snapped.
+
+    The input every partition policy wants: the film's real length. Only the
+    windows it is split into sit on the 17k+5 grid -- see `partition_windows`.
+    """
+    return max(MIN_FRAMES, math.ceil(float(seconds) * fps - 1e-9))
 
 
 def video_latent_t(frame_count):
@@ -361,9 +384,116 @@ def shot_aligned_windows(total_frames, boundaries, cap, floor, notes):
     return windows
 
 
+def in_speech(frame, speech):
+    """True when a seam at `frame` would fall strictly inside a span of speech.
+
+    A seam sits *between* frame-1 and frame; landing exactly on a span's first or
+    last frame is the edge of the word, not the middle of it.
+    """
+    return any(a < frame < b for a, b in (speech or ()))
+
+
+def speech_aware_windows(total_frames, boundaries, speech, cap, floor, notes):
+    """Windows whose seams land on cuts, else in pauses -- never through a word.
+
+    A seam is where two independently sampled windows meet. Inside a word it cuts
+    the syllable in half: one window's mouth closes it, the next one's opens it
+    again, and the lip-sync reads as a stutter however good either side is. A seam
+    on a cut is invisible, and one in a pause has nothing on screen to break.
+
+    `speech` is the film's lip-sync recordings as (first, end) frame spans --
+    measured off their level by the node layer, film clock, every voice merged.
+    `boundaries` are the cuts, unsnapped, as for `shot_aligned_windows`.
+
+    Every window is a legal grid length in [floor, MAX_WINDOW_FRAMES], so a seam
+    can land on any frame some sum of grid lengths reaches -- and with several
+    lengths to combine that is most frames, which is why this policy finds pauses
+    that `shot_aligned`'s exact-sum arithmetic cannot. A dynamic programme over
+    seam positions minimises: what each seam lands on (see the SEAM_COST_*
+    constants), how far each window falls short of `cap`, and how far the last
+    one runs past the film. With no speech and no cuts it is `balanced`, which is
+    exactly what it should be.
+    """
+    total = int(total_frames)
+    cuts = {int(p) for p in (boundaries or []) if 0 < int(p) < total}
+    speech = [(int(a), int(b)) for a, b in (speech or ()) if b > a]
+    if total <= cap and not cuts:
+        return [align_frame_count(total)]
+
+    lowest = grid_step_index(align_frame_count(max(floor, MIN_FRAMES)))
+    lengths = [frames_from_step(k) for k in range(lowest, grid_step_index(MAX_WINDOW_FRAMES) + 1)]
+
+    def seam_cost(p):
+        talking = in_speech(p, speech)
+        if p in cuts:
+            return SEAM_COST_CUT_IN_SPEECH if talking else SEAM_COST_CUT
+        return SEAM_COST_IN_SPEECH if talking else SEAM_COST_PAUSE
+
+    def window_cost(length):
+        return STEP_COST_SHORT * max(0, cap - length) / float(FRAME_GRID_MODULUS)
+
+    # best[p] = (cost, previous p, window length) for a seam at p; 0 is the start.
+    # Every transition moves forward, so walking p upward settles each position
+    # before anything is built on it.
+    best = {0: (0.0, None, None)}
+    finals = []
+    for p in range(total):
+        if p not in best:
+            continue
+        cost_here = best[p][0]
+        remaining = total - p
+        # Close the film from here with one window, if one can hold the rest. The
+        # last window is whatever is left, so only its overshoot is charged.
+        last = align_frame_count(max(remaining, floor))
+        if last <= MAX_WINDOW_FRAMES:
+            overshoot = (last - remaining) / float(FRAME_GRID_MODULUS)
+            finals.append((cost_here + STEP_COST_OVERSHOOT * overshoot, p, last))
+        for length in lengths:
+            q = p + length
+            if q >= total:
+                break
+            cost = cost_here + seam_cost(q) + window_cost(length)
+            if q not in best or cost < best[q][0] - 1e-12:
+                best[q] = (cost, p, length)
+
+    if not finals:  # pragma: no cover - the grid always reaches the end
+        notes.append("speech_aware found no layout; windows were balanced instead")
+        return _balanced_split(total, cap, floor, notes)
+
+    cost, p, last = min(finals, key=lambda f: (f[0], -f[1]))
+    windows = [last]
+    while p:
+        _, previous, length = best[p]
+        windows.insert(0, length)
+        p = previous
+
+    seams, position = [], 0
+    for length in windows[:-1]:
+        position += length
+        seams.append(position)
+    on_cuts = [q for q in seams if q in cuts]
+    talking = [q for q in seams if in_speech(q, speech)]
+    # A seam on a cut that a line runs across is on a cut *and* in speech; counting
+    # it out of both groups reported "-1 in a pause".
+    pauses = [q for q in seams if q not in cuts and not in_speech(q, speech)]
+    if seams and not speech:
+        notes.append(
+            "speech_aware had no lip-sync recording to listen to, so it put %d of %d "
+            "seam(s) on a cut and balanced the rest." % (len(on_cuts), len(seams)))
+    elif seams:
+        notes.append(
+            "speech_aware put %d of %d seam(s) on a cut and %d in a pause%s."
+            % (len(on_cuts), len(seams), len(pauses),
+               ("; %d land inside speech (frame %s) -- no layout on the 17k+5 grid "
+                "reaches a pause there. Move the cut, or add a breath to the take"
+                % (len(talking), ", ".join(str(q) for q in talking[:6])))
+               if talking else ", none inside speech"))
+    return windows
+
+
 def partition_windows(total_frames, window_frames=MAX_WINDOW_FRAMES,
                       policy="balanced", min_window_frames=MIN_TRAINED_FRAMES,
-                      diagnostics=None, boundaries=None):
+                      diagnostics=None, boundaries=None, speech=None):
     """Split a total frame count into per-render windows, all on the grid.
 
     Returns a list of frame counts whose sum is >= the requested total (never
@@ -387,6 +517,10 @@ def partition_windows(total_frames, window_frames=MAX_WINDOW_FRAMES,
           tail. Honours a literal "my windows are 10s" request. A sub-floor tail
           is merged into the window before it; if that would exceed the model
           ceiling, the partition falls back to balanced.
+      'shot_aligned' -- seams exactly on cuts where the grid allows it.
+      'speech_aware' -- seams on cuts, else in pauses of `speech` (frame spans
+          of the lip-sync recordings), never through a word. See
+          `speech_aware_windows`.
 
     The floor outranks `window_frames`. The two can conflict -- 200 frames in
     124-frame windows cannot give two windows that are both >= 124 -- and when
@@ -426,6 +560,9 @@ def partition_windows(total_frames, window_frames=MAX_WINDOW_FRAMES,
                 "it renders as one short window, outside the range the model was trained on"
                 % (window, floor, frames_to_seconds(floor)))
         return [window]
+
+    if policy == "speech_aware":
+        return speech_aware_windows(total_frames, boundaries, speech, cap, floor, notes)
 
     if policy == "shot_aligned":
         # Before the single-window shortcut: a timeline that fits in one window

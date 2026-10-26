@@ -268,15 +268,37 @@ class TestCarryOverDoesNotEvictABoundVoice(unittest.TestCase):
 
     def test_timbre_is_dropped_before_lip_sync_when_both_are_bound(self):
         """Losing an alignment desynchronises a mouth, which is visible. Losing a
-        timbre reference only changes how a voice sounds."""
+        timbre reference only changes how a voice sounds.
+
+        Three characters, so the budget really binds: two recordings of one
+        character no longer compete for two slots -- see the test below."""
+        CAST.append({"id": "zed", "kind": KIND_IMAGE, "name": "Zed", "file": "c.png",
+                     "description": "the third character"})
+        self.addCleanup(CAST.pop)
+        voices = [
+            _voice("v_kade", "KadeVO", "kade", AUDIO_ROLE_TIMBRE),
+            _voice("v_mimi", "MimiVO", "mimi", AUDIO_ROLE_LIP_SYNC),
+            _voice("v_zed", "ZedVO", "zed", AUDIO_ROLE_LIP_SYNC),
+        ]
+        second = self._windows(voices)[1]
+        kept = {f.asset_id for f in second.files if f.kind == KIND_AUDIO}
+        self.assertNotIn("v_kade", kept)
+        self.assertIn("v_mimi", kept)
+        self.assertIn("v_zed", kept)
+
+    def test_two_lip_sync_recordings_of_one_character_share_one_slot(self):
+        """They are one voice, so they are one track and one <Audio j> -- which is
+        what leaves room for everyone else's voice."""
         voices = [
             _voice("v_kade", "KadeVO", "kade", AUDIO_ROLE_TIMBRE),
             _voice("v_mimi", "MimiVO", "mimi", AUDIO_ROLE_LIP_SYNC),
             _voice("v_extra", "Extra", "mimi", AUDIO_ROLE_LIP_SYNC),
         ]
         second = self._windows(voices)[1]
-        kept = {f.asset_id for f in second.files if f.kind == KIND_AUDIO}
-        self.assertNotIn("v_kade", kept)
+        audio = [f for f in second.files if f.kind == KIND_AUDIO and not f.synthetic]
+        track = next(f for f in audio if f.asset_id == "v_mimi")
+        self.assertEqual([p.asset_id for p in track.pieces], ["v_mimi", "v_extra"])
+        self.assertIn("v_kade", {f.asset_id for f in audio})
 
     def test_survivors_keep_their_bin_order(self):
         """Ordinals are bin order. Re-sorting the survivors would renumber a

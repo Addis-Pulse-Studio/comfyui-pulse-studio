@@ -121,6 +121,19 @@ def spans_to_frames(spans, fps, frame_count, handle_seconds=0.0):
     return frames
 
 
+def seam_frames(spans, fps, frame_count):
+    """Second spans -> [first, end) frame spans for deciding where a seam may go.
+
+    Each edge goes to its *nearest* frame, where `spans_to_frames` rounds outward.
+    These spans only say where a seam may not land, and a seam sits between two
+    frames. A line placed at a cut's displayed time -- 15.08 for a cut at 15.0833
+    -- starts a fraction of a frame early; rounded outward, that sliver made the
+    cut itself "inside speech" and pushed the seam off it.
+    """
+    return spans_to_frames([(round(a * fps) / fps, round(b * fps) / fps)
+                            for a, b in spans], fps, frame_count)
+
+
 def merge_spans(spans):
     """Sort [first, end) spans and join the ones that touch or overlap."""
     out = []

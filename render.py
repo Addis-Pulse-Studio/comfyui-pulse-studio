@@ -46,7 +46,12 @@ from comfy_extras.nodes_minimax_h3 import (
 
 from . import media
 from .comfyui_pulse_studio.assets import KIND_AUDIO, KIND_IMAGE, KIND_VIDEO
-from .comfyui_pulse_studio.compiler import CARRY_AUDIO_ID, CARRY_IMAGE_ID, CARRY_VIDEO_ID
+from .comfyui_pulse_studio.compiler import (
+    CARRY_AUDIO_ID,
+    CARRY_IMAGE_ID,
+    CARRY_VIDEO_ID,
+    GUIDE_FIRST,
+)
 from .comfyui_pulse_studio.constants import (
     AUDIO_MODE_LOCK,
     AUDIO_MODE_REFERENCE,
@@ -54,6 +59,7 @@ from .comfyui_pulse_studio.constants import (
     AUDIO_ROLE_LIP_SYNC,
     DEFAULT_REMIX_STRENGTH,
     VOICE_FINAL_SUFFIX,
+    VOICE_GATE_FADE_SECONDS,
     BRANCH_FL2VA,
     BRANCH_REF2VA,
     SEAM_AUDIO,
@@ -61,6 +67,11 @@ from .comfyui_pulse_studio.constants import (
     SEAM_COLOUR_RAMP_FRAMES,
     SEAM_MODES,
     SEAM_OFF,
+    REF_FIT_CANVAS,
+    REF_FIT_KEEP_ASPECT,
+    REF_FIT_MODES,
+    UPSCALE_MODES,
+    UPSCALE_OFF,
 )
 from .comfyui_pulse_studio.fingerprint import (
     describe_model_patches,
@@ -151,8 +162,13 @@ def _require_scheduler(scheduler):
 
 
 def sample(model, positive, latent, seed, steps, sampler_name, scheduler,
-           vae, audio_vae, cfg=1.0, clip=None):
-    """One real H3 call: noise -> guider -> sigmas -> sample -> decode both streams."""
+           vae, audio_vae, cfg=1.0, clip=None, sigmas=None):
+    """One real H3 call: noise -> guider -> sigmas -> sample -> decode both streams.
+
+    `sigmas` is a hand-written schedule (a Pulse Recipe's), sampled exactly as
+    written -- what ComfyUI's ManualSigmas hands SamplerCustomAdvanced. Without
+    one the schedule comes from BasicScheduler by name, as it always has.
+    """
     noise = unpack(execute_node(stock("RandomNoise"), noise_seed=seed))[0]
 
     if cfg is not None and abs(float(cfg) - 1.0) > 1e-6 and clip is not None:
@@ -164,9 +180,12 @@ def sample(model, positive, latent, seed, steps, sampler_name, scheduler,
                                      conditioning=positive))[0]
 
     sampler = unpack(execute_node(stock("KSamplerSelect"), sampler_name=sampler_name))[0]
-    _require_scheduler(scheduler)
-    sigmas = unpack(execute_node(stock("BasicScheduler"), model=model, scheduler=scheduler,
-                                 steps=steps, denoise=1.0))[0]
+    if sigmas:
+        sigmas = torch.tensor([float(v) for v in sigmas], dtype=torch.float32)
+    else:
+        _require_scheduler(scheduler)
+        sigmas = unpack(execute_node(stock("BasicScheduler"), model=model,
+                                     scheduler=scheduler, steps=steps, denoise=1.0))[0]
     sampled = unpack(execute_node(stock("SamplerCustomAdvanced"), noise=noise, guider=guider,
                                   sampler=sampler, sigmas=sigmas, latent_image=latent))[0]
     images = unpack(execute_node(stock("VAEDecode"), samples=sampled, vae=vae))[0]
@@ -178,6 +197,7 @@ def sample(model, positive, latent, seed, steps, sampler_name, scheduler,
 
 def load_window_references(window, side, width, height, resize_method, carry_frame,
                            carry_clip, carry_audio_clip, carry_seconds,
+                           ref_image_fit=REF_FIT_CANVAS,
                            window_seconds=None):
     """Turn a CompiledWindow's ordered file list into the stock node's kwargs.
 
@@ -211,8 +231,23 @@ def load_window_references(window, side, width, height, resize_method, carry_fra
         """
         if clip is None or ref.audio_role != AUDIO_ROLE_LIP_SYNC or not window_seconds:
             return clip
+        if getattr(ref, "pieces", None):
+            # A voice track: every recording on it, each at its own seconds and
+            # each silent outside its own shot. See compiler.voice_tracks.
+            return track_audio(ref, side, window.start_seconds, window_seconds) or clip
         return media.audio_span(
             clip, window.start_seconds - ref.audio_offset, window_seconds)
+
+    def _fit_reference(tensor):
+        """A user's reference picture: cropped to the canvas, or handed over whole.
+
+        `keep_aspect` leaves the stock node's ref_image_size to scale it with its
+        aspect intact. A carried frame is never handled here -- it is this
+        canvas's own last frame and is always fitted to it.
+        """
+        if ref_image_fit == REF_FIT_KEEP_ASPECT:
+            return tensor
+        return media.fit_image(tensor, width, height, resize_method)
 
     for ref in window.files:
         if ref.synthetic:
@@ -256,8 +291,7 @@ def load_window_references(window, side, width, height, resize_method, carry_fra
                 else:
                     groups["ref_videos"][ref.socket] = tensor
             else:
-                groups["ref_images"][ref.socket] = media.fit_image(
-                    tensor, width, height, resize_method)
+                groups["ref_images"][ref.socket] = _fit_reference(tensor)
             continue
 
         if ref.kind == KIND_IMAGE:
@@ -265,8 +299,7 @@ def load_window_references(window, side, width, height, resize_method, carry_fra
             if tensor is None:
                 failures.append(ref)
                 continue
-            groups["ref_images"][ref.socket] = media.fit_image(
-                tensor, width, height, resize_method)
+            groups["ref_images"][ref.socket] = _fit_reference(tensor)
         elif ref.kind == KIND_VIDEO:
             if ref.socket.startswith("ref_video_audio_"):
                 clip = media.load_audio(ref.file, ref.trim_start, ref.trim_end)
@@ -325,13 +358,47 @@ def carry_from_segment(manifest, entry, wants_video=False, wants_audio=False):
     return frame, clip, audio
 
 
+def consumes_carry(compiled):
+    """Does this window take anything from the one before it?
+
+    A carried frame, clip or audio tail on the reference branch, or the pinned
+    first frame on fl2va. Either way this window's input is the previous window's
+    output, so the previous window's key is part of what this one rendered.
+    """
+    if compiled is None:
+        return False
+    if any(f.synthetic for f in compiled.files):
+        return True
+    anchors = compiled.anchors or {}
+    return CARRY_IMAGE_ID in (anchors.get("first_frame"), anchors.get(GUIDE_FIRST))
+
+
+def window_key_extras(compiled, previous_key, options):
+    """Cache-key material only the executor can supply. See segcache.cache_key_material.
+
+    `upstream`: the previous window's key, for a window that consumes its output.
+    Re-render window k and window k+1's carried frame changes -- without this the
+    cache handed back a k+1 conditioned on the old k, and the seam jumped.
+    """
+    extra = []
+    if previous_key and consumes_carry(compiled):
+        extra.append(["upstream", previous_key])
+    # The same pictures, fitted differently, are different conditioning. Only on
+    # a window that carries a user picture, so nothing else moves.
+    if (options is not None and options.ref_image_fit != REF_FIT_CANVAS and compiled
+            is not None and any(f.kind == KIND_IMAGE and not f.synthetic
+                                for f in compiled.files)):
+        extra.append(["ref_image_fit", options.ref_image_fit])
+    return extra
+
+
 def window_wants(compiled, asset_id):
     """Does this compiled window carry a socket for that carry-over signal?"""
     return any(f.synthetic and f.asset_id == asset_id for f in (compiled.files if compiled else []))
 
 
 def condition_window(window, side, width, height, carry_frame, carry_clip,
-                     carry_audio_clip, fps=24):
+                     carry_audio_clip, fps=24, ref_image_fit=REF_FIT_CANVAS):
     """Build (positive, latent) for one window through the correct stock node."""
     clip, vae, audio_vae = side.clip, side.vae, side.audio_vae
     resize_method = side.resize_method
@@ -342,12 +409,25 @@ def condition_window(window, side, width, height, carry_frame, carry_clip,
         # reference audio has to line up with.
         refs = load_window_references(
             window, side, width, height, resize_method, carry_frame, carry_clip,
-            carry_audio_clip, side.carry_audio_seconds,
+            carry_audio_clip, side.carry_audio_seconds, ref_image_fit=ref_image_fit,
             window_seconds=(window.frame_count / float(fps or 24)))
         out = execute_node(MiniMaxH3ReferenceToVideo, clip=clip, vae=vae, audio_vae=audio_vae,
                            prompt=window.prompt, width=width, height=height,
                            length=window.frame_count, ref_image_size=side.ref_image_size,
                            **refs)
+        if (window.anchors or {}).get(GUIDE_FIRST) == CARRY_IMAGE_ID:
+            positive, latent = unpack(out)[:2]
+            if carry_frame is None:
+                raise SocketGapError(
+                    "window %d pins the previous window's last frame (ref_guided_carry), "
+                    "and that frame is neither in memory nor on disk. Requeue with "
+                    "cache_mode force_rerender." % (window.index + 1,))
+            guide = _add_guide_node()
+            positive = unpack(execute_node(
+                guide, positive=positive, vae=vae, latent=latent,
+                image=media.fit_image(carry_frame, width, height, resize_method),
+                frame_idx=0))[0]
+            return positive, latent
     else:
         first = last = None
         anchors = window.anchors
@@ -364,6 +444,18 @@ def condition_window(window, side, width, height, carry_frame, carry_clip,
                            width=width, height=height, length=window.frame_count,
                            first_frame=first, last_frame=last)
     return unpack(out)[:2]
+
+
+def _add_guide_node():
+    """Core's MiniMaxH3AddGuide, or a readable error on a core that predates it."""
+    try:
+        from comfy_extras.nodes_minimax_h3 import MiniMaxH3AddGuide
+    except ImportError:  # pragma: no cover - ComfyUI before 2026-08-13
+        raise RuntimeError(
+            "continuity 'ref_guided_carry' needs ComfyUI's MiniMaxH3AddGuide node, "
+            "which this ComfyUI does not have. Update ComfyUI, or use 'none' or "
+            "'last_frame_carry'.")
+    return MiniMaxH3AddGuide
 
 
 def _anchor_image(asset_id, side, width, height, resize_method, timeline):
@@ -422,26 +514,55 @@ def window_voice_mix(compiled, side, seconds, final=False, asset_ids=None):
     mouth. `asset_ids` keeps only those recordings -- one character's own voice.
     """
     spans = []
-    for ref in (compiled.files if compiled is not None else []):
+    # `drive_files` carries the recordings of a window that takes no references
+    # (fl2va): they never became sockets, but they still drive this window's mouth.
+    refs = (list(compiled.files) + list(getattr(compiled, "drive_files", None) or [])
+            if compiled is not None else [])
+    for ref in refs:
         if ref.synthetic or ref.kind != KIND_AUDIO:
             continue
         if ref.audio_role != AUDIO_ROLE_LIP_SYNC:
             continue
-        if asset_ids is not None and ref.asset_id not in asset_ids:
+        spans.append(track_audio(ref, side, compiled.start_seconds, seconds,
+                                 final=final, asset_ids=asset_ids))
+    return media.mix_audio(spans)
+
+
+def _raw_recording(piece, side, final=False):
+    """The recording behind one reference or track piece, from its socket or file."""
+    slot = socket_slot_of(piece.asset_id)
+    if slot is not None:
+        raw = side.get(slot + VOICE_FINAL_SUFFIX) if final else None
+        return raw if raw is not None else side.get(slot)
+    return media.load_audio(piece.file, piece.trim_start, piece.trim_end)
+
+
+def track_audio(ref, side, window_start, seconds, final=False, asset_ids=None):
+    """One lip-sync reference as the window hears it. None if nothing is audible.
+
+    A plain reference is its recording cut to the window, as it always was. A
+    voice track (`ref.pieces`) is every recording laid on it, each cut to the
+    window at its own offset, silenced outside its own shot, and summed -- so a
+    take stops where its shot does and the next speaker's line is theirs alone.
+
+    `final` reads each PulseVoice's clean take where one was connected; the gates
+    are the same either way, so the film's track and the mouth stay in step.
+    `asset_ids` keeps only those recordings -- one character's own voice.
+    """
+    pieces = getattr(ref, "pieces", None) or [ref]
+    spans = []
+    for piece in pieces:
+        if asset_ids is not None and piece.asset_id not in asset_ids:
             continue
-        slot = socket_slot_of(ref.asset_id)
-        raw = None
-        if slot is not None:
-            if final:
-                raw = side.get(slot + VOICE_FINAL_SUFFIX)
-            if raw is None:
-                raw = side.get(slot)
-        else:
-            raw = media.load_audio(ref.file, ref.trim_start, ref.trim_end)
+        raw = _raw_recording(piece, side, final)
         if raw is None:
             continue
-        spans.append(media.audio_span(
-            raw, compiled.start_seconds - ref.audio_offset, seconds))
+        clip = media.audio_span(raw, window_start - piece.audio_offset, seconds)
+        if getattr(piece, "gate_start", None) is not None:
+            clip = media.gate_audio(
+                clip, piece.gate_start - window_start, piece.gate_end - window_start,
+                VOICE_GATE_FADE_SECONDS, fade_in=piece.fade_in, fade_out=piece.fade_out)
+        spans.append(clip)
     return media.mix_audio(spans)
 
 
@@ -540,13 +661,15 @@ class RenderOptions:
 
     __slots__ = ("cache_mode", "run_dir", "run_id", "save_segments", "low_memory",
                  "dry_run", "prune_unused", "want_frames", "use_reference_audio",
-                 "seam_treatment", "audio_mode", "remix_strength")
+                 "seam_treatment", "audio_mode", "remix_strength", "ref_image_fit",
+                 "upscale")
 
     def __init__(self, cache_mode=CACHE_AUTO, run_dir="pulseslate", run_id="",
                  save_segments=True, low_memory=True, dry_run=False,
                  prune_unused=False, want_frames=False, use_reference_audio=False,
                  seam_treatment=SEAM_OFF, audio_mode=AUDIO_MODE_REFERENCE,
-                 remix_strength=DEFAULT_REMIX_STRENGTH):
+                 remix_strength=DEFAULT_REMIX_STRENGTH, ref_image_fit=REF_FIT_CANVAS,
+                 upscale=UPSCALE_OFF):
         self.cache_mode = cache_mode
         self.run_dir = (run_dir or "pulseslate").strip() or "pulseslate"
         self.run_id = (run_id or "").strip()
@@ -563,6 +686,8 @@ class RenderOptions:
         self.audio_mode = audio_mode if audio_mode in AUDIO_MODES else AUDIO_MODE_REFERENCE
         self.remix_strength = min(1.0, max(0.0, float(
             DEFAULT_REMIX_STRENGTH if remix_strength is None else remix_strength)))
+        self.ref_image_fit = ref_image_fit if ref_image_fit in REF_FIT_MODES else REF_FIT_CANVAS
+        self.upscale = upscale if upscale in UPSCALE_MODES else UPSCALE_OFF
 
     @property
     def treat_audio_seams(self):
@@ -622,6 +747,17 @@ def run(timeline_dict, side, model, vae, audio_vae, model_fl2va=None,
         model, sage_attention_global=_sage_attention_global())
     patch_fp = patch_fingerprint(descriptor)
     warnings = patch_warnings(descriptor)
+    # The fl2va checkpoint is a different model with its own patch chain -- a
+    # TaoMate LoRA, a HyperFlow adapter -- and its windows were keyed on the
+    # reference checkpoint's identity, so swapping or re-patching it reused every
+    # fl2va segment rendered before. Each window is keyed on the model that
+    # actually samples it.
+    if model_fl2va is not None:
+        fl2va_fp = model_fingerprint(model_fl2va)
+        fl2va_patch_fp = patch_fingerprint(describe_model_patches(
+            model_fl2va, sage_attention_global=_sage_attention_global()))
+    else:
+        fl2va_fp, fl2va_patch_fp = model_fp, patch_fp
 
     # A checkpoint wired but never sampled with is still resident -- ~20 GB, and
     # on a 32 GB box with Spectrum offloading history to system RAM that is 20 GB
@@ -643,13 +779,33 @@ def run(timeline_dict, side, model, vae, audio_vae, model_fl2va=None,
     # ── decide, for every window, before rendering any of them ──────────────
     decisions = {}
     keys = []
-    for window in windows_doc:
-        key = cache_key(timeline_dict, window, model_fp, patch_fp,
-                        options.audio_mode, options.remix_strength)
+    previous_key = None
+    for position, window in enumerate(windows_doc):
+        compiled = plan_windows[position] if position < len(plan_windows) else None
+        on_fl2va = window.get("branch") == BRANCH_FL2VA and model_fl2va is not None
+        key = cache_key(timeline_dict, window,
+                        fl2va_fp if on_fl2va else model_fp,
+                        fl2va_patch_fp if on_fl2va else patch_fp,
+                        options.audio_mode, options.remix_strength,
+                        extra=window_key_extras(compiled, previous_key, options))
         window["cache_key"] = key
         keys.append(key)
+        previous_key = key
         decisions[window["window_index"]] = plan_window(
             manifest, key, options.cache_mode, window["window_index"])
+
+    # A fl2va window takes no references, so on reference_only nothing at all
+    # reaches its mouth from the take it carries: the film plays the recording
+    # (use_reference_audio) over a face that was never asked to follow it.
+    if options.audio_mode == AUDIO_MODE_REFERENCE:
+        undriven = [w.index + 1 for w in plan_windows
+                    if w.branch == BRANCH_FL2VA and getattr(w, "drive_files", None)]
+        if undriven:
+            warnings.append(
+                "window(s) %s are on the fl2va branch and carry a lip-sync recording, "
+                "but audio_mode is reference_only -- fl2va takes no reference audio, so "
+                "nothing drives those mouths. Set audio_mode to lock_source."
+                % ", ".join(str(i) for i in undriven))
 
     stale = stale_entries(manifest, keys)
     if stale:
@@ -741,7 +897,7 @@ def run(timeline_dict, side, model, vae, audio_vae, model_fl2va=None,
         width, height = window["width"], window["height"]
         positive, latent = condition_window(
             compiled, side, width, height, carry_frame, carry_clip, carry_audio_clip,
-            fps=window.get("fps") or 24)
+            fps=window.get("fps") or 24, ref_image_fit=options.ref_image_fit)
         if options.audio_mode != AUDIO_MODE_REFERENCE:
             drive = window_voice_mix(
                 compiled, side, window["frames"] / float(window.get("fps") or 24))
@@ -759,16 +915,21 @@ def run(timeline_dict, side, model, vae, audio_vae, model_fl2va=None,
                 "sampled on the reference checkpoint instead. Expect a soft seam."
                 % index)
 
-        log.info("[PulseStudio] window %d/%d: %s, %d frames, seed %d",
+        log.info("[PulseStudio] window %d/%d: %s, %d frames, seed %d, %s",
                  index + 1, len(windows_doc), compiled.branch, window["frames"],
-                 window["seed"])
+                 window["seed"],
+                 ("sigmas %s" % window["sigmas"]) if window.get("sigmas")
+                 else "%s/%s x%d" % (window["sampler"], window["scheduler"], window["steps"]))
 
         media.reset_peak_vram()
         started = time.time()
+        # Passed only when the window has one, so a sampler injected by a test --
+        # or by anything else written against the old signature -- keeps working.
+        schedule = {"sigmas": window["sigmas"]} if window.get("sigmas") else {}
         _, images, audio = sampler(
             window_model, positive, latent, window["seed"], window["steps"],
             window["sampler"], window["scheduler"], vae, audio_vae,
-            cfg=window["cfg"], clip=side.clip)
+            cfg=window["cfg"], clip=side.clip, **schedule)
         elapsed = time.time() - started
         peak = media.peak_vram_bytes()
         rendered += 1
@@ -817,7 +978,8 @@ def run(timeline_dict, side, model, vae, audio_vae, model_fl2va=None,
                  if k != "audio_path" or written_audio},
                 render_seconds=elapsed,
                 warmup=(rendered == 1),
-                patch_fingerprint=patch_fp)
+                patch_fingerprint=(fl2va_patch_fp if window_model is shifted_fl2va
+                                   and shifted_fl2va is not None else patch_fp))
             entry["peak_vram_bytes"] = peak
             manifest.upsert(entry)
             manifest.save(_now())
@@ -905,6 +1067,18 @@ def run(timeline_dict, side, model, vae, audio_vae, model_fl2va=None,
                 audio=audio_out)
             if joined:
                 video = media.video_from_file(joined)
+                if options.upscale != UPSCALE_OFF:
+                    upscaled = media.upscale_video(
+                        joined, os.path.join(directory, "assembled_%s.mp4" % options.upscale),
+                        options.upscale)
+                    if upscaled:
+                        video = media.video_from_file(upscaled)
+                        log.info("[PulseStudio] upscaled the film to %s -> %s",
+                                 options.upscale, upscaled)
+                    else:
+                        warnings.append(
+                            "upscale %s failed, so the film is at its rendered size; "
+                            "assembled.mp4 is intact in %s." % (options.upscale, directory))
         except Exception as exc:  # pragma: no cover - container-level failure
             log.error("[PulseStudio] assembly failed (%s). Every segment is intact "
                       "in %s; requeue to reuse them and retry.", exc, directory)

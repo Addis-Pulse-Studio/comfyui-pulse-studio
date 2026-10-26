@@ -50,6 +50,7 @@ from .comfyui_pulse_studio.constants import (
     AUDIO_ROLE_LIP_SYNC,
     AUDIO_ROLE_TIMBRE,
     AUDIO_ROLES,
+    AUTO_SHOT_PAD_SECONDS,
     BRANCH_FL2VA,
     DEFAULT_AUDIO_CARRY_SECONDS,
     DEFAULT_REMIX_STRENGTH,
@@ -60,10 +61,16 @@ from .comfyui_pulse_studio.constants import (
     MAX_REF_IMAGES,
     MAX_REF_VIDEOS,
     MAX_WINDOW_FRAMES,
+    REF_FIT_CANVAS,
+    REF_FIT_MODES,
     REF_IMAGE_SIZE_OPTIONS,
+    RETENTION_DEFAULT,
+    RETENTION_VALUES,
     SCHEMA_VERSION,
     SEAM_DEFAULT,
     SEAM_MODES,
+    UPSCALE_MODES,
+    UPSCALE_OFF,
     VOICE_FINAL_SUFFIX,
 )
 from .comfyui_pulse_studio.fingerprint import (
@@ -80,6 +87,7 @@ from .comfyui_pulse_studio.pulse_timeline import (
     CONTINUITY_LAST_FRAME,
     CONTINUITY_MODES,
     CONTINUITY_NONE,
+    CONTINUITY_REF_GUIDED,
     SHOT_CONTINUITY_MODES,
     SideChannel,
     build_timeline as build_document,
@@ -93,6 +101,15 @@ from .comfyui_pulse_studio.pulse_timeline import (
     text_shot_id,
     window_block,
     window_seed,
+)
+from .comfyui_pulse_studio.recipes import (
+    RECIPE_NAMES,
+    RECIPE_PRESETS,
+    RecipeError,
+    make_recipe,
+    recipe_problems,
+    recipe_warnings,
+    sampling_for_branch,
 )
 from .comfyui_pulse_studio.report import build_report
 from .comfyui_pulse_studio.retake import RetakeError, plan_retake
@@ -157,7 +174,13 @@ def _warn_on_node(unique_id, warnings):
         log.debug("[PulseStudio] could not push warnings to the node face: %s", exc)
 
 
-def _report_patches(model, unique_id, branches_used=(), fl2va_connected=False):
+#: At or under this many steps a window is a distilled one, and the Sage/Spectrum
+#: advice in patches.inspect_model_options does not apply to it.
+FEW_STEPS = 8
+
+
+def _report_patches(model, unique_id, branches_used=(), fl2va_connected=False,
+                    few_step=False):
     """§10 + §18.1. Warn, never block -- the user may be deliberately unpatched.
 
     Returns (warnings, notes). Only the warnings reach the node face; the notes
@@ -165,7 +188,8 @@ def _report_patches(model, unique_id, branches_used=(), fl2va_connected=False):
     report's warnings section with everything else. Putting a note on the node
     face would train people to ignore the badge.
     """
-    report = check_model_patches(model, sage_attention_global=_sage_attention_global())
+    report = check_model_patches(model, sage_attention_global=_sage_attention_global(),
+                                 few_step=few_step)
     warnings = list(report.warnings)
     checkpoint_warnings, notes = check_single_checkpoint(branches_used, fl2va_connected)
     warnings.extend(checkpoint_warnings)
@@ -208,6 +232,9 @@ MAX_SHOT_REF_IMAGES = 4    # per-shot scene-local references
 # fit the documented audio budget alongside carry-over, and offering a socket that
 # is always dropped is worse than not offering it.
 MAX_SLATE_VOICES = 3
+# PulseCharacter sockets. Six faces with a full-body view each is twelve pictures,
+# past H3's nine -- the budget, not the socket count, is what binds, and it says so.
+MAX_SLATE_CAST = 6
 
 
 def _numbered(kwargs, prefix, count):
@@ -299,6 +326,21 @@ class PulseVoice:
                 "description": ("STRING", {"default": "", "multiline": False, "tooltip":
                     "What this recording is, in a few words. Rides into the prompt's "
                     "subject_definitions beside the reference itself."}),
+                # Appended after 3.0.0 shipped; a file saved before them takes the
+                # defaults, which is what name-based loading is for.
+                "gate_to_shot": ("BOOLEAN", {"default": True, "tooltip":
+                    "Wired to a shot: heard only during that shot. The take starts "
+                    "where aligns_to puts it and is cut at the shot's end, so a long "
+                    "line cannot keep playing over the next shot -- and move the next "
+                    "speaker's mouth to the wrong voice. Every take a character has in "
+                    "one window rides one track, one <Audio j>. Turn off for a line "
+                    "that deliberately carries over the cut (an L-cut). Ignored on "
+                    "PulseSlate, where a voice is film-wide."}),
+                "language": ("STRING", {"default": "", "multiline": False, "tooltip":
+                    "The language this voice speaks, for the shots it is heard in -- "
+                    "what H3's dialogue tag says: <d>[Amharic] ...</d>. Empty uses the "
+                    "film's own, set with a `language:` line in PulseSlate's global "
+                    "prompt (English when nothing sets it)."}),
                 # ── append new widgets HERE, at the end, and nowhere else ────
             },
             "optional": {
@@ -325,8 +367,8 @@ class PulseVoice:
                    "into one PulseShot's `voice` input for that shot alone.")
 
     def execute(self, schema_version, name, role, aligns_to, offset_seconds,
-                trim_start, trim_end, speaker, description, audio=None,
-                final_audio=None, unique_id=None, **kwargs):
+                trim_start, trim_end, speaker, description, gate_to_shot=True,
+                language="", audio=None, final_audio=None, unique_id=None, **kwargs):
         return ({
             "name": (name or "").strip() or "Voice",
             "role": role or AUDIO_ROLE_LIP_SYNC,
@@ -340,6 +382,8 @@ class PulseVoice:
             # does not exist until every shot and every voice has been walked.
             "speaker": (speaker or "").strip(),
             "description": (description or "").strip(),
+            "gate_to_shot": bool(gate_to_shot),
+            "language": (language or "").strip(),
             "audio": audio,
             "final_audio": final_audio,
         },)
@@ -407,11 +451,15 @@ class PulseShot:
                 "audio_line": ("STRING", {"multiline": True, "dynamicPrompts": False,
                                           "default": "", "tooltip":
                     "What is heard. Quoted \"text\" becomes dialogue."}),
-                "duration_seconds": ("FLOAT", {"default": 5.0, "min": 0.5,
+                "duration_seconds": ("FLOAT", {"default": 5.0, "min": 0.0,
                                                "max": MAX_WINDOW_FRAMES / FPS,
                                                "step": 0.01, "tooltip":
                     "How long this shot runs. The ceiling is H3's trained window "
-                    "length; longer stories are built from more shots, not longer ones."}),
+                    "length; longer stories are built from more shots, not longer ones.\n\n"
+                    "0 = as long as its take: the PulseVoice on `voice` (aligns_to "
+                    "shot_start) plus %.1fs of air after the last word, so the shot "
+                    "and the line end together and the next shot's cut never lands "
+                    "on a word." % AUTO_SHOT_PAD_SECONDS}),
                 "continuity": (list(SHOT_CONTINUITY_MODES), {"default": CONTINUITY_INHERIT,
                     "tooltip":
                     "How this shot joins the one before it. 'inherit' takes the "
@@ -479,6 +527,156 @@ class PulseShot:
         },)
 
 
+# ── Pulse Character ─────────────────────────────────────────────────────────
+
+class PulseCharacter:
+    """One character: who they are, what they look like, and what they sound like.
+
+    Until this node a character was three things wired separately -- a picture on
+    a reference socket, a description typed into the bin panel, a voice whose
+    `speaker` field had to name the picture's auto-generated `@Image3` exactly --
+    and a socket picture could not carry a description at all, so it reached the
+    model as a bare <Picture i> with nothing saying who it was. Here the three are
+    one object, bound when it is made.
+    """
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "schema_version": schema_widget(),
+                "name": ("STRING", {"default": "Ada", "multiline": False, "tooltip":
+                    "Their @Name. Cite them in a shot as @Ada, and set a shot's "
+                    "speaker to @Ada when they talk. Their full-body view, if any, is "
+                    "@AdaBody."}),
+                "description": ("STRING", {"default": "", "multiline": True,
+                                           "dynamicPrompts": False, "tooltip":
+                    "Who they are, as the model should hold them: face, hair, build, "
+                    "clothing. This is their <Subject N> definition -- without it the "
+                    "picture is a bare <Picture i> nothing explains."}),
+                "retention": (list(RETENTION_VALUES), {"default": RETENTION_DEFAULT,
+                                                       "tooltip":
+                    "'fully_preserved' keeps this exact look in every shot. "
+                    "'partially_copy' lets wardrobe and styling follow the shot text."}),
+                # ── append new widgets HERE, at the end, and nowhere else ────
+            },
+            "optional": {
+                "face": ("IMAGE", {"tooltip":
+                    "Their face, clear and well lit. This picture is the character."}),
+                "body": ("IMAGE", {"tooltip":
+                    "Optional full-figure view of the same person -- costume, build. "
+                    "Cited inside their one definition, never as a second person."}),
+                "voice": ("PULSE_VOICE", {"tooltip":
+                    "Their voice, from a Pulse Voice. Bound to this face: it gets their "
+                    "speaker id and is their <Audio j>, with nothing to type."}),
+            },
+            "hidden": HIDDEN_INPUTS,
+        }
+
+    RETURN_TYPES = ("PULSE_CAST",)
+    RETURN_NAMES = ("character",)
+    FUNCTION = "execute"
+    CATEGORY = "AddisPulse/H3"
+    DESCRIPTION = ("A character -- face, optional full-body view, description and voice "
+                   "-- bound together. Wire into PulseSlate's cast sockets.")
+
+    def execute(self, schema_version, name, description, retention, face=None, body=None,
+                voice=None, unique_id=None, **kwargs):
+        return ({"name": (name or "").strip(), "description": (description or "").strip(),
+                 "retention": retention or RETENTION_DEFAULT, "face": face, "body": body,
+                 "voice": voice},)
+
+
+# ── Pulse Recipe ────────────────────────────────────────────────────────────
+
+#: The width of one stream's output head on an undistilled H3: 24 latent channels
+#: over a 2x2 patch. A PDD student (FastH3) stacks several of these, one per
+#: parallel decoding step, and its `video_out` is that many times wider.
+H3_VIDEO_HEAD = 24 * 2 * 2
+
+
+def _model_traits(model):
+    """What a sampling recipe needs to know about a checkpoint. Never raises.
+
+    Read off the model rather than the filename: a renamed file is the same
+    checkpoint, and the failure this guards against -- FastH3's PDD heads sampled
+    on the wrong schedule, HyperFlow's grid on a model it never patched -- renders
+    without complaint and looks like the model being bad.
+    """
+    traits = {}
+    if model is None:
+        return traits
+    try:
+        diffusion = model.get_model_object("diffusion_model")
+    except Exception:
+        diffusion = getattr(getattr(model, "model", None), "diffusion_model", None)
+    traits["curve_form"] = bool(getattr(diffusion, "use_adaln_curves", False))
+    head = getattr(getattr(getattr(diffusion, "final_layer", None), "video_out", None),
+                   "out_features", None)
+    try:
+        traits["pdd_heads"] = max(1, int(head) // H3_VIDEO_HEAD) if head else 1
+    except (TypeError, ValueError):
+        traits["pdd_heads"] = 1
+    descriptor = describe_model_patches(model, sage_attention_global=_sage_attention_global())
+    sparse = descriptor.get("block_sparse") or {}
+    traits["sparse"] = bool(sparse.get("present"))
+    traits["vsa"] = bool(sparse.get("vsa"))
+    traits["hyperflow"] = bool((descriptor.get("hyperflow") or {}).get("present"))
+    traits["lora"] = bool((descriptor.get("weight_patches") or {}).get("present"))
+    return traits
+
+
+class PulseRecipe:
+    """How one checkpoint wants to be sampled, said once and wired to a branch."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        about = "\n".join("%s: %s" % (name, RECIPE_PRESETS[name]["about"])
+                          for name in RECIPE_PRESETS)
+        return {
+            "required": {
+                "schema_version": schema_widget(),
+                "preset": (list(RECIPE_NAMES), {"default": "h3_base", "tooltip":
+                    "Which checkpoint this recipe is for. Every preset is the "
+                    "setting that model was released with; 'custom' uses the widgets "
+                    "below.\n\n" + about}),
+                "steps": ("INT", {"default": 20, "min": 1, "max": 100, "tooltip":
+                    "custom only. Ignored when `sigmas` is set -- a written schedule "
+                    "fixes the step count."}),
+                "sampler_name": (SAMPLERS, {"default": "euler", "tooltip": "custom only."}),
+                "scheduler": (SCHEDULERS, {"default": "simple", "tooltip": "custom only."}),
+                "cfg": ("FLOAT", {"default": 1.0, "min": 1.0, "max": 20.0, "step": 0.1,
+                                  "tooltip": "custom only. Every distilled H3 wants 1.0."}),
+                "sigmas": ("STRING", {"default": "", "multiline": False, "tooltip":
+                    "custom only. A hand-written schedule, highest first and ending "
+                    "at 0 -- e.g. TaoMate's '1.0, 0.961165, 0.853333, 0.0'. Already "
+                    "shifted: it is sampled exactly as written."}),
+                # ── append new widgets HERE, at the end, and nowhere else ────
+            },
+            "hidden": HIDDEN_INPUTS,
+        }
+
+    RETURN_TYPES = ("PULSE_RECIPE",)
+    RETURN_NAMES = ("recipe",)
+    FUNCTION = "execute"
+    CATEGORY = "AddisPulse/H3"
+    DESCRIPTION = ("Sampling settings for one checkpoint -- FastH3-Omni 8-step, TaoMate "
+                   "3-step, HyperFlow 8-step or the base models. Wire it into "
+                   "PulseSlate's `recipe` (ref2va windows) or `recipe_fl2va`.")
+
+    def execute(self, schema_version, preset, steps, sampler_name, scheduler, cfg, sigmas,
+                unique_id=None, **kwargs):
+        try:
+            recipe = make_recipe(preset, steps=steps, sampler=sampler_name,
+                                 scheduler=scheduler, cfg=cfg, sigmas=sigmas)
+        except RecipeError as exc:
+            raise ValueError("Pulse Recipe: %s" % (exc,))
+        problems = recipe_problems(recipe)
+        if problems:
+            raise ValueError("Pulse Recipe: " + "; ".join(problems))
+        return (recipe,)
+
+
 # ── Pulse Slate: the compiler ───────────────────────────────────────────────
 
 class PulseSlate:
@@ -498,6 +696,17 @@ class PulseSlate:
                 "standalone audio reference."}),
             "ref_music": ("AUDIO", {"tooltip":
                 "Non-diegetic score. Always the last audio ordinal."}),
+            # Appended after ref_music, never inserted: an optional input's link
+            # endpoint is positional in a saved node.
+            "recipe": ("PULSE_RECIPE", {"tooltip":
+                "How the reference (ref2va) windows are sampled -- from a Pulse "
+                "Recipe node. Replaces steps / sampler / scheduler / cfg below for "
+                "those windows. FastH3-Omni, HyperFlow and the base checkpoints each "
+                "want different settings, and a film can use two of them."}),
+            "recipe_fl2va": ("PULSE_RECIPE", {"tooltip":
+                "How the First/Last-Frame (fl2va) windows are sampled -- e.g. "
+                "TaoMate's 3-step schedule while the first window samples on "
+                "FastH3-Omni. Falls back to `recipe`, then to the widgets."}),
         }
         # Declaration order must match GROUPS in js/ps_sockets.js: the frontend
         # rebuilds this tail in its own order, and a mismatch would put a saved
@@ -518,6 +727,13 @@ class PulseSlate:
                 "Global voice %d, visible to every window -- one wire instead of one "
                 "per shot. Numbered ahead of ref_music, which is always the last "
                 "audio ordinal." % i})
+        # Appended after voices, for the same reason voices came after shots.
+        for i in range(1, MAX_SLATE_CAST + 1):
+            optional["cast.cast_%d" % i] = ("PULSE_CAST", {"tooltip":
+                "Character %d, from a Pulse Character node: a face, an optional "
+                "full-body view, a description and a voice, bound to one another. "
+                "Cite them in any shot as @Name. Their pictures take the lowest "
+                "<Picture> numbers after the Asset Bin's." % i})
 
         return {
             "required": {
@@ -637,8 +853,13 @@ class PulseSlate:
                     "How windows join. 'none' samples each independently. "
                     "'last_frame_carry' pins the previous window's final frame as the "
                     "next one's first frame. 'keyframe_pairs' pins each shot's start "
-                    "and end frames. The last two need model_fl2va and fail at compile "
-                    "time without it -- they do not fall back silently."}),
+                    "and end frames. Those two need model_fl2va and fail at compile "
+                    "time without it -- they do not fall back silently.\n\n"
+                    "'ref_guided_carry' (experimental) keeps every window on the "
+                    "reference checkpoint -- faces and voices referenced in every "
+                    "window -- and pins the previous window's last frame at frame 0 "
+                    "with a guide. One checkpoint, no fl2va. The reference checkpoints "
+                    "were not trained with keyframe rows; compare it against 'none'."}),
                 # ── append new widgets HERE, at the end, and nowhere else ────
             },
             "optional": optional,
@@ -662,7 +883,8 @@ class PulseSlate:
                 carry_mode, carry_audio, carry_audio_seconds, ref_image_size,
                 shift_video, shift_audio, audio_ref_ceiling=MAX_REF_AUDIOS,
                 continuity=CONTINUITY_NONE, model_fl2va=None, ref_video=None,
-                ref_video_audio=None, ref_music=None, unique_id=None, **kwargs):
+                ref_video_audio=None, ref_music=None, recipe=None, recipe_fl2va=None,
+                unique_id=None, **kwargs):
 
         width, height = resolution_for(aspect_ratio, width, height)
         side = SideChannel(clip=clip, vae=vae, audio_vae=audio_vae,
@@ -685,7 +907,9 @@ class PulseSlate:
                 "by anything published, and every extra reference rides all %d "
                 "sampling steps." % (timeline.limits.audios, steps))
 
-        # ── global socket references (§4, §10.1) ────────────────────────────
+        # ── characters, then the other global socket references (§4, §10.1) ─
+        notes.extend(_attach_cast(
+            timeline, side, _numbered(kwargs, "cast.cast_", MAX_SLATE_CAST)))
         notes.extend(_attach_global_refs(
             timeline, side, kwargs, ref_video, ref_video_audio, ref_music,
             voices=_numbered(kwargs, "voices.voice_", MAX_SLATE_VOICES)))
@@ -704,6 +928,11 @@ class PulseSlate:
         if shot_payloads:
             notes.insert(0, SHOTS_WIN % len(shot_payloads))
             notes.extend(_apply_shot_nodes(timeline, side, shot_payloads, continuity))
+
+        # Where somebody is audibly speaking, on the film clock: what the
+        # `speech_aware` partition keeps seams out of, and what the compiler checks
+        # every other policy's seams against.
+        timeline.speech_spans = _speech_spans(timeline, side)
 
         shot_blocks = _shot_blocks(timeline, shot_payloads, continuity)
 
@@ -736,11 +965,40 @@ class PulseSlate:
             blocked = ExecutionBlocker(message)
             return (blocked, blocked, blocked, blocked, blocked, message)
 
+        # ── how each branch samples (recipes) ───────────────────────────────
+        # Checked here rather than when the first window samples: a wrong
+        # schedule used to surface inside the sampler, after every model had
+        # loaded and after a dry run had reported the film as fine.
+        slate_sampling = {"steps": steps, "sampler": sampler_name,
+                          "scheduler": scheduler, "cfg": cfg}
+
+        def sampling(branch):
+            return sampling_for_branch(branch, slate_sampling, recipe, recipe_fl2va)
+
+        recipe_notes = []
+        problems = []
+        for branch in sorted({w.branch for w in plan.windows}):
+            chosen = sampling(branch)
+            problems.extend(recipe_problems(chosen))
+            branch_model = (model_fl2va if branch == BRANCH_FL2VA and model_fl2va is not None
+                            else model)
+            recipe_notes.extend(recipe_warnings(chosen, _model_traits(branch_model), branch))
+        if problems:
+            message = ("The sampler settings cannot be sampled:\n  - "
+                       + "\n  - ".join(problems))
+            log.error("[PulseStudio] %s", message)
+            _warn_on_node(unique_id, problems)
+            blocked = ExecutionBlocker(message)
+            return (blocked, blocked, blocked, blocked, blocked, message)
+        for note in recipe_notes:
+            log.warning("[PulseStudio] %s", note)
+        notes.extend(recipe_notes)
+
         # ── the document (§3) ───────────────────────────────────────────────
         document = _build_document(
             timeline, plan, shot_blocks, side, global_prompt=global_prompt, width=width,
-            height=height, steps=steps, sampler_name=sampler_name, scheduler=scheduler,
-            cfg=cfg, seed=seed, continuity=continuity, notes=notes)
+            height=height, sampling=sampling, seed=seed, continuity=continuity,
+            notes=notes)
 
         side.plan = plan
         side.timeline = timeline
@@ -759,11 +1017,12 @@ class PulseSlate:
         _, checkpoint_notes = _report_patches(
             model, unique_id,
             branches_used={w.branch for w in plan.windows},
-            fl2va_connected=model_fl2va is not None)
+            fl2va_connected=model_fl2va is not None,
+            few_step=all(int(w["steps"]) <= FEW_STEPS for w in document["windows"]))
         # An unused checkpoint is a cost, not a mistake, so it reaches the report
         # rather than the node face -- see _report_patches.
         document["warnings"].extend(checkpoint_notes)
-        _warn_on_node(unique_id, audio_warnings)
+        _warn_on_node(unique_id, audio_warnings + recipe_notes)
 
         preview = _compiled_prompt(document, plan, descriptor, notes)
         log.info("[PulseStudio] compiled %d window(s): %s (%.2fs total, %dx%d)",
@@ -855,6 +1114,9 @@ def _voice_asset(payload, slot, name, base_seconds=0.0):
 
     notes = []
     aligns_to = payload.get("aligns_to") or VOICE_ALIGN_FILM
+    # A take made for its shot, as opposed to a film-clock recording that happens
+    # to be wired to one. Only a take can be too long for its shot.
+    take = aligns_to == VOICE_ALIGN_SHOT and base_seconds is not None
     if aligns_to == VOICE_ALIGN_SHOT and base_seconds is None:
         notes.append(
             "voice %r is set to align to 'shot_start', but it is connected to "
@@ -893,7 +1155,9 @@ def _voice_asset(payload, slot, name, base_seconds=0.0):
         # must not. It is what lets the report say "your narration runs out 4.5s
         # before the film does" instead of the render coming back quietly silent.
         # Measured *after* the trim, because the trim is what the window sees.
-        source_seconds=media.audio_length_seconds(audio))
+        source_seconds=media.audio_length_seconds(audio),
+        free_run=not payload.get("gate_to_shot", True),
+        take=take)
     return asset, audio, notes, final
 
 
@@ -961,6 +1225,8 @@ def _attach_global_refs(timeline, side, kwargs, ref_video, ref_video_audio, ref_
             side.put(slot + VOICE_FINAL_SUFFIX, final)
         if payload.get("speaker"):
             pending_owners.append((asset, payload["speaker"], name))
+        if payload.get("language"):
+            timeline.voice_languages[asset.asset_id] = payload["language"]
 
     if ref_music is not None:
         # §10.1: always the last audio ordinal. It is added last, and the tag map
@@ -973,6 +1239,72 @@ def _attach_global_refs(timeline, side, kwargs, ref_video, ref_video_audio, ref_
     # only: a slate voice must not be able to name a shot's own @Ref1, which
     # belongs to that shot and to nothing else (§10).
     notes.extend(_bind_voice_owners(timeline, pending_owners))
+    return notes
+
+
+def _attach_cast(timeline, side, characters):
+    """Add each PulseCharacter's pictures and voice to the bin, bound to each other.
+
+    The face is the character: it carries the description and the retention, so
+    it becomes their <Subject N>. A full-body view is the same person seen again --
+    `view_of` cites it inside that one definition rather than as a second Subject,
+    which would tell the model there are two people. The voice is `voice_of` the
+    face, so it is that character's speaker id and that character's <Audio j>,
+    with no `speaker` to type.
+
+    Added after the Asset Bin's own assets and ahead of every other socket
+    reference, so a cast's pictures take the lowest numbers a graph can give them.
+    """
+    notes = []
+    for i, payload in characters:
+        label = (payload.get("name") or "").strip() or "Character%d" % i
+        primary = None
+        for view, slot_name in (("face", "face"), ("body", "body")):
+            tensor = payload.get(view)
+            if tensor is None:
+                continue
+            slot = "slate.cast_%d.%s" % (i, slot_name)
+            name = timeline.assets.unique_name(
+                label if primary is None else label + "Body", KIND_IMAGE)
+            asset = Asset(socket_asset_id(slot), KIND_IMAGE, name=name, file="",
+                          description=(payload.get("description") or "")
+                          if primary is None else "",
+                          retention=(payload.get("retention") or RETENTION_DEFAULT),
+                          view_of=primary.asset_id if primary is not None else None)
+            ok, reason = timeline.assets.can_add(asset, limits=timeline.limits)
+            if not ok:
+                notes.append("character %r: their %s picture did not fit the reference "
+                             "budget and was dropped: %s" % (label, view, reason))
+                continue
+            timeline.assets.add(asset, limits=timeline.limits)
+            side.put(slot, tensor, digest=media.tensor_digest(tensor))
+            primary = primary or asset
+        if primary is None:
+            notes.append("character %r has no picture connected, so there is no face "
+                         "for a shot to name or for a voice to belong to." % (label,))
+
+        voice = payload.get("voice")
+        if voice is None:
+            continue
+        slot = "slate.cast_%d.voice" % i
+        name = timeline.assets.unique_name(voice.get("name") or label + "Voice", KIND_AUDIO)
+        asset, tensor, voice_notes, final = _voice_asset(voice, slot, name,
+                                                         base_seconds=None)
+        notes.extend(voice_notes)
+        if asset is None:
+            continue
+        asset.voice_of = primary.asset_id if primary is not None else None
+        ok, reason = timeline.assets.can_add(asset, limits=timeline.limits)
+        if not ok:
+            notes.append("character %r: their voice did not fit the reference budget "
+                         "and was dropped: %s" % (label, reason))
+            continue
+        timeline.assets.add(asset, limits=timeline.limits)
+        side.put(slot, tensor, digest=media.audio_digest(tensor))
+        if final is not None:
+            side.put(slot + VOICE_FINAL_SUFFIX, final)
+        if voice.get("language"):
+            timeline.voice_languages[asset.asset_id] = voice["language"]
     return notes
 
 
@@ -1024,8 +1356,14 @@ def _apply_shot_nodes(timeline, side, payloads, project_continuity):
             # direction like any other, and its quoted spans become <d> dialogue
             # in the compiler exactly as they would from the text box.
             text = (text + " " + payload["audio_line"].strip()).strip()
-        duration = max(0.01, float(payload["duration_seconds"]))
-        shots.append(Shot(shot_id, start=cursor, duration=duration, prompt=text))
+        duration = float(payload["duration_seconds"])
+        if duration <= 0.0:
+            duration, auto_note = _auto_duration(payload)
+            if auto_note:
+                notes.append(auto_note)
+        duration = max(0.01, duration)
+        shots.append(Shot(shot_id, start=cursor, duration=duration, prompt=text,
+                          language=_voice_language(payload)))
         cursor += duration
 
         # Scene-local references get short, fixed handles -- @Ref1 and @Voice --
@@ -1145,6 +1483,87 @@ def _apply_shot_nodes(timeline, side, payloads, project_continuity):
     return notes
 
 
+def _auto_duration(payload):
+    """A shot set to 0 seconds lasts as long as its take. Returns (seconds, note).
+
+    The take is the PulseVoice on the shot's `voice` input, aligned to the shot:
+    its length after the trim, plus its own offset (a take that starts half a
+    second in needs half a second more), plus AUTO_SHOT_PAD_SECONDS of air. A
+    film-clock recording says nothing about any one shot's length, so a shot
+    without a take falls back to five seconds and says so.
+    """
+    label = payload.get("label") or payload.get("shot_id")
+    voice = payload.get("voice")
+    if (voice is None or voice.get("audio") is None
+            or (voice.get("aligns_to") or VOICE_ALIGN_FILM) != VOICE_ALIGN_SHOT):
+        return 5.0, ("%r has duration 0 (follow the take), but no PulseVoice aligned to "
+                     "shot_start is on its `voice` input, so it ran 5.0s. Set the "
+                     "duration, or wire the shot's own take." % (label,))
+    trimmed, _ = media.audio_trim(voice["audio"], voice.get("trim_start"),
+                                  voice.get("trim_end"))
+    length = media.audio_length_seconds(trimmed) or 0.0
+    wanted = max(0.0, float(voice.get("offset_seconds") or 0.0)) + length \
+        + AUTO_SHOT_PAD_SECONDS
+    ceiling = MAX_WINDOW_FRAMES / float(FPS)
+    if wanted > ceiling:
+        return ceiling, (
+            "%r follows its take, which needs %.2fs; one shot holds at most %.2fs (one "
+            "H3 window), so it was capped and the end of the line is cut. Split the take "
+            "across two shots." % (label, wanted, ceiling))
+    return max(0.5, wanted), None
+
+
+def _voice_language(payload):
+    """The language a shot's own voice speaks, or None for the film's."""
+    voice = payload.get("voice")
+    if voice is None or voice.get("audio") is None:
+        return None
+    return (voice.get("language") or "").strip() or None
+
+
+def _speech_spans(timeline, side):
+    """Every lip-sync recording's speech, as merged (first, end) frames on the film clock.
+
+    Read off each recording's level (lipsync.active_spans: -40 dB, breaths between
+    words bridged), placed at its own offset, and -- for a shot's own take -- cut
+    to that shot exactly as the audio track is, so a take's tail that is never
+    heard cannot pin a seam. Never raises: an unreadable recording only means its
+    speech is unknown, and the partition then treats that stretch as a pause.
+    """
+    fps = float(timeline.fps or FPS)
+    total = int(round(float(timeline.duration_seconds or 0.0) * fps))
+    if total <= 0:
+        return []
+    shot_of = {}
+    for shot in timeline.shots:
+        for asset in (timeline.local_refs or {}).get(shot.shot_id) or []:
+            shot_of[asset.asset_id] = shot
+    audios = list(timeline.assets.by_kind(KIND_AUDIO)) + [
+        a for refs in (timeline.local_refs or {}).values() for a in refs
+        if a.kind == KIND_AUDIO]
+    frames = []
+    for asset in audios:
+        if asset.synthetic or asset.audio_role != AUDIO_ROLE_LIP_SYNC:
+            continue
+        try:
+            slot = socket_slot_of(asset.asset_id)
+            audio = (side.get(slot) if slot is not None
+                     else media.load_audio(asset.file, asset.trim_start, asset.trim_end))
+            if audio is None:
+                continue
+            spans = lipsync.active_spans(media.rms_levels_db(audio))
+        except Exception as exc:  # pragma: no cover - decode failure
+            log.debug("[PulseStudio] could not read speech in %s: %s", asset.name, exc)
+            continue
+        placed = [(a + asset.audio_offset, b + asset.audio_offset) for a, b in spans]
+        shot = shot_of.get(asset.asset_id)
+        if shot is not None and not asset.free_run:
+            placed = [(max(a, shot.start), min(b, shot.end)) for a, b in placed]
+            placed = [(a, b) for a, b in placed if b > a]
+        frames.extend(lipsync.seam_frames(placed, fps, total))
+    return lipsync.merge_spans(frames)
+
+
 def _bind_speakers(timeline, shots, payloads):
     """Resolve each shot's `speaker` name to the asset it points at. Spec §3.
 
@@ -1255,6 +1674,9 @@ def _apply_continuity_branch(timeline, continuity):
         timeline.continuation_branch = BRANCH_FL2VA
     else:
         timeline.continuation_branch = timeline.branch
+    # ref_guided_carry stays on the reference branch and pins the seam frame with a
+    # guide instead -- see pulse_timeline.CONTINUITY_REF_GUIDED.
+    timeline.guided_carry = continuity == CONTINUITY_REF_GUIDED
 
 
 def _shot_blocks(timeline, payloads, continuity):
@@ -1301,9 +1723,13 @@ def _paired_audio_count(timeline):
     return len(bound)
 
 
-def _build_document(timeline, plan, shot_blocks, side, global_prompt, width, height, steps,
-                    sampler_name, scheduler, cfg, seed, continuity, notes):
-    """Assemble the PULSE_TIMELINE. Spec §3."""
+def _build_document(timeline, plan, shot_blocks, side, global_prompt, width, height,
+                    sampling, seed, continuity, notes):
+    """Assemble the PULSE_TIMELINE. Spec §3.
+
+    `sampling(branch)` is the settings a window on that branch samples with --
+    the slate's widgets, or the recipe wired for that branch.
+    """
     tag_map = timeline.assets.tag_map()
 
     global_refs = []
@@ -1323,7 +1749,10 @@ def _build_document(timeline, plan, shot_blocks, side, global_prompt, width, hei
             # A bin audio's role and its owner both reach the prompt, so both
             # have to reach the key. Neither was passed here before, which was
             # survivable only while nothing could set them on a bin asset.
-            audio_role=asset.audio_role, voice_of=asset.voice_of))
+            audio_role=asset.audio_role, voice_of=asset.voice_of,
+            # Carried for the report and the record. The key reads which seconds
+            # each window hears from the window's own audio_plan, not from this.
+            audio_offset=asset.audio_offset))
 
     # Per-shot resolved text and unresolved aliases, from whichever window
     # compiled each shot. A shot spanning a window boundary is compiled into
@@ -1345,7 +1774,8 @@ def _build_document(timeline, plan, shot_blocks, side, global_prompt, width, hei
             entries.append(ref_descriptor(
                 base + counters[asset.kind], asset.kind, asset.name,
                 source="socket", sha256=_digest_for(asset, side),
-                audio_role=asset.audio_role, voice_of=asset.voice_of))
+                audio_role=asset.audio_role, voice_of=asset.voice_of,
+                audio_offset=asset.audio_offset))
         local_by_shot[shot_id] = entries
 
     # The speaker binding as the compiler resolved it -- "<Subject 2> (S1)", not
@@ -1366,15 +1796,19 @@ def _build_document(timeline, plan, shot_blocks, side, global_prompt, width, hei
 
     windows = []
     for window in plan.windows:
+        chosen = sampling(window.branch)
         windows.append(window_block(
             window.index, window.shot_ids, window.frame_count, fps=timeline.fps,
             width=width, height=height,
             seed=window_seed(seed, window.shot_ids),
-            steps=steps, sampler=sampler_name, scheduler=scheduler, cfg=cfg,
+            steps=chosen["steps"], sampler=chosen["sampler"],
+            scheduler=chosen["scheduler"], cfg=chosen["cfg"],
+            sigmas=chosen.get("sigmas"),
             continuity_in=(CONTINUITY_NONE if window.index == 0 else continuity),
             continuity_out=(CONTINUITY_NONE if window.index == window.total - 1
                             else continuity),
-            branch=window.branch, prompt=window.prompt))
+            branch=window.branch, prompt=window.prompt,
+            audio_plan=window.audio_plan()))
 
     # Reported as the PEAK across windows, not as the bin's own occupancy. The
     # limits bind per H3 call, and a window carries more than the bin does: the
@@ -1546,6 +1980,24 @@ class PulseRender:
                     "remix_source only: how far the recording is re-noised. 0 is "
                     "lock_source. HyperFlow was not trained on partly masked rows; "
                     "lock_source is the mode to use with it."}),
+                # Appended after the audio modes; a file saved before them takes the
+                # defaults, which render exactly what it always rendered.
+                "ref_image_fit": (list(REF_FIT_MODES), {"default": REF_FIT_CANVAS,
+                                                        "tooltip":
+                    "How a character or place picture reaches H3. 'canvas' fits it to "
+                    "the render's exact frame with PulseSlate's resize_method -- a "
+                    "portrait sheet on 16:9 loses its head and feet to the crop. "
+                    "'keep_aspect' hands the picture over whole and lets H3's own "
+                    "ref_image_size scale it, aspect intact: clearer identity, and "
+                    "'max' then actually does something. Carried frames and keyframes "
+                    "are always fitted to the canvas."}),
+                "upscale": (list(UPSCALE_MODES), {"default": UPSCALE_OFF, "tooltip":
+                    "Deliver the finished film at 1080. '1080p_fit': short edge 1080, "
+                    "aspect kept (1344x768 -> 1890x1080). '1080p_exact': 1920x1080 or "
+                    "1080x1920, centre-cropped to fill. Windows still render inside "
+                    "H3's trained ~1MP budget -- neither FastH3-Omni nor TaoMate FL2VA "
+                    "renders natively at 1080 -- and the assembled film is resampled "
+                    "(Lanczos) afterwards. `frames` stays at the rendered size."}),
                 # ── append new widgets HERE, at the end, and nowhere else ────
             },
             "optional": {
@@ -1568,6 +2020,7 @@ class PulseRender:
                 run_dir, run_id, save_segments, low_memory, dry_run, prune_unused,
                 use_reference_audio=False, seam_treatment=SEAM_DEFAULT,
                 audio_mode=AUDIO_MODE_REFERENCE, remix_strength=DEFAULT_REMIX_STRENGTH,
+                ref_image_fit=REF_FIT_CANVAS, upscale=UPSCALE_OFF,
                 model_fl2va=None, unique_id=None, prompt=None):
         document, side = _unwrap_timeline(timeline)
         if document is None:
@@ -1581,7 +2034,7 @@ class PulseRender:
             save_segments=save_segments, low_memory=low_memory, dry_run=dry_run,
             prune_unused=prune_unused, use_reference_audio=use_reference_audio,
             seam_treatment=seam_treatment, audio_mode=audio_mode,
-            remix_strength=remix_strength,
+            remix_strength=remix_strength, ref_image_fit=ref_image_fit, upscale=upscale,
             # §8: never assemble a frame stack nobody asked for.
             want_frames=render.output_is_connected(prompt, unique_id, 1))
 
@@ -2111,6 +2564,8 @@ NODE_CLASS_MAPPINGS = {
     "PulseStill": PulseStill,
     "PulseLipSyncSegment": PulseLipSyncSegment,
     "PulseLipSyncPaste": PulseLipSyncPaste,
+    "PulseRecipe": PulseRecipe,
+    "PulseCharacter": PulseCharacter,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -2123,4 +2578,6 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "PulseStill": "Pulse Still · MiniMax H3",
     "PulseLipSyncSegment": "Pulse Lip-Sync Segment (one character)",
     "PulseLipSyncPaste": "Pulse Lip-Sync Paste",
+    "PulseRecipe": "Pulse Recipe (sampling per model)",
+    "PulseCharacter": "Pulse Character (face + voice)",
 }

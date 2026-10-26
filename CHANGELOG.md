@@ -4,6 +4,132 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+### Fixed — wires land on the sockets they were saved on (frontend 1.57)
+
+Frontend 1.57 keeps links in a store keyed by *slot number*: `input.link` is a
+read-only view of it, assigning `null` to it disconnects whatever wire sits at
+that slot, and a link may not move onto a slot another wire occupies. It also
+hangs every saved wire on the node's creation-time layout — one free socket per
+group — before `configure` merges the saved sockets back in by name. Pulse Slate's
+socket code read the wires off that misplaced layout and wrote `input.link`, so a
+graph saved with four shots and two cast members loaded with the cast wires on
+`shot_5` and `shot_6`, and the server refused the prompt: **Invalid connection**.
+Wired by hand it was worse — the first shot wire grew a socket ahead of the voice
+and cast wires, and shots landed on reference-image sockets while the others were
+dropped.
+
+`js/ps_sockets.js` now takes the wires from the saved node itself on a load
+(`savedLinks`), reads the live ones *before* a rebuild moves anything, never writes
+`input.link` on a store-backed socket (`storeBacked`), and moves each wire by its
+own `target_slot` — every wire parked first and placed second, so two that trade
+places never collide. Checked in a real 1.57.1 page: all ten new graphs and all six
+shipped ones load with every wire where it was saved, and a slate wired by hand,
+edited, saved and reopened keeps all eleven. Older frontends take the old path.
+
+A rebuild also stopped shrinking the node: it resized to `computeSize()`, the
+minimum, which squeezed every loaded slate to ~230 px and crushed the Asset Bin.
+It grows to fit now and never shrinks.
+
+### References in one place: the Asset Bin carries a dialogue
+
+The bin — the panel at the bottom of Pulse Slate — can now hold a whole two-hander,
+so a graph has no reason to attach references anywhere else:
+
+- **Each audio row says where it plays**: `at` (the film second it starts),
+  `from` / `to` (which seconds of the file). One take file can carry several lines,
+  a row per line. `set_audio_timing` is the bin operation behind the fields.
+- **The meter counts voices, not lines.** Every lip-sync line bound to one
+  character rides one `<Audio j>` in each window (`voice_key`), so the bin admits
+  six lines between two characters as 2/3 audio, and the panel tags every line of
+  a voice with that voice's number. Unbound clips and timbre references still cost
+  one each.
+- **A conversation is judged as one.** Each voice is silent while the other speaks,
+  so a window holding two or more voices is checked for dead air on all of them
+  together, with the end-of-film second of slack at its tail. Judged one at a time,
+  every voice in every window was reported silent.
+
+### One checkpoint per film
+
+The first Oct-2026 build mixed engines in two families: FastH3-Omni for window 1
+and TaoMate fl2va after it, and HyperFlow on ref2va then fl2va. fl2va takes no
+references, so after window 1 the face and the voice had nothing holding them, and
+the two halves contradicted each other. Both continuous-take families now render
+every window on one reference checkpoint (`PS_FastH3Omni_ContinuousTake`,
+`PS_HyperFlow_ContinuousTake`); TaoMate keeps its own family, the 9:16 keyframe
+series, on its own checkpoint. All ten graphs keep their faces and lines in the
+bin, with no Load Image, Load Audio, Pulse Character or Pulse Voice wired around
+the slate.
+
+`PulseSlate_Dialogue_HyperFlow.json` (shipped) loaded the fl2va checkpoint with
+HyperFlow beside `continuity: none`, which never samples on it: ~20 GB for nothing.
+It is one checkpoint now, with its two voice tracks in the bin. The test that
+forbids that state ran over `SHIPPED_GRAPHS` only, which this graph is not in; it
+runs over every graph in the folder now.
+
+### Fixed — a seam is not pushed off a cut by a fraction of a frame
+
+The seam planner's speech spans were rounded outward, so a line placed at a cut's
+displayed time (15.08 for a cut at 15.0833) started one frame early, made the cut
+"inside speech", and `speech_aware` moved the seam off it. They round to the
+nearest frame now (`lipsync.seam_frames`); the lip-sync lock still rounds outward.
+The summary also stopped reporting "-1 in a pause" for a seam on a cut inside
+speech.
+
+### Pulse Recipe — sampling settings per checkpoint, per branch
+
+The distilled checkpoints disagree: FastH3-Omni wants 8 Euler steps on `simple`
+with VSA, TaoMate 3 steps on its own sigmas, HyperFlow its fixed 8-step grid.
+`PulseRecipe` names one of them (`fasth3_omni_8step`, `taomate_fl2va_3step`,
+`hyperflow_8step`, `h3_base`, `custom`) and goes into Pulse Slate's `recipe` or
+`recipe_fl2va`, replacing the sampler widgets for that branch. A recipe that
+cannot be sampled is refused at compile time; one that is off-recipe for the model
+it samples is named in the report.
+
+### Pulse Character — a face, a body view, a description and a voice, bound
+
+One node per character, into Pulse Slate's new `cast` sockets. The body view is
+cited inside the character's one `<Subject N>`, never as a second person.
+
+### Lip sync follows each take to its shot
+
+- A shot's own take starts at its shot and is **gated** to it: a long line no
+  longer plays over the next speaker (`PulseVoice.gate_to_shot`, on by default).
+- A shot with `duration_seconds` 0 lasts as long as its take plus 0.4 s.
+- Every lip-sync recording of one character in a window shares one `<Audio j>`
+  (voice tracks), so three audio slots mean three voices, not three lines.
+- fl2va (continuation) windows get their recording driving the mouth instead of
+  being told there is no dialogue.
+- `language:` in the global prompt, or per voice, tags the dialogue; typed
+  quotes and « » count as dialogue.
+
+### `speech_aware` windows
+
+A fourth `partition_strategy`: seams on cuts where the grid reaches one, else in a
+pause, never through a word. Every other policy now reports a seam inside speech.
+
+### References kept whole; films delivered at 1080
+
+`PulseRender.ref_image_fit = keep_aspect` hands a reference picture over uncropped.
+`PulseRender.upscale` resamples the finished film to `1080p_fit` (aspect kept) or
+`1080p_exact` (1920×1080 / 1080×1920), frame by frame — neither FastH3-Omni nor
+TaoMate renders 1080 natively.
+
+### `ref_guided_carry` (experimental)
+
+A continuity mode that stays on the reference checkpoint for every window and pins
+the previous window's last frame with a guide. One checkpoint, references in every
+window. The reference checkpoints were not trained with keyframe rows; compare it
+against `none`.
+
+### Fixed — the cache and the frame count
+
+- Films were padded by up to 16 frames and seams moved off cuts: the partition now
+  splits the real frame count, not a pre-snapped total.
+- A cached segment could be reused for a window that hears different seconds of a
+  recording, or that was sampled on a different fl2va model or LoRA. Both are in
+  the key now, so some cached lip-sync and continuation windows render once more.
+- A seam after a re-rendered window was not refreshed.
+
 ### A recording can drive the mouth, not just describe the voice
 
 A `lip_sync` recording has always entered H3 as a *reference* block: the model
@@ -732,6 +858,14 @@ until somebody writes down what they saw.
       prompt. Whether H3 keeps three bound voices apart in one call — and whether
       `sink_conditioning=exact_kv_and_rows` is in fact what makes it — is the
       measurement §12.6 has always asserted and nobody has taken.
+- [ ] **Any of the Oct-2026 graphs, rendered.** All ten compile through the real
+      nodes in this ComfyUI with stub models, and load in a real frontend 1.57.1
+      with every wire on its socket. None has sampled a frame: not FastH3-Omni,
+      HyperFlow or TaoMate through Pulse Render, not `speech_aware` seams, not a
+      bin-laid two-hander's lip sync.
+- [ ] **The 1080 delivery, looked at.** The upscale was run on real files (sizes,
+      frame count and audio checked), not watched.
+- [ ] **`ref_guided_carry` and `keep_aspect`** on a real render.
 
 ## [3.0.0] — 2026-08-10
 

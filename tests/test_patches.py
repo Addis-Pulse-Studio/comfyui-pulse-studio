@@ -222,6 +222,14 @@ class TestSingleCheckpointWarning(unittest.TestCase):
         self.assertIn("model_fl2va", notes[0])
         self.assertIn("no window uses it", notes[0])
 
+    def test_an_all_fl2va_render_is_using_the_checkpoint_it_has(self):
+        """keyframe_pairs renders every window on fl2va: nothing is spare."""
+        self.assertEqual(check_single_checkpoint({"fl2va"}, fl2va_connected=True), ([], []))
+
+    def test_the_two_checkpoint_warning_names_the_one_checkpoint_ways_out(self):
+        warnings, _ = check_single_checkpoint({"ref2va", "fl2va"}, fl2va_connected=True)
+        self.assertIn("ref_guided_carry", warnings[0])
+
     def test_both_branches_without_the_second_model_is_neither(self):
         """That case has its own message about falling back to the main model."""
         self.assertEqual(check_single_checkpoint({"ref2va", "fl2va"},
@@ -337,7 +345,7 @@ class TestTheWarningIsActuallyWired(unittest.TestCase):
                           "%s declares no hidden inputs, so a warning raised by it "
                           "has no node to attach to" % node.name)
             declared += 1
-        self.assertEqual(declared, 9)
+        self.assertEqual(declared, 11)
         self.assertIn('HIDDEN_INPUTS = {"unique_id": "UNIQUE_ID"}', source)
         self.assertIn('HIDDEN_INPUTS_WITH_PROMPT = {"unique_id": "UNIQUE_ID", '
                       '"prompt": "PROMPT"}', source)
